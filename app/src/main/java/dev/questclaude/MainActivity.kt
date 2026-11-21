@@ -417,28 +417,43 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Microgestures --------------------------------------------------------
 
-    /** When the last horizontal scroll came in; one swipe arrives as several scroll events. */
-    private var lastSwipeAt = 0L
+    /**
+     * The current scroll gesture (a swipe or one push of a controller stick): it ends after a
+     * 300 ms lull. Its horizontal and vertical totals decide whether it's a tab switch.
+     */
+    private var gestureLastAt = 0L
+    private var gestureH = 0f
+    private var gestureV = 0f
+    private var gestureSwitched = false
 
     /**
-     * A horizontal scroll switches to the previous/next tab; vertical ones keep scrolling the
-     * terminal. Meant for thumb swipes along the index finger (Horizon OS microgestures reach
-     * 2D apps as scrolls), though as of v210 the system keeps them and only a controller
-     * stick's sideways scroll gets here.
+     * A clearly sideways scroll switches to the previous/next tab, once per gesture; anything
+     * else keeps scrolling the terminal. A stick pushed up or down drifts a little sideways, so
+     * single events don't count: the gesture's sideways total must reach [SWITCH_SCROLL] and be
+     * at least twice its vertical total. Meant for thumb swipes along the index finger
+     * (Horizon OS microgestures reach 2D apps as scrolls), though as of v210 the system keeps
+     * them and only a controller stick's sideways scroll gets here.
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
-            val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
-            val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-            if (h != 0f && Math.abs(h) > Math.abs(v)) {
-                // One switch per swipe or stick push: a held stick streams scrolls, so only a
-                // scroll after a 300 ms lull starts a new switch.
-                val now = event.eventTime
-                if (now - lastSwipeAt > 300) cycleTab(if (h > 0) 1 else -1)
-                lastSwipeAt = now
-                return true
-            }
+        if (event.actionMasked != MotionEvent.ACTION_SCROLL) return super.dispatchGenericMotionEvent(event)
+        val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
+        val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+        val now = event.eventTime
+        if (now - gestureLastAt > 300) {
+            if (gestureH != 0f || gestureV != 0f) Log.d("QuestClaude", "scroll gesture: h=$gestureH v=$gestureV switched=$gestureSwitched")
+            gestureH = 0f; gestureV = 0f; gestureSwitched = false
         }
+        gestureLastAt = now
+        gestureH += h
+        gestureV += v
+        val sideways = Math.abs(gestureH) > 2 * Math.abs(gestureV)
+        if (!gestureSwitched && sideways && Math.abs(gestureH) >= SWITCH_SCROLL) {
+            gestureSwitched = true
+            Log.d("QuestClaude", "tab switch: scroll h=$gestureH v=$gestureV")
+            cycleTab(if (gestureH > 0) 1 else -1)
+        }
+        // A sideways gesture is ours; don't let its events scroll the terminal (or tab strip).
+        if (gestureSwitched || (sideways && v == 0f)) return true
         return super.dispatchGenericMotionEvent(event)
     }
 
@@ -830,6 +845,8 @@ class MainActivity : AppCompatActivity() {
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
     companion object {
+        /** Sideways scroll (in scroll units) one gesture needs before it switches tabs. */
+        private const val SWITCH_SCROLL = 0.5f
         private val GREEN = Color.parseColor("#7BD88F")
         private val AMBER = Color.parseColor("#F2C063")
         private val RED = Color.parseColor("#FF7A7A")
