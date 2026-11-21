@@ -43,6 +43,12 @@ class Dictation(ctx: Context) {
         private const val CUT_SEARCH_SECONDS = 3
         /** Whisper's markers for non-speech, e.g. [BLANK_AUDIO], (wind blowing). */
         private val NON_SPEECH = Regex("""\[[^\]]*]|\([^)]*\)""")
+        /** What's left of a marker Whisper didn't finish, e.g. "[" or "(sigh". */
+        private val MARKER_SCRAPS = Regex("""\[[^\]]*$|\([^)]*$|[\[\]()]""")
+        /** 50 ms frames quieter than this RMS are never speech. */
+        private const val MIN_VOICE_RMS = 0.003
+        /** Silence kept around the speech in a pass, so word edges aren't clipped. */
+        private const val PAD_MS = 300
         /** A phrase of up to 6 words said 3+ times in a row: Whisper stuck in a loop. */
         private val LOOP = Regex("""(?<!\S)((?:\S+\s+){1,6}?)\1{2,}""", RegexOption.IGNORE_CASE)
     }
@@ -152,11 +158,26 @@ class Dictation(ctx: Context) {
     }
 
     private fun clean(s: String): String {
-        val words = s.replace(NON_SPEECH, "").replace(Regex("\\s+"), " ").trim()
+        val words = s.replace(NON_SPEECH, "").replace(MARKER_SCRAPS, "").replace(Regex("\\s+"), " ").trim()
+        if (words.none { it.isLetterOrDigit() }) return "" // just punctuation, e.g. "..."
         return "$words ".replace(LOOP, "$1").trim()
     }
 
-    private fun join(a: String, b: String) = listOf(a, b).filter { it.isNotEmpty() }.joinToString(" ")
+    /**
+     * [a] then [b], dropping words at the start of [b] that repeat the end of [a]: a word right
+     * at a commit cut can be heard in both windows.
+     */
+    private fun join(a: String, b: String): String {
+        if (a.isEmpty() || b.isEmpty()) return a + b
+        fun norm(w: String) = w.lowercase().filter { it.isLetterOrDigit() }
+        val aw = a.split(" ").map(::norm)
+        val bw = b.split(" ")
+        val overlap = (minOf(4, aw.size, bw.size) downTo 1).firstOrNull { k ->
+            aw.takeLast(k) == bw.take(k).map(::norm)
+        } ?: 0
+        val rest = bw.drop(overlap).joinToString(" ")
+        return if (rest.isEmpty()) a else "$a $rest"
+    }
 
     /**
      * Encoder window sized to the audio: 50 frames per second plus margin, rounded up to 64, and
@@ -181,11 +202,37 @@ class Dictation(ctx: Context) {
         return best
     }
 
+    /**
+     * Transcribes [samples] trimmed to where you're actually talking. Whisper fed silence
+     * makes things up ("the", "[", "Thank you."), so a stretch with no speech gives "" without
+     * running it, and silence before and after the speech is cut down to [PAD_MS].
+     */
     private fun pass(samples: FloatArray): String {
+        val frame = RATE / 20
+        val rms = DoubleArray(samples.size / frame) { f ->
+            var e = 0.0
+            for (j in f * frame until (f + 1) * frame) e += samples[j] * samples[j]
+            Math.sqrt(e / frame)
+        }
+        if (rms.isEmpty()) return ""
+        val floor = rms.sorted()[rms.size / 10]
+        val threshold = maxOf(MIN_VOICE_RMS, minOf(floor * 3, 0.02))
+        val first = rms.indexOfFirst { it > threshold }
+        val last = rms.indexOfLast { it > threshold }
+        val voiced = rms.count { it > threshold }
+        val levels = "floor %.4f peak %.4f".format(floor, rms.maxOrNull() ?: 0.0)
+        if (voiced < 2) {
+            Log.i("QuestClaude", "whisper: ${samples.size * 1000 / RATE} ms, no speech ($levels)")
+            return ""
+        }
+        val pad = RATE * PAD_MS / 1000
+        val from = maxOf(0, first * frame - pad)
+        val to = minOf(samples.size, (last + 1) * frame + pad)
+        val speech = samples.copyOfRange(from, to)
         val t0 = System.nanoTime()
-        val text = run(samples, audioCtx(samples.size))
-        Log.i("QuestClaude", "whisper: ${samples.size * 1000 / RATE} ms of audio in " +
-            "${(System.nanoTime() - t0) / 1_000_000} ms")
+        val text = run(speech, audioCtx(speech.size))
+        Log.i("QuestClaude", "whisper: ${speech.size * 1000 / RATE} of ${samples.size * 1000 / RATE} ms " +
+            "in ${(System.nanoTime() - t0) / 1_000_000} ms ($levels): \"$text\"")
         return text
     }
 
