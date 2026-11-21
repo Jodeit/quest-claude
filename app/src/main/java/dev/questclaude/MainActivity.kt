@@ -10,6 +10,7 @@ import android.provider.Settings as SysSettings
 import android.util.Log
 import android.util.TypedValue
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
@@ -417,6 +418,40 @@ class MainActivity : AppCompatActivity() {
                 if (active) Color.WHITE else getColor(R.color.muted)), start, s.length, 0)
         }
         return s
+    }
+
+    // ---- Microgestures --------------------------------------------------------
+
+    /** When the last swipe switched tabs; one thumb swipe can arrive as a few scroll events. */
+    private var lastSwipeAt = 0L
+
+    /**
+     * A thumb swipe left/right along the index finger (a Horizon OS microgesture) reaches 2D
+     * apps as a horizontal scroll: switch to the previous/next tab. Vertical swipes are left
+     * alone, so they keep scrolling the terminal.
+     */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
+            val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
+            val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+            Log.d("QuestClaude", "scroll h=$h v=$v source=0x${Integer.toHexString(event.source)} device=${event.device?.name}")
+            if (h != 0f && Math.abs(h) > Math.abs(v)) {
+                val now = event.eventTime
+                if (now - lastSwipeAt > 400) {
+                    lastSwipeAt = now
+                    cycleTab(if (h > 0) 1 else -1)
+                }
+                return true
+            }
+        }
+        return super.dispatchGenericMotionEvent(event)
+    }
+
+    private fun cycleTab(step: Int) {
+        val names = (sessions + settings.session).distinct()
+        if (names.size < 2) return
+        val i = names.indexOf(settings.session)
+        switchSession(names[Math.floorMod(i + step, names.size)])
     }
 
     private fun switchSession(name: String) {
