@@ -217,6 +217,7 @@ class InputQueue(private val send: (List<String>) -> Unit) {
     private val main = Handler(Looper.getMainLooper())
     private val pending = mutableListOf<String>()
     private var inFlight = false
+    private var sentAt = 0L
     private val timeout = Runnable { inFlight = false; flush() }
 
     /** Scroll Claude's transcript [lines] back (positive) or forward (negative). */
@@ -252,6 +253,7 @@ class InputQueue(private val send: (List<String>) -> Unit) {
 
     /** Call when Termux reports the batch finished. */
     fun done() {
+        if (inFlight) Log.i("QuestClaude", "input round trip ${System.currentTimeMillis() - sentAt} ms")
         main.removeCallbacks(timeout)
         inFlight = false
         flush()
@@ -262,6 +264,7 @@ class InputQueue(private val send: (List<String>) -> Unit) {
         val ops = pending.toList()
         pending.clear()
         inFlight = true
+        sentAt = System.currentTimeMillis()
         main.postDelayed(timeout, 4000)
         send(ops)
     }

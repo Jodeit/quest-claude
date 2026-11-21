@@ -52,6 +52,8 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         const val COLS = 110
         const val ROWS = 34
         const val NO_SESSION = "__QC_NO_SESSION__"
+        /** Separates an input batch's errors from the pane captured right after it. */
+        const val PANE_MARK = "__QC_PANE__"
 
         /**
          * Command for a tab running Claude in ~/[project] (home when null). With [worktree],
@@ -78,7 +80,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
      */
     fun input(ops: List<String>) {
         val script = """
-            t="=${'$'}1:"; shift
+            sess="${'$'}1"; t="=${'$'}1:"; shift
             for a; do
               case "${'$'}a" in
                 L:*) $tmux send-keys -t "${'$'}t" -l -- "${'$'}{a#L:}" ;;
@@ -113,6 +115,10 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
                   done ;;
               esac
             done 2>&1
+            # Send back the pane as it looks now, so the mirror updates without a second command.
+            sleep 0.04 # let Claude redraw
+            echo "$PANE_MARK ${'$'}sess"
+            $paneScript
             exit 0
         """.trimIndent()
         Termux.sh(ctx, "input", script, settings.session, *ops.toTypedArray())
@@ -178,6 +184,24 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         Termux.sh(ctx, "close", "$tmux kill-session -t \"=${'$'}1\" 2>&1; exit 0", name)
     }
 
+    /**
+     * Prints the session list and the pane of tmux target ${'$'}t (set by the caller): see [capture].
+     * Clobbers the positional parameters.
+     */
+    private val paneScript = """
+        $tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' '\t'; echo
+        set -- ${'$'}($tmux display -p -t "${'$'}t" '#{cursor_x} #{cursor_y} #{cursor_flag} #{pane_in_mode} #{scroll_position} #{pane_height}' 2>/dev/null)
+        if [ ${'$'}# -lt 3 ]; then
+          echo $NO_SESSION
+        elif [ "${'$'}4" = 1 ] && [ -n "${'$'}5" ]; then
+          echo "${'$'}1 ${'$'}2 0"
+          $tmux capture-pane -p -e -t "${'$'}t" -S "-${'$'}5" -E "${'$'}((${'$'}6 - 1 - ${'$'}5))" 2>/dev/null
+        else
+          echo "${'$'}1 ${'$'}2 ${'$'}3"
+          $tmux capture-pane -p -e -t "${'$'}t" 2>/dev/null
+        fi
+    """.trimIndent()
+
     /** Session list plus the active pane; arrives in ResultReceiver as stdout with label "mirror". */
     fun capture() {
         // Always exit 0: Termux posts a notification for every failed plugin command.
@@ -186,20 +210,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
             // Line 1: all session names, tab-separated (for the tab strip). Line 2: cursor column,
             // row and visibility. Then the pane with color escapes; if it's scrolled back in copy
             // mode, the lines it's showing, with no cursor.
-            """
-            t="=${'$'}1:"
-            $tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' '\t'; echo
-            set -- ${'$'}($tmux display -p -t "${'$'}t" '#{cursor_x} #{cursor_y} #{cursor_flag} #{pane_in_mode} #{scroll_position} #{pane_height}' 2>/dev/null)
-            [ ${'$'}# -ge 3 ] || { echo $NO_SESSION; exit 0; }
-            if [ "${'$'}4" = 1 ] && [ -n "${'$'}5" ]; then
-              echo "${'$'}1 ${'$'}2 0"
-              $tmux capture-pane -p -e -t "${'$'}t" -S "-${'$'}5" -E "${'$'}((${'$'}6 - 1 - ${'$'}5))" 2>/dev/null
-            else
-              echo "${'$'}1 ${'$'}2 ${'$'}3"
-              $tmux capture-pane -p -e -t "${'$'}t" 2>/dev/null
-            fi
-            exit 0
-            """.trimIndent(),
+            "t=\"=${'$'}1:\"\n$paneScript\nexit 0",
             settings.session
         )
     }

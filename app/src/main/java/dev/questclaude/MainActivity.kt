@@ -120,8 +120,14 @@ class MainActivity : AppCompatActivity() {
                     pickProject(stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }.sorted())
                 } else if (label == "input") {
                     input.done()
-                    if (stdout.isNotBlank()) showResult("✗ typing: ${stdout.trim()}", RED)
-                    refreshPaneSoon()
+                    // Errors, then "PANE_MARK session" and the pane as it was right after the keys.
+                    val mark = stdout.indexOf(TmuxBridge.PANE_MARK)
+                    val errors = if (mark >= 0) stdout.substring(0, mark) else stdout
+                    if (errors.isNotBlank()) showResult("✗ typing: ${errors.trim()}", RED)
+                    val nl = if (mark >= 0) stdout.indexOf('\n', mark) else -1
+                    val sess = if (nl >= 0) stdout.substring(mark + TmuxBridge.PANE_MARK.length + 1, nl) else null
+                    if (sess == settings.session) showPane(true, stdout.substring(nl + 1), "")
+                    else refreshPaneSoon()
                 } else {
                     lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
                     lastResult.setTextColor(if (ok) GREEN else RED)
