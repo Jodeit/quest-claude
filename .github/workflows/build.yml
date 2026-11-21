@@ -46,3 +46,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/quest-claude.apk --generate-notes
+
+  # Exec spike (spike/): proot + Ubuntu with no Termux, at targetSdk 34. Its own job so a
+  # broken download never blocks the main APK.
+  spike:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Fetch proot and the Ubuntu rootfs
+        run: |
+          sudo apt-get install -y -qq patchelf
+          spike/fetch-prebuilts.sh
+
+      - name: Build spike APK
+        run: gradle --no-daemon :spike:assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quest-claude-spike-apk
+          path: spike/build/outputs/apk/debug/spike-debug.apk
+          retention-days: 30
