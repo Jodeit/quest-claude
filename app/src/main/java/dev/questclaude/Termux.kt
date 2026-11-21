@@ -58,7 +58,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
 
     /**
      * Typed input, in order: "L:text" literal keys, "K:name" a tmux key name (Enter, C-c, BTab,
-     * Up, ...), "P:text" a bracketed paste. Result arrives with label "input"; any tmux error
+     * Up, ...), "N:count:name" that key repeated, "P:text" a bracketed paste. Result arrives with label "input"; any tmux error
      * shows up as stdout rather than a failed command, since Termux posts a notification for
      * every failure and this runs per keystroke batch.
      */
@@ -69,6 +69,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
               case "${'$'}a" in
                 L:*) $tmux send-keys -t "${'$'}t" -l -- "${'$'}{a#L:}" ;;
                 K:*) $tmux send-keys -t "${'$'}t" "${'$'}{a#K:}" ;;
+                N:*) n="${'$'}{a#N:}"; $tmux send-keys -t "${'$'}t" -N "${'$'}{n%%:*}" "${'$'}{n#*:}" ;;
                 P:*) $tmux set-buffer -b qc -- "${'$'}{a#P:}" && $tmux paste-buffer -p -d -b qc -t "${'$'}t" ;;
               esac
             done 2>&1

@@ -23,7 +23,7 @@ Java_dev_questclaude_WhisperNative_init(JNIEnv *env, jobject thiz, jstring path)
 // doesn't accept), or null on failure.
 JNIEXPORT jbyteArray JNICALL
 Java_dev_questclaude_WhisperNative_transcribe(JNIEnv *env, jobject thiz, jlong handle,
-                                              jfloatArray samples, jint threads) {
+                                              jfloatArray samples, jint threads, jint audio_ctx) {
     struct whisper_context *ctx = (struct whisper_context *) (intptr_t) handle;
     if (!ctx) return NULL;
 
@@ -37,6 +37,9 @@ Java_dev_questclaude_WhisperNative_transcribe(JNIEnv *env, jobject thiz, jlong h
     wp.print_progress = false;
     wp.print_realtime = false;
     wp.print_timestamps = false;
+    // Live partials pass a smaller encoder window (0 = the full 30 s), which is much faster.
+    wp.audio_ctx = audio_ctx;
+    wp.single_segment = audio_ctx > 0;
 
     jsize n = (*env)->GetArrayLength(env, samples);
     jfloat *pcm = (*env)->GetFloatArrayElements(env, samples, NULL);

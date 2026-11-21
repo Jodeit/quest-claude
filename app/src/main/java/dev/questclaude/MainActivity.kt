@@ -275,6 +275,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun cancelDictation() {
         dictation.cancel() // waits at most one 100 ms mic read
+        typeStreamed("") // take back what was typed live
+        streamed = ""
         mic.text = getString(R.string.dictate)
         showResult("dictation cancelled", AMBER)
     }
@@ -318,9 +320,37 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             showResult("✗ dictation: ${e.message}", RED); return
         }
+        streamed = ""
+        dictationSession = settings.session
         speech.execute { runCatching { dictation.load() } } // warm up while you talk
+        speech.execute(::streamPartial)
         mic.text = "■ Stop"
         showResult("● listening — Stop or Ctrl+Shift+D to finish, Esc to cancel", RED)
+    }
+
+    /** Text dictation has typed into the prompt so far, so updates can be sent as edits. */
+    private var streamed = ""
+    /** The tab dictation started in; streaming stops typing if you switch away. */
+    private var dictationSession = ""
+
+    /**
+     * Runs on [speech] over and over while recording: transcribe what's been said so far and
+     * type it into Claude's prompt as you talk, fixing earlier words as Whisper revises them.
+     */
+    private fun streamPartial() {
+        if (!dictation.recording) return
+        val text = runCatching { dictation.partial() }.getOrNull()
+        main.post { if (text != null && dictation.recording) typeStreamed(text) }
+        if (dictation.recording) speech.execute(::streamPartial)
+    }
+
+    /** Make the prompt show [text]: backspace over what changed, type the new tail. */
+    private fun typeStreamed(text: String) {
+        if (settings.session != dictationSession) return
+        val keep = streamed.commonPrefixWith(text).length
+        input.keys("BSpace", streamed.length - keep)
+        if (text.length > keep) input.literal(text.substring(keep))
+        streamed = text
     }
 
     private fun finishDictation() {
@@ -335,14 +365,14 @@ class MainActivity : AppCompatActivity() {
                 mic.isEnabled = true
                 mic.text = getString(R.string.dictate)
                 result.onSuccess { text ->
+                    // The final pass (full encoder window) may differ from the live text; fix it
+                    // up in place. No Enter, so you can check it first.
+                    typeStreamed(text)
+                    streamed = ""
+                    term.requestFocus()
                     if (text.isEmpty()) showResult("✗ didn't catch anything", AMBER)
-                    else {
-                        // Pasted into Claude's prompt without Enter, so you can check it first.
-                        input.paste(text)
-                        term.requestFocus()
-                        showResult("✓ dictated — press Enter to send", GREEN)
-                    }
-                }.onFailure { showResult("✗ dictation: ${it.message}", RED) }
+                    else showResult("✓ dictated — press Enter to send", GREEN)
+                }.onFailure { streamed = ""; showResult("✗ dictation: ${it.message}", RED) }
             }
         }
     }

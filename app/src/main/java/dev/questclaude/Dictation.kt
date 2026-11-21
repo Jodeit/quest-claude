@@ -16,7 +16,8 @@ object WhisperNative {
     } catch (e: Throwable) { false }
 
     external fun init(modelPath: String): Long
-    external fun transcribe(ctx: Long, samples: FloatArray, threads: Int): ByteArray?
+    /** [audioCtx] 0 = full 30 s encoder window; smaller is faster, for live partials. */
+    external fun transcribe(ctx: Long, samples: FloatArray, threads: Int, audioCtx: Int): ByteArray?
     external fun free(ctx: Long)
 }
 
@@ -36,6 +37,8 @@ class Dictation(ctx: Context) {
         private const val MAX_SECONDS = 180
         private const val THREADS = 4
         /** Whisper's markers for non-speech, e.g. [BLANK_AUDIO], (wind blowing). */
+        /** Audio past this is transcribed for good and dropped from the live window. */
+        private const val WINDOW_SECONDS = 20
         private val NON_SPEECH = Regex("""\[[^\]]*]|\([^)]*\)""")
     }
 
@@ -46,6 +49,9 @@ class Dictation(ctx: Context) {
     private var recorder: Thread? = null
     private var audio = FloatArray(RATE * 30)
     private var size = 0
+    /** Start of the live window; audio before it is already in [committed]. */
+    private var windowStart = 0
+    private var committed = ""
 
     val hasModel get() = modelFile.length() > 0
 
@@ -103,7 +109,7 @@ class Dictation(ctx: Context) {
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
             rec.release(); error("couldn't open the microphone")
         }
-        size = 0
+        synchronized(this) { size = 0; windowStart = 0; committed = "" }
         recording = true
         recorder = Thread {
             val chunk = FloatArray(RATE / 10)
@@ -112,9 +118,11 @@ class Dictation(ctx: Context) {
                 while (recording && size < RATE * MAX_SECONDS) {
                     val n = rec.read(chunk, 0, chunk.size, AudioRecord.READ_BLOCKING)
                     if (n <= 0) continue
-                    if (size + n > audio.size) audio = audio.copyOf(audio.size * 2)
-                    System.arraycopy(chunk, 0, audio, size, n)
-                    size += n
+                    synchronized(this) {
+                        if (size + n > audio.size) audio = audio.copyOf(audio.size * 2)
+                        System.arraycopy(chunk, 0, audio, size, n)
+                        size += n
+                    }
                 }
             } finally {
                 rec.stop(); rec.release()
@@ -122,16 +130,44 @@ class Dictation(ctx: Context) {
         }.apply { name = "dictation-mic"; start() }
     }
 
-    /** Stops recording and returns the transcript ("" if nothing was said). */
+    private fun window(): FloatArray = synchronized(this) { audio.copyOfRange(windowStart, size) }
+
+    private fun run(samples: FloatArray, audioCtx: Int): String {
+        load()
+        val bytes = WhisperNative.transcribe(handle, samples, THREADS, audioCtx) ?: error("transcription failed")
+        return clean(String(bytes, Charsets.UTF_8))
+    }
+
+    private fun clean(s: String) = s.replace(NON_SPEECH, "").replace(Regex("\\s+"), " ").trim()
+
+    private fun join(a: String, b: String) = listOf(a, b).filter { it.isNotEmpty() }.joinToString(" ")
+
+    /**
+     * Transcript so far, while recording. Uses a shortened encoder window sized to the audio
+     * (much faster than the full 30 s); once the live window passes [WINDOW_SECONDS] it is
+     * transcribed in full, committed, and a new window starts.
+     */
+    fun partial(): String {
+        val samples = window()
+        if (samples.size < RATE / 2) return committed
+        if (samples.size >= RATE * WINDOW_SECONDS) {
+            committed = join(committed, run(samples, 0))
+            synchronized(this) { windowStart += samples.size }
+            return committed
+        }
+        // 50 encoder frames per second of audio, plus margin, rounded up to 64.
+        val ctx = ((samples.size * 50 / RATE + 64 + 63) / 64 * 64).coerceAtMost(1500)
+        return join(committed, run(samples, ctx))
+    }
+
+    /** Stops recording and returns the final transcript ("" if nothing was said). */
     fun stopAndTranscribe(): String {
         recording = false
         recorder?.join()
         recorder = null
-        if (size < RATE / 2) return ""
-        load()
-        val bytes = WhisperNative.transcribe(handle, audio.copyOf(size), THREADS)
-            ?: error("transcription failed")
-        return String(bytes, Charsets.UTF_8).replace(NON_SPEECH, "").replace(Regex("\\s+"), " ").trim()
+        val samples = window()
+        if (samples.size < RATE / 2) return committed
+        return join(committed, run(samples, 0))
     }
 
     fun cancel() {

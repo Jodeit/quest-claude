@@ -78,7 +78,7 @@ class TerminalView @JvmOverloads constructor(
 
         private fun replaceComposing(text: String) {
             val common = composing.commonPrefixWith(text).length
-            repeat(composing.length - common) { input?.key("BSpace") }
+            input?.keys("BSpace", composing.length - common)
             typeText(text.substring(common))
             composing = text
         }
@@ -94,8 +94,8 @@ class TerminalView @JvmOverloads constructor(
         override fun finishComposingText(): Boolean { composing = ""; return true }
 
         override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
-            repeat(beforeLength) { input?.key("BSpace") }
-            repeat(afterLength) { input?.key("DC") }
+            input?.keys("BSpace", beforeLength)
+            input?.keys("DC", afterLength)
             return true
         }
 
@@ -173,6 +173,12 @@ class InputQueue(private val send: (List<String>) -> Unit) {
     }
 
     fun key(name: String) { pending += "K:$name"; flush() }
+
+    /** [name] pressed [count] times, in one tmux call. */
+    fun keys(name: String, count: Int) {
+        if (count <= 0) return
+        if (count == 1) key(name) else { pending += "N:$count:$name"; flush() }
+    }
 
     /** Bracketed paste, so newlines don't submit. */
     fun paste(s: String) { pending += "P:$s"; flush() }

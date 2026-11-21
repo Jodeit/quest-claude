@@ -13,7 +13,9 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
 - **Tabs**: one per tmux session, above the terminal. **＋** starts another Claude (`claude-2`, …),
   tap a tab to switch (typing and the mirror follow it), long-press to close it.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
-  Tap Dictate (or Ctrl+Shift+D), talk, tap Stop (same shortcut; Esc cancels); the text is pasted into Claude's prompt (no Enter). Quest has no speech recognizer
+  Tap Dictate (or Ctrl+Shift+D) and talk: words stream into Claude's prompt as you speak and get
+  corrected as Whisper hears more. Stop (same shortcut) does a final full pass; Esc cancels and
+  removes the text. Nothing is sent until you press Enter. Quest has no speech recognizer
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
