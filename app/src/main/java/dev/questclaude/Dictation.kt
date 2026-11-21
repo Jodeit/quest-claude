@@ -38,9 +38,9 @@ class Dictation(ctx: Context) {
         private const val MAX_SECONDS = 180
         private const val THREADS = 4
         /** Audio past this is transcribed for good and dropped from the live window. */
-        private const val WINDOW_SECONDS = 12
+        private const val WINDOW_SECONDS = 8
         /** The commit cut goes at the quietest spot this far back from the window's end. */
-        private const val CUT_SEARCH_SECONDS = 4
+        private const val CUT_SEARCH_SECONDS = 3
         /** Whisper's markers for non-speech, e.g. [BLANK_AUDIO], (wind blowing). */
         private val NON_SPEECH = Regex("""\[[^\]]*]|\([^)]*\)""")
         /** A phrase of up to 6 words said 3+ times in a row: Whisper stuck in a loop. */
@@ -158,8 +158,13 @@ class Dictation(ctx: Context) {
 
     private fun join(a: String, b: String) = listOf(a, b).filter { it.isNotEmpty() }.joinToString(" ")
 
-    /** Encoder window sized to the audio: 50 frames per second plus margin, rounded up to 64. */
-    private fun audioCtx(samples: Int) = ((samples * 50 / RATE + 64 + 63) / 64 * 64).coerceAtMost(1500)
+    /**
+     * Encoder window sized to the audio: 50 frames per second plus margin, rounded up to 64, and
+     * never under 256 (about 5 s). Whisper gets unreliable on a very short window, which made short
+     * phrases hard to catch; 256 still costs only a fraction of a second.
+     */
+    private fun audioCtx(samples: Int) =
+        ((samples * 50 / RATE + 64 + 63) / 64 * 64).coerceIn(256, 1500)
 
     /** Index of the quietest 50 ms in the last [CUT_SEARCH_SECONDS] of [w], to cut between words. */
     private fun quietCut(w: FloatArray): Int {

@@ -90,6 +90,9 @@ class MainActivity : AppCompatActivity() {
         termScroll = findViewById(R.id.term_scroll)
 
         dictation = Dictation(this)
+        // Load the speech model now, not on the first Dictate, or the first seconds of talking
+        // stream nothing while it loads.
+        if (dictation.hasModel) speech.execute { runCatching { dictation.load() } }
         mic = findViewById(R.id.mic)
         mic.setOnClickListener { toggleDictation() }
         input = InputQueue { ops -> guarded { tmux.input(ops) } }
