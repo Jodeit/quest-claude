@@ -3,6 +3,12 @@
 A lightweight Android companion app for Meta Quest that drives
 [Claude Code](https://claude.com/claude-code) running in Termux.
 
+Open Quest Claude and it starts everything: Wireless debugging, adb on 5555 (`quest up`), tmux in
+Termux, and Claude in a detached tmux session. A live copy of the Claude pane appears above the
+compose box, so you never need to open the Termux window. Termux needs one setting, once:
+`allow-external-apps=true` in `~/.termux/termux.properties`.
+
+- **Terminal mirror**: the Claude tmux pane, refreshed about once a second while the app is in view.
 - **Compose box**: big multiline input; sent via tmux bracketed paste so newlines don't submit early.
 - **Voice dictation**: the system speech recognizer if there is one, otherwise the keyboard's mic.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.

@@ -15,12 +15,13 @@ class ResultReceiver : BroadcastReceiver() {
         val err = r.getInt("err", -1)
         val msg = listOf(r.getString("errmsg"), r.getString("stderr"))
             .filterNot { it.isNullOrBlank() }.joinToString(" · ").trim()
-        listener?.invoke(label, exit == 0 && err <= -1, if (msg.isEmpty()) "exit $exit" else msg)
+        val ok = exit == 0 && err <= -1
+        listener?.invoke(label, ok, if (msg.isEmpty()) "exit $exit" else msg, r.getString("stdout") ?: "")
     }
 
     companion object {
         const val EXTRA_LABEL = "label"
         /** Set by MainActivity while it is visible. */
-        @Volatile var listener: ((label: String, ok: Boolean, message: String) -> Unit)? = null
+        @Volatile var listener: ((label: String, ok: Boolean, message: String, stdout: String) -> Unit)? = null
     }
 }

@@ -34,7 +34,7 @@
             <!-- Default panel size on Quest. -->
             <layout
                 android:defaultWidth="960dp"
-                android:defaultHeight="600dp" />
+                android:defaultHeight="820dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

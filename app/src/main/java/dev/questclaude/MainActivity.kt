@@ -14,6 +14,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,12 +31,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var compose: EditText
     private lateinit var status: TextView
     private lateinit var lastResult: TextView
+    private lateinit var term: TextView
+    private lateinit var termScroll: ScrollView
+    @Volatile private var capturePending = 0L
+    private var started = false
     @Volatile private var adbListening = false
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private val poll = object : Runnable {
         override fun run() { refreshStatus(); main.postDelayed(this, 3000) }
+    }
+    private val mirror = object : Runnable {
+        override fun run() {
+            // Don't pile up captures if Termux is slow to answer.
+            val now = System.currentTimeMillis()
+            if (Termux.isInstalled(this@MainActivity) && Termux.hasPermission(this@MainActivity) &&
+                now - capturePending > 5000
+            ) {
+                capturePending = now
+                try { tmux.capture() } catch (_: Exception) { capturePending = 0 }
+            }
+            main.postDelayed(this, 1200)
+        }
     }
 
     private val askTermuxPermission =
@@ -58,6 +76,8 @@ class MainActivity : AppCompatActivity() {
         compose = findViewById(R.id.compose)
         status = findViewById(R.id.status)
         lastResult = findViewById(R.id.last_result)
+        term = findViewById(R.id.term)
+        termScroll = findViewById(R.id.term_scroll)
 
         findViewById<Button>(R.id.send).setOnClickListener { send() }
         findViewById<Button>(R.id.mic).setOnClickListener { startDictation() }
@@ -78,19 +98,59 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         WirelessDebugging.enable(this) // in case the boot receiver didn't run
-        ResultReceiver.listener = { label, ok, msg ->
+        ResultReceiver.listener = { label, ok, msg, stdout ->
             runOnUiThread {
-                lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
-                lastResult.setTextColor(if (ok) GREEN else RED)
+                if (label == "mirror") showPane(ok, stdout, msg)
+                else {
+                    lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
+                    lastResult.setTextColor(if (ok) GREEN else RED)
+                    if (msg.contains("allow-external-apps")) term.text = getString(R.string.setup_help)
+                }
             }
         }
         main.post(poll)
+        main.post(mirror)
+        autoStart()
     }
 
     override fun onPause() {
         super.onPause()
         ResultReceiver.listener = null
         main.removeCallbacks(poll)
+        main.removeCallbacks(mirror)
+    }
+
+    // ---- Autostart + terminal mirror ----------------------------------------
+
+    /**
+     * Everything that used to need Termux by hand: Wireless debugging, adb on 5555, tmux, and
+     * the Claude session. Runs on every resume; each step is a no-op when already done.
+     */
+    private fun autoStart() {
+        if (!Termux.isInstalled(this) || !Termux.hasPermission(this)) { fixSetup(); return }
+        tmux.ensureSession()
+        io.execute {
+            if (!isListening(5555)) main.post {
+                if (!started) reconnect()
+            }
+            started = true
+        }
+    }
+
+    private fun showPane(ok: Boolean, text: String, msg: String) {
+        capturePending = 0
+        if (!ok) {
+            term.text = if (msg.contains("allow-external-apps")) getString(R.string.setup_help)
+            else "Claude isn't running yet. The first start installs tmux in Termux, which takes " +
+                "about a minute. If it doesn't come up, reopen the app or tap Open Claude."
+            return
+        }
+        val atBottom = !termScroll.canScrollVertically(1)
+        val trimmed = text.trimEnd()
+        if (term.text.toString() != trimmed) {
+            term.text = trimmed
+            if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
+        }
     }
 
     // ---- Compose / send ------------------------------------------------------

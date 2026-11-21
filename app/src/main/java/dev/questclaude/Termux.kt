@@ -47,6 +47,12 @@ object Termux {
 
 /** tmux operations against the session that runs Claude Code. */
 class TmuxBridge(private val ctx: Context, private val settings: Settings) {
+    companion object {
+        /** Size of the detached session; the in-app mirror is laid out for this. */
+        const val COLS = 110
+        const val ROWS = 34
+    }
+
     private val tmux = "${Termux.PREFIX}/bin/tmux"
 
     /** Bracketed-paste the text (so newlines don't submit early), optionally press Enter. */
@@ -73,6 +79,28 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
      * Visible, because the first run prints a link and may ask for confirmation.
      */
     fun openRemote() = open("remote", Settings.REMOTE_SESSION, settings.remoteCommand)
+
+    /**
+     * Make sure tmux is installed and the Claude session is running, without opening a Termux
+     * window. Installs tmux on first run (takes a minute), then starts the session detached.
+     */
+    fun ensureSession() {
+        Termux.sh(
+            ctx, "start",
+            """
+            command -v tmux >/dev/null 2>&1 || yes | pkg install -y tmux >/dev/null 2>&1 ||
+              { echo "couldn't install tmux; run 'pkg install tmux' in Termux" >&2; exit 1; }
+            $tmux has-session -t "${'$'}1" 2>/dev/null ||
+              $tmux new-session -d -s "${'$'}1" -x $COLS -y $ROWS "${'$'}2"
+            """.trimIndent(),
+            settings.session, settings.launchCommand
+        )
+    }
+
+    /** Text of the Claude pane; arrives in ResultReceiver as stdout with label "mirror". */
+    fun capture() {
+        Termux.sh(ctx, "mirror", "exec $tmux capture-pane -p -t \"${'$'}1\" 2>/dev/null", settings.session)
+    }
 
     /** Run the reconnect command (default `quest up`) in the background; result shows in the UI. */
     fun reconnect() {

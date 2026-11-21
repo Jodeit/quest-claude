@@ -53,12 +53,33 @@
         android:textColor="@color/muted"
         android:textSize="15sp" />
 
-    <EditText
-        android:id="@+id/compose"
+    <!-- Read-only mirror of the Claude tmux pane, refreshed while visible. -->
+    <ScrollView
+        android:id="@+id/term_scroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="10dp"
         android:layout_weight="1"
+        android:background="@color/term_bg"
+        android:fillViewport="true"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/term"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="Starting Claude…"
+            android:textColor="@color/fg"
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
+    </ScrollView>
+
+    <EditText
+        android:id="@+id/compose"
+        android:layout_width="match_parent"
+        android:layout_height="110dp"
+        android:layout_marginTop="10dp"
         android:background="@drawable/panel"
         android:gravity="top|start"
         android:hint="Message Claude…"
@@ -67,7 +88,7 @@
         android:padding="14dp"
         android:textColor="@color/fg"
         android:textColorHint="@color/muted"
-        android:textSize="20sp" />
+        android:textSize="18sp" />
 
     <LinearLayout
         android:layout_width="match_parent"
