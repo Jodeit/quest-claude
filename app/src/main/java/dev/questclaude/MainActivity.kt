@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tmux: TmuxBridge
     private lateinit var status: TextView
     private lateinit var lastResult: TextView
+    private lateinit var dictationStatus: TextView
     private lateinit var term: TerminalView
     private lateinit var input: InputQueue
     private lateinit var ansi: Ansi
@@ -83,6 +84,7 @@ class MainActivity : AppCompatActivity() {
 
         status = findViewById(R.id.status)
         lastResult = findViewById(R.id.last_result)
+        dictationStatus = findViewById(R.id.dictation_status)
         term = findViewById(R.id.term)
         termScroll = findViewById(R.id.term_scroll)
 
@@ -278,7 +280,7 @@ class MainActivity : AppCompatActivity() {
         typeStreamed("") // take back what was typed live
         streamed = ""
         mic.text = getString(R.string.dictate)
-        showResult("dictation cancelled", AMBER)
+        showDictation("dictation cancelled", AMBER, hideAfterMs = 3000)
     }
 
     private fun toggleDictation() {
@@ -296,19 +298,19 @@ class MainActivity : AppCompatActivity() {
         if (dictation.hasModel) { startRecording(); return }
         dictationBusy = true
         mic.isEnabled = false
-        showResult("… downloading the speech model (${Dictation.MODEL_MB} MB, once)", AMBER)
+        showDictation("… downloading the speech model (${Dictation.MODEL_MB} MB, once)", AMBER)
         speech.execute {
             try {
                 dictation.downloadModel { pct ->
                     if (pct >= 0) main.post {
-                        showResult("… downloading the speech model: $pct% of ${Dictation.MODEL_MB} MB", AMBER)
+                        showDictation("… downloading the speech model: $pct% of ${Dictation.MODEL_MB} MB", AMBER)
                     }
                 }
                 main.post { dictationBusy = false; mic.isEnabled = true; startRecording() }
             } catch (e: Exception) {
                 main.post {
                     dictationBusy = false; mic.isEnabled = true
-                    showResult("✗ dictation: ${e.message}", RED)
+                    showDictation("✗ dictation: ${e.message}", RED)
                 }
             }
         }
@@ -318,14 +320,14 @@ class MainActivity : AppCompatActivity() {
         try {
             dictation.start()
         } catch (e: Exception) {
-            showResult("✗ dictation: ${e.message}", RED); return
+            showDictation("✗ dictation: ${e.message}", RED); return
         }
         streamed = ""
         dictationSession = settings.session
         speech.execute { runCatching { dictation.load() } } // warm up while you talk
         speech.execute(::streamPartial)
         mic.text = "■ Stop"
-        showResult("● listening — Stop or Ctrl+Shift+D to finish, Esc to cancel", RED)
+        showDictation("● listening — Stop or Ctrl+Shift+D to finish, Esc to cancel", RED)
     }
 
     /** Text dictation has typed into the prompt so far, so updates can be sent as edits. */
@@ -357,7 +359,7 @@ class MainActivity : AppCompatActivity() {
         dictationBusy = true
         mic.isEnabled = false
         mic.text = "… Transcribing"
-        showResult("… transcribing", AMBER)
+        showDictation("… transcribing", AMBER)
         speech.execute {
             val result = runCatching { dictation.stopAndTranscribe() }
             main.post {
@@ -370,9 +372,9 @@ class MainActivity : AppCompatActivity() {
                     typeStreamed(text)
                     streamed = ""
                     term.requestFocus()
-                    if (text.isEmpty()) showResult("✗ didn't catch anything", AMBER)
-                    else showResult("✓ dictated — press Enter to send", GREEN)
-                }.onFailure { streamed = ""; showResult("✗ dictation: ${it.message}", RED) }
+                    if (text.isEmpty()) showDictation("✗ didn't catch anything", AMBER, hideAfterMs = 4000)
+                    else showDictation("✓ dictated — press Enter to send", GREEN, hideAfterMs = 4000)
+                }.onFailure { streamed = ""; showDictation("✗ dictation: ${it.message}", RED) }
             }
         }
     }
@@ -380,6 +382,17 @@ class MainActivity : AppCompatActivity() {
     private fun showResult(text: String, color: Int) {
         lastResult.text = text
         lastResult.setTextColor(color)
+    }
+
+    private val hideDictation = Runnable { dictationStatus.visibility = View.GONE }
+
+    /** Dictation progress goes on the line above the mic button, not in the header. */
+    private fun showDictation(text: String, color: Int, hideAfterMs: Long = 0) {
+        main.removeCallbacks(hideDictation)
+        dictationStatus.text = text
+        dictationStatus.setTextColor(color)
+        dictationStatus.visibility = View.VISIBLE
+        if (hideAfterMs > 0) main.postDelayed(hideDictation, hideAfterMs)
     }
 
     // ---- Key bar -------------------------------------------------------------
@@ -415,16 +428,20 @@ class MainActivity : AppCompatActivity() {
             val port = isListening(5555)
             adbListening = port
             main.post {
-                val parts = listOf(
-                    dot(termux) + " Termux",
-                    dot(perm) + " RUN_COMMAND",
-                    dot(adbOn) + " USB debugging",
-                    dot(WirelessDebugging.isOn(this)) + " Wireless debugging" +
-                        (if (WirelessDebugging.canEnable(this)) "" else " (no auto-enable)"),
-                    dot(port) + " adb :5555 " + (if (port) "listening" else "closed"),
+                val checks = listOf(
+                    termux to "Termux",
+                    perm to "RUN_COMMAND",
+                    adbOn to "USB debugging",
+                    WirelessDebugging.isOn(this) to "Wireless debugging",
+                    port to "adb :5555",
                 )
-                status.text = parts.joinToString("    ")
-                status.setTextColor(if (termux && perm && port) GREEN else AMBER)
+                checklist = checks.joinToString("\n") { (ok, name) -> "${dot(ok)} $name" } +
+                    (if (WirelessDebugging.canEnable(this)) "" else "\n(Wireless debugging can't auto-enable)")
+                // Termux, RUN_COMMAND and the adb port are what matter; the full list is one tap away.
+                val ready = termux && perm && port
+                status.text = if (ready) "● Ready"
+                else "○ " + checks.filterNot { it.first }.joinToString(", ") { "no ${it.second}" }
+                status.setTextColor(if (ready) GREEN else AMBER)
             }
         }
     }
@@ -435,6 +452,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun dot(ok: Boolean) = if (ok) "●" else "○"
 
+    /** Every setup check with its dot, for the dialog behind the status pill. */
+    private var checklist = ""
+
     private fun fixSetup() {
         when {
             !Termux.isInstalled(this) -> toast("Install Termux (F-Droid build) first")
@@ -442,7 +462,7 @@ class MainActivity : AppCompatActivity() {
             !adbListening -> reconnect()
             else -> AlertDialog.Builder(this)
                 .setTitle("Setup checklist")
-                .setMessage(getString(R.string.setup_help))
+                .setMessage(checklist + "\n\n" + getString(R.string.setup_help))
                 .setPositiveButton("OK", null)
                 .show()
         }

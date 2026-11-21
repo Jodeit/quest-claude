@@ -20,6 +20,20 @@
             android:textSize="22sp"
             android:textStyle="bold" />
 
+        <!-- One dot for the whole setup: "Ready" when everything's up, otherwise what isn't.
+             Tap it to fix the first problem (or see the checklist). -->
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:background="@drawable/panel"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:text="○ Checking…"
+            android:textColor="@color/muted"
+            android:textSize="14sp" />
+
         <!-- Result of the last command; lives in the header so it never crowds the key bar. -->
         <TextView
             android:id="@+id/last_result"
@@ -52,17 +66,6 @@
             style="@style/QcButton.Secondary"
             android:text="⚙" />
     </LinearLayout>
-
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:background="@drawable/panel"
-        android:padding="10dp"
-        android:text="Checking…"
-        android:textColor="@color/muted"
-        android:textSize="15sp" />
 
     <!-- One tab per tmux session. Tap to switch, long-press to close, + for a new Claude. -->
     <LinearLayout
@@ -115,11 +118,20 @@
             android:textSize="12sp" />
     </ScrollView>
 
+    <!-- Dictation progress (listening / transcribing / done), right above the mic button. -->
+    <TextView
+        android:id="@+id/dictation_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
     <!-- Tap the terminal (or ⌨) to type into Claude; a hardware keyboard works once it has focus. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="6dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 

@@ -2,6 +2,7 @@
 # One-time setup inside proot Ubuntu on the headset. Safe to re-run.
 #   - puts `quest` on PATH
 #   - installs the `quest` skill for every Claude session (~/.claude/skills/quest)
+#   - sets the Claude status line (model, context, plan usage) unless you have your own
 #   - sets ANDROID_SERIAL and puts ~/.local/bin (claude) on PATH for login shells
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,6 +18,22 @@ fi
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$repo/skills/quest" "$HOME/.claude/skills/quest"
 echo "skill -> ~/.claude/skills/quest"
+
+# Status line: model · context used · plan usage (5h / 7d) with time to reset.
+settings="$HOME/.claude/settings.json"
+python3 - "$settings" "$repo/scripts/statusline.py" <<'PY'
+import json, os, sys
+path, script = sys.argv[1], sys.argv[2]
+d = json.load(open(path)) if os.path.exists(path) else {}
+cmd = f"python3 {script}"
+cur = (d.get("statusLine") or {}).get("command", "")
+if cur and "statusline.py" not in cur:
+    print(f"status line: keeping your own ({cur})")
+else:
+    d["statusLine"] = {"type": "command", "command": cmd}
+    json.dump(d, open(path, "w"), indent=2)
+    print("status line -> " + cmd)
+PY
 
 # Login shells too: the app starts claude with `bash -lc`, and Ubuntu's .bashrc stops early
 # in non-interactive shells, so ~/.local/bin (where claude lives) must be on PATH in ~/.profile.

@@ -58,7 +58,8 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
 
     /**
      * Typed input, in order: "L:text" literal keys, "K:name" a tmux key name (Enter, C-c, BTab,
-     * Up, ...), "N:count:name" that key repeated, "P:text" a bracketed paste. Result arrives with label "input"; any tmux error
+     * Up, ...), "N:count:name" that key repeated, "P:text" a bracketed paste, "S:lines" scroll
+     * back (positive) or forward (negative). Result arrives with label "input"; any tmux error
      * shows up as stdout rather than a failed command, since Termux posts a notification for
      * every failure and this runs per keystroke batch.
      */
@@ -71,6 +72,19 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
                 K:*) $tmux send-keys -t "${'$'}t" "${'$'}{a#K:}" ;;
                 N:*) n="${'$'}{a#N:}"; $tmux send-keys -t "${'$'}t" -N "${'$'}{n%%:*}" "${'$'}{n#*:}" ;;
                 P:*) $tmux set-buffer -b qc -- "${'$'}{a#P:}" && $tmux paste-buffer -p -d -b qc -t "${'$'}t" ;;
+                S:*) n="${'$'}{a#S:}"; m="${'$'}{n#-}"
+                  if [ "${'$'}($tmux display -p -t "${'$'}t" '#{mouse_any_flag}')" = 1 ]; then
+                    # Claude's fullscreen view keeps the transcript itself and asks for the mouse:
+                    # send it SGR wheel events (64 = up, 65 = down), one per line.
+                    b=64; [ "${'$'}n" = "${'$'}m" ] || b=65; w=""
+                    while [ "${'$'}m" -gt 0 ]; do w="${'$'}w${'$'}(printf '\033[<%d;2;2M' ${'$'}b)"; m=${'$'}((m - 1)); done
+                    $tmux send-keys -t "${'$'}t" -l -- "${'$'}w"
+                  elif [ "${'$'}n" = "${'$'}m" ]; then
+                    # Anything else: tmux's own scrollback, via copy mode (-e leaves it at the bottom).
+                    $tmux copy-mode -e -t "${'$'}t" && $tmux send-keys -t "${'$'}t" -X -N "${'$'}m" scroll-up
+                  elif [ "${'$'}($tmux display -p -t "${'$'}t" '#{pane_in_mode}')" = 1 ]; then
+                    $tmux send-keys -t "${'$'}t" -X -N "${'$'}m" scroll-down
+                  fi ;;
               esac
             done 2>&1
             exit 0
@@ -122,10 +136,22 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         Termux.sh(
             ctx, "mirror",
             // Line 1: all session names, tab-separated (for the tab strip). Line 2: cursor column,
-            // row and visibility. Then the pane with color escapes.
-            "$tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\\n' '\\t'; echo;" +
-                " $tmux display -p -t \"=${'$'}1:\" '#{cursor_x} #{cursor_y} #{cursor_flag}' 2>/dev/null &&" +
-                " $tmux capture-pane -p -e -t \"=${'$'}1:\" 2>/dev/null || echo $NO_SESSION; exit 0",
+            // row and visibility. Then the pane with color escapes; if it's scrolled back in copy
+            // mode, the lines it's showing, with no cursor.
+            """
+            t="=${'$'}1:"
+            $tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' '\t'; echo
+            set -- ${'$'}($tmux display -p -t "${'$'}t" '#{cursor_x} #{cursor_y} #{cursor_flag} #{pane_in_mode} #{scroll_position} #{pane_height}' 2>/dev/null)
+            [ ${'$'}# -ge 3 ] || { echo $NO_SESSION; exit 0; }
+            if [ "${'$'}4" = 1 ] && [ -n "${'$'}5" ]; then
+              echo "${'$'}1 ${'$'}2 0"
+              $tmux capture-pane -p -e -t "${'$'}t" -S "-${'$'}5" -E "${'$'}((${'$'}6 - 1 - ${'$'}5))" 2>/dev/null
+            else
+              echo "${'$'}1 ${'$'}2 ${'$'}3"
+              $tmux capture-pane -p -e -t "${'$'}t" 2>/dev/null
+            fi
+            exit 0
+            """.trimIndent(),
             settings.session
         )
     }

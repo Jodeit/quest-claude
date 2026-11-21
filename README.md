@@ -66,7 +66,8 @@ Inside proot Ubuntu, from a clone of this repo:
 scripts/setup.sh
 ```
 
-That puts `quest` on the PATH and links `skills/quest` into `~/.claude/skills/`, so every Claude
+That sets a Claude status line showing context use and your plan usage (5-hour and 7-day limits,
+with time to reset) in every tab, puts `quest` on the PATH and links `skills/quest` into `~/.claude/skills/`, so every Claude
 session on the headset knows to run `quest up` first and how to take screenshots, open pages,
 launch apps and send input. Run `quest help` for the full command list.
 

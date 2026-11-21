@@ -28,12 +28,65 @@ class TerminalView @JvmOverloads constructor(
         private const val BASE_SP = 12f
         private const val MIN_SP = 8f
         private const val MAX_SP = 20f
+        /** Transcript lines per thumbstick/wheel notch. */
+        private const val WHEEL_LINES = 3f
     }
 
     init {
         isFocusable = true
         isFocusableInTouchMode = true
         setOnClickListener { showKeyboard() }
+    }
+
+    // ---- Scrolling: thumbstick / wheel, and pinch-drag -------------------------
+    // The mirror only ever shows Claude's screen, so scrolling doesn't move this view: it's
+    // sent to Claude (as mouse wheel events) and the next capture shows the earlier messages.
+
+    private val touchSlop = android.view.ViewConfiguration.get(ctx).scaledTouchSlop
+    private var scrollAcc = 0f
+    private var downY = 0f
+    private var lastY = 0f
+    private var dragging = false
+
+    private fun scrollBy(lines: Float) {
+        scrollAcc += lines
+        val whole = scrollAcc.toInt()
+        if (whole != 0) { scrollAcc -= whole; input?.scroll(whole) }
+    }
+
+    /** Controller thumbstick (and mouse wheel): positive AXIS_VSCROLL means up, i.e. back. */
+    override fun onGenericMotionEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_SCROLL) {
+            val v = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
+            if (v != 0f) { scrollBy(v * WHEEL_LINES); return true }
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    /** Pinch (or finger) and drag: the text follows your hand, a line per line height. Tap still types. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                downY = event.y; lastY = event.y; dragging = false; scrollAcc = 0f
+                parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                if (!dragging && kotlin.math.abs(event.y - downY) > touchSlop) {
+                    dragging = true; lastY = event.y
+                    cancelLongPress()
+                }
+                if (dragging) {
+                    scrollBy((event.y - lastY) / lineHeight.coerceAtLeast(1))
+                    lastY = event.y
+                    return true
+                }
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                if (dragging) { dragging = false; return true }
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     /**
@@ -165,6 +218,17 @@ class InputQueue(private val send: (List<String>) -> Unit) {
     private val pending = mutableListOf<String>()
     private var inFlight = false
     private val timeout = Runnable { inFlight = false; flush() }
+
+    /** Scroll Claude's transcript [lines] back (positive) or forward (negative). */
+    fun scroll(lines: Int) {
+        if (lines == 0) return
+        val last = pending.lastIndex
+        if (last >= 0 && pending[last].startsWith("S:")) {
+            val sum = pending[last].removePrefix("S:").toInt() + lines
+            if (sum == 0) pending.removeAt(last) else pending[last] = "S:$sum"
+        } else pending += "S:$lines"
+        flush()
+    }
 
     fun literal(s: String) {
         val last = pending.lastIndex
