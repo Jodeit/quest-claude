@@ -68,7 +68,7 @@ awake() {
 }
 
 shot() {
-  local mode=eye out=
+  local mode=view out=
   while [ $# -gt 0 ]; do
     case $1 in
       -f|--full) mode=full ;;
@@ -78,10 +78,18 @@ shot() {
   done
   mkdir -p "$SHOTS"
   out=${out:-$SHOTS/shot-$(date +%Y%m%d-%H%M%S).png}
-  local raw=$out
-  [ "$mode" = raw ] || raw=$(mktemp --suffix=.png)
-  a exec-out screencap -p >"$raw" || die "screencap failed"
-  [ -s "$raw" ] || die "screencap returned nothing"
+  local raw
+  if [ "$mode" = view ]; then
+    # What the wearer sees (passthrough + panels), via the headset's own screenshot service.
+    # Plain screencap misses the compositor's layers and often comes back black.
+    raw=$(view_capture) || { say "quest: screenshot service gave nothing; falling back to screencap"; mode=eye; }
+  fi
+  if [ "$mode" != view ]; then
+    raw=$out
+    [ "$mode" = raw ] || raw=$(mktemp --suffix=.png)
+    a exec-out screencap -p >"$raw" || die "screencap failed"
+    [ -s "$raw" ] || die "screencap returned nothing"
+  fi
   if [ "$mode" != raw ]; then
     python3 - "$raw" "$out" "$mode" <<'PY'
 import sys
@@ -98,6 +106,26 @@ PY
     rm -f "$raw"
   fi
   echo "$out"
+}
+
+# Takes a screenshot with com.oculus.metacam, pulls it to a temp file, prints its path and
+# deletes it from the headset (so Oculus/Screenshots doesn't fill up with ours).
+view_capture() {
+  local dir=/sdcard/Oculus/Screenshots before f i tmp
+  before=$(a shell ls -t "$dir" 2>/dev/null | head -1 | tr -d '\r')
+  a shell am startservice -n com.oculus.metacam/.capture.CaptureService -a TAKE_SCREENSHOT >/dev/null 2>&1 || return 1
+  for i in $(seq 20); do
+    sleep 0.5
+    f=$(a shell ls -t "$dir" 2>/dev/null | head -1 | tr -d '\r')
+    [ -n "$f" ] && [ "$f" != "$before" ] && break
+    f=
+  done
+  [ -n "$f" ] || return 1
+  sleep 0.5 # let the service finish writing the file
+  tmp=$(mktemp --suffix=."${f##*.}")
+  a pull "$dir/$f" "$tmp" >/dev/null 2>&1 && [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+  a shell rm -f "$dir/$f" >/dev/null 2>&1
+  echo "$tmp"
 }
 
 # Quest Browser text over the Chrome DevTools protocol (no screenshot needed).
@@ -224,8 +252,8 @@ quest — control this Quest over its own adb (self-heals the connection)
   quest up                  reconnect (finds Wireless debugging port, reopens 5555) + keep awake
   quest status              connection, battery, focused app
   quest awake | sleep       override proximity sensor so it stays on | restore normal
-  quest shot [-f|-r] [out]  screenshot -> path. default: left eye, cropped, <=1400px
-                            -f both eyes (downscaled), -r raw full-res
+  quest shot [-f|-r] [out]  screenshot of what the wearer sees -> path (<=1400px).
+                            screencap instead: -f both eyes (downscaled), -r raw full-res
   quest open <url>          open URL in the browser
   quest launch <name|pkg>   launch an app (substring match on package name)
   quest stop <name|pkg>     force-stop an app

@@ -33,7 +33,7 @@ Run `quest help` for exact usage. The main ones:
 | `quest status` | adb, battery, wakefulness |
 | `quest read [match]` | text of a Quest Browser tab via DevTools (`-l` lists tabs, `-a` whole page) |
 | `quest term [-n N]` | text of the Termux tmux pane Quest Claude drives (session `claude`) |
-| `quest shot` | screenshot → prints a path under `~/quest-shots/`; then **Read that file** to see it |
+| `quest shot` | screenshot of what the wearer sees (passthrough + panels) → prints a path under `~/quest-shots/`; then **Read that file** to see it. `-f`/`-r` use raw screencap instead, which often comes back black |
 | `quest focus` | which app/window has focus |
 | `quest open <url>` | open a URL in the Quest Browser |
 | `quest apps` / `quest launch <pkg>` | list / start apps |
