@@ -51,6 +51,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         /** Size of the detached session; the in-app mirror is laid out for this. */
         const val COLS = 110
         const val ROWS = 34
+        const val NO_SESSION = "__QC_NO_SESSION__"
     }
 
     private val tmux = "${Termux.PREFIX}/bin/tmux"
@@ -99,7 +100,12 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
 
     /** Text of the Claude pane; arrives in ResultReceiver as stdout with label "mirror". */
     fun capture() {
-        Termux.sh(ctx, "mirror", "exec $tmux capture-pane -p -t \"${'$'}1\" 2>/dev/null", settings.session)
+        // Always exit 0: Termux posts a notification for every failed plugin command.
+        Termux.sh(
+            ctx, "mirror",
+            "$tmux capture-pane -p -t \"${'$'}1\" 2>/dev/null || echo $NO_SESSION; exit 0",
+            settings.session
+        )
     }
 
     /** Run the reconnect command (default `quest up`) in the background; result shows in the UI. */

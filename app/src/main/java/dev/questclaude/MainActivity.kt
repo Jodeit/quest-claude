@@ -35,6 +35,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var termScroll: ScrollView
     @Volatile private var capturePending = 0L
     private var started = false
+    /** Set when Termux rejects a command, so we don't post an error notification every second. */
+    @Volatile private var mirrorStopped = false
     @Volatile private var adbListening = false
 
     private val main = Handler(Looper.getMainLooper())
@@ -46,6 +48,7 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             // Don't pile up captures if Termux is slow to answer.
             val now = System.currentTimeMillis()
+            if (mirrorStopped) return
             if (Termux.isInstalled(this@MainActivity) && Termux.hasPermission(this@MainActivity) &&
                 now - capturePending > 5000
             ) {
@@ -104,11 +107,16 @@ class MainActivity : AppCompatActivity() {
                 else {
                     lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
                     lastResult.setTextColor(if (ok) GREEN else RED)
-                    if (msg.contains("allow-external-apps")) term.text = getString(R.string.setup_help)
+                    if (msg.contains("allow-external-apps")) {
+                        mirrorStopped = true
+                        main.removeCallbacks(mirror)
+                        term.text = getString(R.string.setup_help)
+                    }
                 }
             }
         }
         main.post(poll)
+        mirrorStopped = false
         main.post(mirror)
         autoStart()
     }
@@ -140,9 +148,17 @@ class MainActivity : AppCompatActivity() {
     private fun showPane(ok: Boolean, text: String, msg: String) {
         capturePending = 0
         if (!ok) {
+            // Termux refused the command itself (e.g. allow-external-apps is off). Retrying every
+            // second would only pile up notifications, so stop until the app is reopened.
+            mirrorStopped = true
+            main.removeCallbacks(mirror)
             term.text = if (msg.contains("allow-external-apps")) getString(R.string.setup_help)
-            else "Claude isn't running yet. The first start installs tmux in Termux, which takes " +
-                "about a minute. If it doesn't come up, reopen the app or tap Open Claude."
+            else "Termux refused the command: $msg\n\nReopen the app to retry."
+            return
+        }
+        if (text.contains(TmuxBridge.NO_SESSION)) {
+            term.text = "Claude isn't running yet. The first start installs tmux in Termux, which " +
+                "takes about a minute. If it doesn't come up, reopen the app or tap Open Claude."
             return
         }
         val atBottom = !termScroll.canScrollVertically(1)
