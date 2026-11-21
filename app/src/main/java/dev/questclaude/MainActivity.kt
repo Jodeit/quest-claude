@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity() {
         input = InputQueue { ops -> guarded { tmux.input(ops) } }
         ansi = Ansi(getColor(R.color.fg), getColor(R.color.term_bg))
         term.input = input
+        term.onScroll = ::previewScroll
         findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
         tabs = findViewById(R.id.tabs)
         findViewById<Button>(R.id.new_tab).setOnClickListener { newSession() }
@@ -119,6 +120,8 @@ class MainActivity : AppCompatActivity() {
                     pickingProject = false
                     pickProject(stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }.sorted())
                 } else if (label == "input") {
+                    // Another scroll is already queued: this pane is behind the preview.
+                    val stale = input.scrollQueued
                     input.done()
                     // Errors, then "PANE_MARK session" and the pane as it was right after the keys.
                     val mark = stdout.indexOf(TmuxBridge.PANE_MARK)
@@ -126,7 +129,8 @@ class MainActivity : AppCompatActivity() {
                     if (errors.isNotBlank()) showResult("✗ typing: ${errors.trim()}", RED)
                     val nl = if (mark >= 0) stdout.indexOf('\n', mark) else -1
                     val sess = if (nl >= 0) stdout.substring(mark + TmuxBridge.PANE_MARK.length + 1, nl) else null
-                    if (sess == settings.session) showPane(true, stdout.substring(nl + 1), "")
+                    if (stale) Unit
+                    else if (sess == settings.session) showPane(true, stdout.substring(nl + 1), "")
                     else refreshPaneSoon()
                 } else {
                     lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
@@ -193,6 +197,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (text == lastPane) return
+        if (input.scrolling) return // taken mid-scroll; the scroll's own result follows
         lastPane = text
         // First line is "cursor_x cursor_y cursor_flag"; Claude hides the real cursor and draws its own.
         val nl = text.indexOf('\n')
@@ -201,8 +206,39 @@ class MainActivity : AppCompatActivity() {
         val cursor = if (head.getOrNull(2) == "1")
             head[0].toIntOrNull()?.let { x -> head[1].toIntOrNull()?.let { y -> x to y } } else null
         val atBottom = !termScroll.canScrollVertically(1)
+        shownLines = pane.trimEnd().split('\n')
         term.text = ansi.render(pane.trimEnd(), cursor)
         if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** Raw (ANSI) lines of the pane on screen, for [previewScroll]. */
+    private var shownLines: List<String>? = null
+    private val ansiEscape = Regex("\u001B\\[[0-9;?]*[A-Za-z]")
+
+    /**
+     * Move Claude's transcript right away, before the scroll reaches Claude and comes back
+     * (~150 ms): shift the lines above the input box by [lines] (Claude scrolls about one line
+     * per wheel event), leaving a pinned prompt header at the top in place. The real pane
+     * replaces this as soon as it arrives.
+     */
+    private fun previewScroll(lines: Int) {
+        val cur = shownLines ?: return
+        val plain = cur.map { ansiEscape.replace(it, "") }
+        // Claude's input box: the last rule directly above a ❯ line.
+        val box = (plain.size - 2 downTo 0).firstOrNull {
+            plain[it].startsWith("────") && plain[it + 1].startsWith("❯")
+        } ?: return
+        val top = if (plain.first().startsWith("❯")) 1 else 0
+        // Already at the bottom: Claude won't scroll further down, so neither do we.
+        if (lines < 0 && plain.subList(top, box).none { "Jump to bottom" in it }) return
+        val region = cur.subList(top, box)
+        if (region.isEmpty()) return
+        val n = lines.coerceIn(-region.size, region.size)
+        val shifted = if (n > 0) List(n) { "" } + region.dropLast(n) else region.drop(-n) + List(-n) { "" }
+        val next = cur.subList(0, top) + shifted + cur.subList(box, cur.size)
+        shownLines = next
+        lastPane = "" // so the real pane is drawn even if it matches the last capture
+        term.text = ansi.render(next.joinToString("\n"), null)
     }
 
     // ---- Sessions (tabs) -------------------------------------------------------

@@ -23,6 +23,8 @@ class TerminalView @JvmOverloads constructor(
 ) : AppCompatTextView(ctx, attrs) {
 
     var input: InputQueue? = null
+    /** Lines scrolled back (positive) or forward, before they're sent; for a local preview. */
+    var onScroll: ((Int) -> Unit)? = null
 
     companion object {
         private const val BASE_SP = 12f
@@ -51,7 +53,7 @@ class TerminalView @JvmOverloads constructor(
     private fun scrollBy(lines: Float) {
         scrollAcc += lines
         val whole = scrollAcc.toInt()
-        if (whole != 0) { scrollAcc -= whole; input?.scroll(whole) }
+        if (whole != 0) { scrollAcc -= whole; onScroll?.invoke(whole); input?.scroll(whole) }
     }
 
     /** Controller thumbstick (and mouse wheel): positive AXIS_VSCROLL means up, i.e. back. */
@@ -218,6 +220,11 @@ class InputQueue(private val send: (List<String>) -> Unit) {
     private val pending = mutableListOf<String>()
     private var inFlight = false
     private var sentAt = 0L
+    private var scrollInFlight = false
+    /** A scroll is queued: captures taken before it runs would jump back. */
+    val scrollQueued get() = pending.any { it.startsWith("S:") }
+    /** A scroll is queued or running, so a capture taken now may be out of date. */
+    val scrolling get() = scrollQueued || (inFlight && scrollInFlight)
     private val timeout = Runnable { inFlight = false; flush() }
 
     /** Scroll Claude's transcript [lines] back (positive) or forward (negative). */
@@ -265,6 +272,7 @@ class InputQueue(private val send: (List<String>) -> Unit) {
         pending.clear()
         inFlight = true
         sentAt = System.currentTimeMillis()
+        scrollInFlight = ops.any { it.startsWith("S:") }
         main.postDelayed(timeout, 4000)
         send(ops)
     }
