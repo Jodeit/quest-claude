@@ -37,7 +37,25 @@ class TerminalView @JvmOverloads constructor(
     init {
         isFocusable = true
         isFocusableInTouchMode = true
-        setOnClickListener { showKeyboard() }
+        setOnClickListener { if (!tapControl()) showKeyboard() }
+    }
+
+    // ---- Tapping Claude's controls (see TapTargets) -----------------------------
+
+    private var tapX = 0f
+    private var tapY = 0f
+
+    /** Tap on a marked option or shortcut hint: send its key. False if the tap missed them all. */
+    private fun tapControl(): Boolean {
+        val q = input ?: return false
+        if (layout == null) return false
+        val off = getOffsetForPosition(tapX, tapY)
+        if (off < 0) return false
+        val tap = TapTargets.at(text, off) ?: return false
+        Log.i("QuestClaude", "tap control key=${tap.key} literal=${tap.literal}")
+        tap.key?.let(q::key)
+        tap.literal?.let(q::literal)
+        return true
     }
 
     // ---- Scrolling: thumbstick / wheel, and pinch-drag -------------------------
@@ -72,6 +90,7 @@ class TerminalView @JvmOverloads constructor(
     /** Pinch (or finger) and drag: the text follows your hand, a line per line height. Tap still types. */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) { tapX = event.x; tapY = event.y }
         if (!remoteScroll) { dragging = false; return super.onTouchEvent(event) }
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {

@@ -233,7 +233,7 @@ class MainActivity : AppCompatActivity() {
             head[0].toIntOrNull()?.let { x -> head[1].toIntOrNull()?.let { y -> x to y } } else null
         val atBottom = !termScroll.canScrollVertically(1)
         shownLines = pane.trimEnd().split('\n')
-        term.text = ansi.render(pane.trimEnd(), cursor)
+        term.text = TapTargets.mark(ansi.render(pane.trimEnd(), cursor))
         if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
@@ -332,7 +332,7 @@ class MainActivity : AppCompatActivity() {
         val next = cur.subList(0, top) + shifted + cur.subList(box, cur.size)
         shownLines = next
         lastPane = "" // so the real pane is drawn even if it matches the last capture
-        term.text = ansi.render(next.joinToString("\n"), null)
+        term.text = TapTargets.mark(ansi.render(next.joinToString("\n"), null))
     }
 
     // ---- Sessions (tabs) -------------------------------------------------------
