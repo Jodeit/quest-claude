@@ -13,13 +13,24 @@
         android:orientation="horizontal">
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:text="@string/app_name"
             android:textColor="@color/accent"
             android:textSize="22sp"
             android:textStyle="bold" />
+
+        <!-- Result of the last command; lives in the header so it never crowds the key bar. -->
+        <TextView
+            android:id="@+id/last_result"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="@color/muted"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/reconnect"
@@ -123,25 +134,11 @@
             android:text="Send" />
     </LinearLayout>
 
-    <HorizontalScrollView
+    <!-- Keys share the width evenly so the whole bar always fits the panel. -->
+    <LinearLayout
+        android:id="@+id/keybar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:scrollbars="none">
-
-        <LinearLayout
-            android:id="@+id/keybar"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal" />
-    </HorizontalScrollView>
-
-    <TextView
-        android:id="@+id/last_result"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:maxLines="2"
-        android:textColor="@color/muted"
-        android:textSize="13sp" />
+        android:orientation="horizontal" />
 </LinearLayout>
