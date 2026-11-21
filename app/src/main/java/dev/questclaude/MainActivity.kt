@@ -422,25 +422,25 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Microgestures --------------------------------------------------------
 
-    /** When the last swipe switched tabs; one thumb swipe can arrive as a few scroll events. */
+    /** When the last horizontal scroll came in; one swipe arrives as several scroll events. */
     private var lastSwipeAt = 0L
 
     /**
-     * A thumb swipe left/right along the index finger (a Horizon OS microgesture) reaches 2D
-     * apps as a horizontal scroll: switch to the previous/next tab. Vertical swipes are left
-     * alone, so they keep scrolling the terminal.
+     * A horizontal scroll switches to the previous/next tab; vertical ones keep scrolling the
+     * terminal. Meant for thumb swipes along the index finger (Horizon OS microgestures reach
+     * 2D apps as scrolls), though as of v210 the system keeps them and only a controller
+     * stick's sideways scroll gets here.
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
             val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
             val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-            Log.d("QuestClaude", "scroll h=$h v=$v source=0x${Integer.toHexString(event.source)} device=${event.device?.name}")
             if (h != 0f && Math.abs(h) > Math.abs(v)) {
+                // One switch per swipe or stick push: a held stick streams scrolls, so only a
+                // scroll after a 300 ms lull starts a new switch.
                 val now = event.eventTime
-                if (now - lastSwipeAt > 400) {
-                    lastSwipeAt = now
-                    cycleTab(if (h > 0) 1 else -1)
-                }
+                if (now - lastSwipeAt > 300) cycleTab(if (h > 0) 1 else -1)
+                lastSwipeAt = now
                 return true
             }
         }
@@ -553,6 +553,12 @@ class MainActivity : AppCompatActivity() {
      * Caught here, before the terminal, so Ctrl+Shift+D never reaches Claude as Ctrl+D (exit).
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Ctrl+Tab / Ctrl+Shift+Tab: next / previous tab, like a browser. Caught before the terminal
+        // so Claude doesn't also get a Tab.
+        if (event.keyCode == KeyEvent.KEYCODE_TAB && event.isCtrlPressed) {
+            if (event.action == KeyEvent.ACTION_DOWN) cycleTab(if (event.isShiftPressed) -1 else 1)
+            return true
+        }
         val dictateKey = (event.keyCode == KeyEvent.KEYCODE_D && event.isCtrlPressed && event.isShiftPressed) ||
             event.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST
         val cancelKey = event.keyCode == KeyEvent.KEYCODE_ESCAPE && dictation.recording && !dictationBusy
