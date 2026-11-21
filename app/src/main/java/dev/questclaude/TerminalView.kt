@@ -32,10 +32,6 @@ class TerminalView @JvmOverloads constructor(
         private const val MAX_SP = 20f
         /** Transcript lines per thumbstick/wheel notch. */
         private const val WHEEL_LINES = 3f
-        /** No stick event for this long: it was released, so the next push is a new press. */
-        private const val STICK_GAP_MS = 180L
-        private const val REPEAT_DELAY_MS = 450L
-        private const val REPEAT_EVERY_MS = 130L
     }
 
     init {
@@ -64,35 +60,9 @@ class TerminalView @JvmOverloads constructor(
     override fun onGenericMotionEvent(event: android.view.MotionEvent): Boolean {
         if (event.action == android.view.MotionEvent.ACTION_SCROLL) {
             val v = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
-            val h = event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)
-            if (stickArrows) { if (v != 0f || h != 0f) { stickArrow(v, h); return true } }
-            else if (v != 0f) { scrollBy(v * WHEEL_LINES); return true }
+            if (v != 0f) { scrollBy(v * WHEEL_LINES); return true }
         }
         return super.onGenericMotionEvent(event)
-    }
-
-    // ---- Thumbstick as arrow keys ----------------------------------------------
-    // The stick arrives as a stream of scroll events while it's held. A push sends one arrow;
-    // holding it repeats like a keyboard key. A gap in the stream means the stick came back.
-
-    /** Thumbstick sends arrow keys instead of scrolling. */
-    var stickArrows = false
-    private var arrowKey: String? = null
-    private var lastStickAt = 0L
-    private var repeatAt = 0L
-
-    private fun stickArrow(v: Float, h: Float) {
-        val key = if (kotlin.math.abs(v) >= kotlin.math.abs(h)) { if (v > 0) "Up" else "Down" }
-                  else { if (h > 0) "Right" else "Left" }
-        val now = android.os.SystemClock.uptimeMillis()
-        val fresh = key != arrowKey || now - lastStickAt > STICK_GAP_MS
-        lastStickAt = now
-        if (fresh) {
-            Log.i("QuestClaude", "stick arrow $key (v=$v h=$h)")
-            arrowKey = key; repeatAt = now + REPEAT_DELAY_MS; input?.key(key)
-        } else if (now >= repeatAt) {
-            repeatAt = now + REPEAT_EVERY_MS; input?.key(key)
-        }
     }
 
     /** Pinch (or finger) and drag: the text follows your hand, a line per line height. Tap still types. */
