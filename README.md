@@ -4,16 +4,15 @@ A lightweight Android companion app for Meta Quest that drives
 [Claude Code](https://claude.com/claude-code) running in Termux.
 
 Open Quest Claude and it starts everything: Wireless debugging, adb on 5555 (`quest up`), tmux in
-Termux, and Claude in a detached tmux session. A live copy of the Claude pane appears above the
-compose box, so you never need to open the Termux window. Termux needs one setting, once:
+Termux, and Claude in a detached tmux session. A live copy of the Claude pane appears in the app, so you never need to open the Termux window. Termux needs one setting, once:
 `allow-external-apps=true` in `~/.termux/termux.properties`.
 
-- **Terminal mirror**: the Claude tmux pane, refreshed about once a second while the app is in view.
-- **Compose box**: big multiline input; sent via tmux bracketed paste so newlines don't submit early.
+- **Terminal**: the Claude tmux pane, in color, refreshed about once a second (right away after
+  you type). Tap it (or ⌨) and type: keys go straight to Claude, like a terminal. With a
+  Bluetooth keyboard, Enter sends, Shift+Enter starts a new line, and Ctrl/Alt combos work.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
-  Tap Dictate, talk, tap Stop; the text lands in the compose box. Quest has no speech recognizer
+  Tap Dictate, talk, tap Stop; the text is pasted into Claude's prompt (no Enter). Quest has no speech recognizer
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
-- **Hardware keyboard**: Enter sends, Shift+Enter starts a new line.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
 - **Reconnect**: turns Wireless debugging back on (Android switches it off at every boot), then runs

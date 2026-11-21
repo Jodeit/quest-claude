@@ -75,32 +75,17 @@
         android:fillViewport="true"
         android:padding="8dp">
 
-        <TextView
+        <dev.questclaude.TerminalView
             android:id="@+id/term"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
             android:text="Starting Claude…"
             android:textColor="@color/fg"
-            android:textIsSelectable="true"
             android:textSize="12sp" />
     </ScrollView>
 
-    <EditText
-        android:id="@+id/compose"
-        android:layout_width="match_parent"
-        android:layout_height="110dp"
-        android:layout_marginTop="10dp"
-        android:background="@drawable/panel"
-        android:gravity="top|start"
-        android:hint="Message Claude…"
-        android:importantForAutofill="no"
-        android:inputType="textMultiLine|textCapSentences"
-        android:padding="14dp"
-        android:textColor="@color/fg"
-        android:textColorHint="@color/muted"
-        android:textSize="18sp" />
-
+    <!-- Tap the terminal (or ⌨) to type into Claude; a hardware keyboard works once it has focus. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -111,34 +96,22 @@
         <Button
             android:id="@+id/mic"
             style="@style/QcButton.Secondary"
+            android:layout_marginStart="0dp"
             android:text="@string/dictate" />
 
         <Button
-            android:id="@+id/clear"
+            android:id="@+id/keyboard"
             style="@style/QcButton.Secondary"
-            android:text="Clear" />
+            android:layout_marginEnd="8dp"
+            android:minWidth="64dp"
+            android:text="⌨" />
 
-        <CheckBox
-            android:id="@+id/submit"
+        <!-- Keys share the rest of the width evenly. -->
+        <LinearLayout
+            android:id="@+id/keybar"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:buttonTint="@color/accent"
-            android:text="Press Enter after sending"
-            android:textColor="@color/muted"
-            android:textSize="15sp" />
-
-        <Button
-            android:id="@+id/send"
-            style="@style/QcButton"
-            android:text="Send" />
+            android:orientation="horizontal" />
     </LinearLayout>
-
-    <!-- Keys share the width evenly so the whole bar always fits the panel. -->
-    <LinearLayout
-        android:id="@+id/keybar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:orientation="horizontal" />
 </LinearLayout>

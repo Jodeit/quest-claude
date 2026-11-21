@@ -21,10 +21,6 @@ class Settings(ctx: Context) {
         get() = prefs.getString("remote", DEFAULT_REMOTE)!!
         set(v) = prefs.edit().putString("remote", v.trim().ifEmpty { DEFAULT_REMOTE }).apply()
 
-    var submitOnSend: Boolean
-        get() = prefs.getBoolean("submit", true)
-        set(v) = prefs.edit().putBoolean("submit", v).apply()
-
     companion object {
         const val DEFAULT_LAUNCH = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude'"
         /** `quest up` finds the Wireless debugging port, reopens adb on 5555 and re-applies keep-awake. */

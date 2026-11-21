@@ -56,19 +56,25 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
 
     private val tmux = "${Termux.PREFIX}/bin/tmux"
 
-    /** Bracketed-paste the text (so newlines don't submit early), optionally press Enter. */
-    fun sendText(text: String, submit: Boolean) {
-        val script = buildString {
-            append("$tmux set-buffer -b qc -- \"\$1\" && ")
-            append("$tmux paste-buffer -p -d -b qc -t \"\$2\"")
-            if (submit) append(" && sleep 0.1 && $tmux send-keys -t \"\$2\" Enter")
-        }
-        Termux.sh(ctx, "send", script, text, settings.session)
-    }
-
-    /** Send tmux key names, e.g. "Escape", "C-c", "BTab", "Up". */
-    fun sendKeys(vararg keys: String) {
-        Termux.sh(ctx, "key", "t=\"\$1\"; shift; $tmux send-keys -t \"\$t\" \"\$@\"", settings.session, *keys)
+    /**
+     * Typed input, in order: "L:text" literal keys, "K:name" a tmux key name (Enter, C-c, BTab,
+     * Up, ...), "P:text" a bracketed paste. Result arrives with label "input"; any tmux error
+     * shows up as stdout rather than a failed command, since Termux posts a notification for
+     * every failure and this runs per keystroke batch.
+     */
+    fun input(ops: List<String>) {
+        val script = """
+            t="${'$'}1"; shift
+            for a; do
+              case "${'$'}a" in
+                L:*) $tmux send-keys -t "${'$'}t" -l -- "${'$'}{a#L:}" ;;
+                K:*) $tmux send-keys -t "${'$'}t" "${'$'}{a#K:}" ;;
+                P:*) $tmux set-buffer -b qc -- "${'$'}{a#P:}" && $tmux paste-buffer -p -d -b qc -t "${'$'}t" ;;
+              esac
+            done 2>&1
+            exit 0
+        """.trimIndent()
+        Termux.sh(ctx, "input", script, settings.session, *ops.toTypedArray())
     }
 
     /** Open (or re-attach) the tmux session in a visible Termux terminal. */
@@ -106,7 +112,9 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         // Always exit 0: Termux posts a notification for every failed plugin command.
         Termux.sh(
             ctx, "mirror",
-            "$tmux capture-pane -p -t \"${'$'}1\" 2>/dev/null || echo $NO_SESSION; exit 0",
+            // First line: cursor column, row and visibility; then the pane with color escapes.
+            "$tmux display -p -t \"${'$'}1\" '#{cursor_x} #{cursor_y} #{cursor_flag}' 2>/dev/null &&" +
+                " $tmux capture-pane -p -e -t \"${'$'}1\" 2>/dev/null || echo $NO_SESSION; exit 0",
             settings.session
         )
     }

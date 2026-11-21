@@ -7,12 +7,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings as SysSettings
-import android.view.KeyCharacterMap
-import android.view.KeyEvent
 import android.view.View
-import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -29,10 +25,11 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var settings: Settings
     private lateinit var tmux: TmuxBridge
-    private lateinit var compose: EditText
     private lateinit var status: TextView
     private lateinit var lastResult: TextView
-    private lateinit var term: TextView
+    private lateinit var term: TerminalView
+    private lateinit var input: InputQueue
+    private lateinit var ansi: Ansi
     private lateinit var termScroll: ScrollView
     private lateinit var mic: Button
     private lateinit var dictation: Dictation
@@ -41,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     /** Whisper runs here so it never holds up the status checks on [io]. */
     private val speech = Executors.newSingleThreadExecutor()
     @Volatile private var capturePending = 0L
+    private var lastPane = ""
     private var started = false
     /** Set when Termux rejects a command, so we don't post an error notification every second. */
     @Volatile private var mirrorStopped = false
@@ -80,37 +78,26 @@ class MainActivity : AppCompatActivity() {
         settings = Settings(this)
         tmux = TmuxBridge(this, settings)
 
-        compose = findViewById(R.id.compose)
         status = findViewById(R.id.status)
         lastResult = findViewById(R.id.last_result)
         term = findViewById(R.id.term)
         termScroll = findViewById(R.id.term_scroll)
 
-        findViewById<Button>(R.id.send).setOnClickListener { send() }
         dictation = Dictation(this)
         mic = findViewById(R.id.mic)
         mic.setOnClickListener { toggleDictation() }
-        // Enter on a hardware keyboard sends; Shift+Enter adds a line. The on-screen keyboard
-        // (a virtual device) still inserts newlines.
-        compose.setOnKeyListener { _, code, ev ->
-            val enter = code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER
-            val hardware = ev.deviceId != KeyCharacterMap.VIRTUAL_KEYBOARD && ev.device?.isVirtual == false
-            if (!enter || !hardware || ev.isShiftPressed) return@setOnKeyListener false
-            if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) send()
-            true
-        }
-        findViewById<Button>(R.id.clear).setOnClickListener { compose.text.clear() }
+        input = InputQueue { ops -> guarded { tmux.input(ops) } }
+        ansi = Ansi(getColor(R.color.fg), getColor(R.color.term_bg))
+        term.input = input
+        findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
         findViewById<Button>(R.id.open_session).setOnClickListener { guarded { tmux.openSession() } }
         findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
         findViewById<Button>(R.id.remote).setOnClickListener { guarded { tmux.openRemote() } }
         findViewById<Button>(R.id.settings).setOnClickListener { showSettings() }
         status.setOnClickListener { fixSetup() }
 
-        val submit = findViewById<CheckBox>(R.id.submit)
-        submit.isChecked = settings.submitOnSend
-        submit.setOnCheckedChangeListener { _, v -> settings.submitOnSend = v }
-
         buildKeyBar(findViewById(R.id.keybar))
+        term.requestFocus() // so a hardware keyboard types into Claude right away
     }
 
     override fun onResume() {
@@ -119,7 +106,11 @@ class MainActivity : AppCompatActivity() {
         ResultReceiver.listener = { label, ok, msg, stdout ->
             runOnUiThread {
                 if (label == "mirror") showPane(ok, stdout, msg)
-                else {
+                else if (label == "input") {
+                    input.done()
+                    if (stdout.isNotBlank()) showResult("✗ typing: ${stdout.trim()}", RED)
+                    refreshPaneSoon()
+                } else {
                     lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
                     lastResult.setTextColor(if (ok) GREEN else RED)
                     if (msg.contains("allow-external-apps")) {
@@ -167,51 +158,46 @@ class MainActivity : AppCompatActivity() {
             // second would only pile up notifications, so stop until the app is reopened.
             mirrorStopped = true
             main.removeCallbacks(mirror)
+            lastPane = ""
             term.text = if (msg.contains("allow-external-apps")) getString(R.string.setup_help)
             else "Termux refused the command: $msg\n\nReopen the app to retry."
             return
         }
         if (text.contains(TmuxBridge.NO_SESSION)) {
+            lastPane = ""
             term.text = "Claude isn't running yet. The first start installs tmux in Termux, which " +
                 "takes about a minute. If it doesn't come up, reopen the app or tap Open Claude."
             return
         }
+        if (text == lastPane) return
+        lastPane = text
+        // First line is "cursor_x cursor_y cursor_flag"; Claude hides the real cursor and draws its own.
+        val nl = text.indexOf('\n')
+        val head = if (nl >= 0) text.substring(0, nl).split(' ') else emptyList()
+        val pane = if (nl >= 0) text.substring(nl + 1) else text
+        val cursor = if (head.getOrNull(2) == "1")
+            head[0].toIntOrNull()?.let { x -> head[1].toIntOrNull()?.let { y -> x to y } } else null
         val atBottom = !termScroll.canScrollVertically(1)
-        val trimmed = text.trimEnd()
-        if (term.text.toString() != trimmed) {
-            term.text = trimmed
-            if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
-        }
+        term.text = ansi.render(pane.trimEnd(), cursor)
+        if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    // ---- Compose / send ------------------------------------------------------
-
-    private fun send() {
-        val text = compose.text.toString()
-        if (text.isBlank()) {
-            guarded { tmux.sendKeys("Enter") }
-            return
-        }
-        guarded {
-            tmux.sendText(text, settings.submitOnSend)
-            compose.text.clear()
-        }
+    /** Capture right after typing, instead of waiting for the next 1.2 s tick. */
+    private fun refreshPaneSoon() {
+        if (mirrorStopped) return
+        main.removeCallbacks(mirror)
+        capturePending = 0
+        main.postDelayed(mirror, 80)
     }
 
-    private fun insertAtCursor(text: String) {
-        val start = compose.selectionStart.coerceAtLeast(0)
-        val needsSpace = start > 0 && !compose.text[start - 1].isWhitespace()
-        compose.text.insert(start, if (needsSpace) " $text" else text)
-    }
+    // ---- Dictation -----------------------------------------------------------
 
     private fun toggleDictation() {
         if (dictationBusy) return
         if (dictation.recording) { finishDictation(); return }
         if (!WhisperNative.loaded) {
             // Shouldn't happen with a CI build, but the keyboard's own mic still works.
-            compose.requestFocus()
-            getSystemService(InputMethodManager::class.java)
-                .showSoftInput(compose, InputMethodManager.SHOW_IMPLICIT)
+            term.showKeyboard()
             toast("Whisper isn't available in this build — use the mic on the keyboard")
             return
         }
@@ -263,7 +249,12 @@ class MainActivity : AppCompatActivity() {
                 mic.text = getString(R.string.dictate)
                 result.onSuccess { text ->
                     if (text.isEmpty()) showResult("✗ didn't catch anything", AMBER)
-                    else { insertAtCursor(text); showResult("✓ dictated", GREEN) }
+                    else {
+                        // Pasted into Claude's prompt without Enter, so you can check it first.
+                        input.paste(text)
+                        term.requestFocus()
+                        showResult("✓ dictated — press Enter to send", GREEN)
+                    }
                 }.onFailure { showResult("✗ dictation: ${it.message}", RED) }
             }
         }
@@ -291,7 +282,8 @@ class MainActivity : AppCompatActivity() {
         for ((label, k) in keys) {
             val b = layoutInflater.inflate(R.layout.key_button, bar, false) as Button
             b.text = label
-            b.setOnClickListener { guarded { tmux.sendKeys(*k) } }
+            b.isFocusable = false // keep keyboard focus on the terminal
+            b.setOnClickListener { k.forEach(input::key) }
             bar.addView(b)
         }
     }
