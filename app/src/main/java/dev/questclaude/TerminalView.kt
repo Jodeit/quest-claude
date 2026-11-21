@@ -5,6 +5,8 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.util.AttributeSet
+import android.util.Log
+import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
@@ -22,10 +24,36 @@ class TerminalView @JvmOverloads constructor(
 
     var input: InputQueue? = null
 
+    companion object {
+        private const val BASE_SP = 12f
+        private const val MIN_SP = 8f
+        private const val MAX_SP = 20f
+    }
+
     init {
         isFocusable = true
         isFocusableInTouchMode = true
         setOnClickListener { showKeyboard() }
+    }
+
+    /**
+     * Scale the text so a full-width line (Claude's ─ rules span all [TmuxBridge.COLS] columns)
+     * fits the view exactly. ─ comes from a fallback font, so measure it rather than assume
+     * the monospace advance.
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val avail = w - totalPaddingLeft - totalPaddingRight
+        if (avail <= 0 || w == oldw) return
+        val p = android.text.TextPaint(paint)
+        p.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, BASE_SP, resources.displayMetrics)
+        val cols = TmuxBridge.COLS
+        val needed = maxOf(p.measureText("─".repeat(cols)), p.measureText("M".repeat(cols)))
+        val sp = (BASE_SP * avail / needed * 0.995f).coerceIn(MIN_SP, MAX_SP)
+        Log.i("QuestClaude", "terminal fit: ${cols} cols need ${needed / resources.displayMetrics.density}dp " +
+            "at ${BASE_SP}sp (─=${p.measureText("─")}px M=${p.measureText("M")}px); " +
+            "view ${avail / resources.displayMetrics.density}dp -> ${sp}sp")
+        post { setTextSize(TypedValue.COMPLEX_UNIT_SP, sp) }
     }
 
     fun showKeyboard() {
