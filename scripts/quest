@@ -100,6 +100,58 @@ PY
   echo "$out"
 }
 
+# Quest Browser text over the Chrome DevTools protocol (no screenshot needed).
+CDP_PORT=${QUEST_CDP_PORT:-9222}
+read_page() {
+  local list= all=
+  while :; do case ${1:-} in -l) list=1; shift ;; -a) all=1; shift ;; *) break ;; esac; done
+  command -v node >/dev/null || die "node not installed (needed for quest read)"
+  a forward "tcp:$CDP_PORT" localabstract:chrome_devtools_remote >/dev/null ||
+    die "couldn't reach the browser's DevTools socket; is Quest Browser open?"
+  node - "$CDP_PORT" "$list" "$all" "${1:-}" <<'JS' | sed 's/[[:space:]]*$//' | cat -s
+const [port, list, all, match] = process.argv.slice(2);
+(async () => {
+  let targets;
+  try { targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); }
+  catch { console.error("quest: no DevTools answer; is Quest Browser open?"); process.exit(1); }
+  const pages = targets.filter(t => t.type === "page" && !t.url.startsWith("chrome"));
+  if (list) { pages.forEach((t, i) => console.log(`${i}\t${t.title}\t${t.url}`)); return; }
+  const m = (match || "").toLowerCase();
+  const t = /^\d+$/.test(m) ? pages[+m]
+    : pages.find(p => (p.title + " " + p.url).toLowerCase().includes(m));
+  if (!t) { console.error(`quest: no browser tab matches '${match}' (see 'quest read -l')`); process.exit(1); }
+  const ws = new WebSocket(t.webSocketDebuggerUrl);
+  const timer = setTimeout(() => { console.error("quest: DevTools timed out"); process.exit(1); }, 10000);
+  ws.onerror = () => { console.error("quest: DevTools connection failed (tab may be in use by another debugger)"); process.exit(1); };
+  ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate",
+    params: { expression: (all ? "document.body" : "(document.querySelector(\"main,[role=main]\") || document.body)") + "?.innerText ?? ''", returnByValue: true } }));
+  ws.onmessage = ev => {
+    const r = JSON.parse(ev.data);
+    if (r.id !== 1) return;
+    clearTimeout(timer);
+    console.log(`# ${t.title}\n# ${t.url}\n`);
+    const v = r.result?.result?.value;
+    // drop icon-font glyphs (private-use code points) that render as empty lines
+    console.log(typeof v === "string" ? v.replace(/[\uE000-\uF8FF]/g, "") : JSON.stringify(r.error ?? r.result));
+    ws.close(); process.exit(0);
+  };
+})();
+JS
+}
+
+# Text of the Termux tmux pane that Quest Claude drives (no screenshot needed).
+term() {
+  local T=/data/data/com.termux/files/usr n= sess sock
+  [ "${1:-}" = -n ] && { n=${2:?usage: quest term [-n lines] [session]}; shift 2; }
+  sess=${1:-${QUEST_TMUX_SESSION:-claude}}
+  [ -x "$T/bin/tmux" ] ||
+    die "tmux isn't installed in Termux. In a Termux shell (outside proot): pkg install tmux, then tap Open session in Quest Claude"
+  sock=$(ls -d "$T"/tmp/tmux-*/default 2>/dev/null | head -1)
+  [ -S "$sock" ] || die "no Termux tmux server running; tap Open session in Quest Claude"
+  "$T/bin/tmux" -S "$sock" capture-pane -p -J -t "$sess" ${n:+-S "-$n"} |
+    sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
+}
+
 keycode() {
   case ${1,,} in
     back) echo 4 ;; home) echo 3 ;; enter|return) echo 66 ;; tab) echo 61 ;;
@@ -140,6 +192,10 @@ quest — control this Quest over its own adb (self-heals the connection)
   quest stop <name|pkg>     force-stop an app
   quest apps [filter]       list installed third-party packages (-a for all)
   quest focus               what's in front right now
+  quest read [-a] [match]   text of a Quest Browser tab (title/url substring or index);
+                            reads <main> if the page has one, -a for the whole page
+  quest read -l             list browser tabs
+  quest term [-n N] [sess]  text of the Termux tmux pane (default session 'claude'; -n N adds history)
   quest key <name|code>...  back home enter tab esc up down left right del space menu play ...
   quest type <text>         type text into the focused field
   quest tap <x> <y>         tap (display coordinates)
@@ -153,6 +209,7 @@ EOF
 cmd=${1:-help}; [ $# -gt 0 ] && shift
 case $cmd in
   help|-h|--help) usage; exit 0 ;;
+  term)    term "$@"; exit ;;
 esac
 
 command -v adb >/dev/null || die "adb not installed (apt install adb)"
@@ -171,6 +228,7 @@ case $cmd in
            a shell svc power stayon false
            say "quest: proximity sensor back to normal" ;;
   shot|screenshot) shot "$@" ;;
+  read)    read_page "$@" ;;
   open)    [ $# -ge 1 ] || die "usage: quest open <url>"
            a shell am start -a android.intent.action.VIEW -d "$(q "$1")" >/dev/null && echo "opened $1" ;;
   launch)  [ $# -ge 1 ] || die "usage: quest launch <name|pkg>"

@@ -27,6 +27,8 @@ Run `quest help` for exact usage. The main ones:
 | --- | --- |
 | `quest up` | reconnect adb + keep-awake (run first) |
 | `quest status` | adb, battery, wakefulness |
+| `quest read [match]` | text of a Quest Browser tab via DevTools (`-l` lists tabs, `-a` whole page) |
+| `quest term [-n N]` | text of the Termux tmux pane Quest Claude drives (session `claude`) |
 | `quest shot` | screenshot → prints a path under `~/quest-shots/`; then **Read that file** to see it |
 | `quest focus` | which app/window has focus |
 | `quest open <url>` | open a URL in the Quest Browser |
@@ -38,8 +40,11 @@ Plain adb also works: `adb logcat -d -t 300`, `adb install -r app.apk`, `adb she
 
 ## Things to know
 
-- **See before you act.** After opening or tapping something, wait 2–5 s, then `quest shot` and
-  read the image. To find tap targets, `adb shell uiautomator dump /data/local/tmp/ui.xml` and read
+- **Read text before taking screenshots.** For a browser page use `quest read`; for the terminal use
+  `quest term`. They're exact and cheaper than an image. Use `quest shot` for anything
+  else: native panels, the passthrough room, layout, or when text isn't enough.
+- **See before you act.** After opening or tapping something, wait 2–5 s, then check with
+  `quest read` / `quest term` / `quest shot`. To find tap targets, `adb shell uiautomator dump /data/local/tmp/ui.xml` and read
   the `bounds` of the node you want.
 - **Each 2D app runs on its own virtual display.** Taps reach 2D panels (browser, settings, panel
   apps) but can't simulate controller pointing in immersive 3D apps.
