@@ -17,10 +17,6 @@ class Settings(ctx: Context) {
         get() = prefs.getString("reconnect", DEFAULT_RECONNECT)!!
         set(v) = prefs.edit().putString("reconnect", v.trim().ifEmpty { DEFAULT_RECONNECT }).apply()
 
-    var remoteCommand: String
-        get() = prefs.getString("remote", DEFAULT_REMOTE)!!
-        set(v) = prefs.edit().putString("remote", v.trim().ifEmpty { DEFAULT_REMOTE }).apply()
-
     /** Last project picked for a new tab ("~ (home)" or a folder name in ~). */
     var lastProject: String
         get() = prefs.getString("last_project", "")!!
@@ -36,7 +32,5 @@ class Settings(ctx: Context) {
         const val DEFAULT_LAUNCH = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude'"
         /** `quest up` finds the Wireless debugging port, reopens adb on 5555 and re-applies keep-awake. */
         const val DEFAULT_RECONNECT = "proot-distro login ubuntu -- bash -lc 'quest up'"
-        const val DEFAULT_REMOTE = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude remote-control'"
-        const val REMOTE_SESSION = "claude-rc"
     }
 }

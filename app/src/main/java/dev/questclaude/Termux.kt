@@ -132,13 +132,6 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
     fun openSession() = open("open", settings.session, settings.launchCommand)
 
     /**
-     * Open (or re-attach) a separate session running `claude remote-control`, so the same
-     * headset session can be driven from claude.ai or the Claude app on another device.
-     * Visible, because the first run prints a link and may ask for confirmation.
-     */
-    fun openRemote() = open("remote", Settings.REMOTE_SESSION, settings.remoteCommand)
-
-    /**
      * Make sure tmux is installed and the Claude session is running, without opening a Termux
      * window. Installs tmux on first run (takes a minute), then starts the session detached.
      */

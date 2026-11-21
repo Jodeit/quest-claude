@@ -119,7 +119,11 @@ class MainActivity : AppCompatActivity() {
         renderTabs()
         findViewById<Button>(R.id.open_session).setOnClickListener { guarded { tmux.openSession() } }
         findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
-        findViewById<Button>(R.id.remote).setOnClickListener { guarded { tmux.openRemote() } }
+        // Remote Control for this tab's Claude: /remote-control connects it to claude.ai/code and the
+        // Claude app (and disconnects it when run again). Clears a draft first so the command runs.
+        findViewById<Button>(R.id.remote).setOnClickListener {
+            input.clearPrompt(); input.literal("/remote-control"); input.key("Enter")
+        }
         findViewById<Button>(R.id.settings).setOnClickListener { showSettings() }
         status.setOnClickListener { fixSetup() }
 
@@ -747,7 +751,6 @@ class MainActivity : AppCompatActivity() {
         val session = v.findViewById<EditText>(R.id.session).apply { setText(settings.session) }
         val launch = v.findViewById<EditText>(R.id.launch).apply { setText(settings.launchCommand) }
         val reconnect = v.findViewById<EditText>(R.id.reconnect_cmd).apply { setText(settings.reconnectCommand) }
-        val remote = v.findViewById<EditText>(R.id.remote_cmd).apply { setText(settings.remoteCommand) }
         AlertDialog.Builder(this)
             .setTitle("Settings")
             .setView(v)
@@ -755,13 +758,11 @@ class MainActivity : AppCompatActivity() {
                 settings.session = session.text.toString()
                 settings.launchCommand = launch.text.toString()
                 settings.reconnectCommand = reconnect.text.toString()
-                settings.remoteCommand = remote.text.toString()
             }
             .setNeutralButton("Reset") { _, _ ->
                 settings.session = ""
                 settings.launchCommand = ""
                 settings.reconnectCommand = ""
-                settings.remoteCommand = ""
             }
             .setNegativeButton("Cancel", null)
             .show()
