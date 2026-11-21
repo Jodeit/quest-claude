@@ -77,6 +77,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        WirelessDebugging.enable(this) // in case the boot receiver didn't run
         ResultReceiver.listener = { label, ok, msg ->
             runOnUiThread {
                 lastResult.text = if (ok) "✓ $label" else "✗ $label: $msg"
@@ -163,6 +164,8 @@ class MainActivity : AppCompatActivity() {
                     dot(termux) + " Termux",
                     dot(perm) + " RUN_COMMAND",
                     dot(adbOn) + " USB debugging",
+                    dot(WirelessDebugging.isOn(this)) + " Wireless debugging" +
+                        (if (WirelessDebugging.canEnable(this)) "" else " (no auto-enable)"),
                     dot(port) + " adb :5555 " + (if (port) "listening" else "closed"),
                 )
                 status.text = parts.joinToString("    ")
@@ -191,6 +194,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reconnect() = guarded {
+        if (!WirelessDebugging.enable(this)) {
+            lastResult.text = if (WirelessDebugging.canEnable(this))
+                "✗ couldn't turn on Wireless debugging; turn it on in Settings > Developer, then Reconnect"
+            else
+                "✗ missing permission to turn on Wireless debugging; run scripts/install.sh once " +
+                    "(or turn it on in Settings > Developer), then Reconnect"
+            lastResult.setTextColor(RED)
+            return@guarded
+        }
         lastResult.text = "… reconnecting adb (scanning for the Wireless debugging port, ~15 s)"
         lastResult.setTextColor(AMBER)
         tmux.reconnect()

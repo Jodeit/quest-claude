@@ -7,10 +7,23 @@ A lightweight Android companion app for Meta Quest that drives
 - **Voice dictation**: the system speech recognizer if there is one, otherwise the keyboard's mic.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
-- **Reconnect**: runs `quest up` in Ubuntu, which finds Shizuku's Wireless debugging port, reopens
-  adb on 5555 and turns keep-awake back on. Tapping the status bar while 5555 is closed does the same.
+- **Reconnect**: turns Wireless debugging back on (Android switches it off at every boot), then runs
+  `quest up` in Ubuntu, which finds its port, reopens adb on 5555 and turns keep-awake back on.
+  Tapping the status bar while 5555 is closed does the same. The app also re-enables Wireless
+  debugging at boot and whenever it opens, so Shizuku isn't needed.
 - **Remote**: starts `claude remote-control` in its own tmux session (`claude-rc`), so you can drive
   the headset's Claude from claude.ai or the Claude app on another device.
+
+## adb without Shizuku
+
+`quest` uses Ubuntu's own adb against the headset's Wireless debugging. Once per headset:
+
+1. Settings > Developer > turn on **Wireless debugging**, then **Pair device with pairing code**.
+2. Keep that dialog open and, in Ubuntu, run `quest pair <port> <code>` with the port and code it shows.
+3. `scripts/install.sh` grants the app `WRITE_SECURE_SETTINGS` so it can turn Wireless debugging
+   back on after reboots.
+
+After a reboot, open Quest Claude and tap **Reconnect** (or run `quest up`).
 
 ## How it works
 

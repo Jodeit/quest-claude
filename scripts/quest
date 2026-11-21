@@ -38,7 +38,7 @@ reopen_5555() {
     fi
     adb disconnect "127.0.0.1:$p" >/dev/null 2>&1
   done
-  [ -n "$found" ] || die "no adb found. Open Settings > Developer > Wireless debugging (or tap Start in Shizuku), then rerun 'quest up'."
+  [ -n "$found" ] || die "no Wireless debugging port found. Open Quest Claude and tap Reconnect (it turns Wireless debugging on), or turn it on in Settings > Developer. First time on this headset? Run 'quest pair'."
   say "quest: Wireless debugging is on $found; reopening 5555"
   adb -s "127.0.0.1:$found" tcpip 5555 >/dev/null 2>&1
   adb disconnect >/dev/null 2>&1
@@ -152,6 +152,16 @@ term() {
     sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
 }
 
+# One-time: pair this adb with the headset's Wireless debugging (no Shizuku needed).
+pair() {
+  [ $# -eq 2 ] || die "usage: quest pair <port> <code>
+  Settings > Developer > Wireless debugging > Pair device with pairing code
+  shows a 6-digit code and an IP:port. Keep that dialog open (put Termux beside it) and run
+  quest pair <port> <code>"
+  adb pair "127.0.0.1:$1" "$2" || die "pairing failed; the code expires when the dialog closes"
+  say "quest: paired. Now run 'quest up'."
+}
+
 keycode() {
   case ${1,,} in
     back) echo 4 ;; home) echo 3 ;; enter|return) echo 66 ;; tab) echo 61 ;;
@@ -182,6 +192,7 @@ usage() {
   cat <<'EOF'
 quest — control this Quest over its own adb (self-heals the connection)
 
+  quest pair <port> <code>  one-time pairing with Wireless debugging (Settings > Developer)
   quest up                  reconnect (finds Wireless debugging port, reopens 5555) + keep awake
   quest status              connection, battery, focused app
   quest awake | sleep       override proximity sensor so it stays on | restore normal
@@ -210,6 +221,7 @@ cmd=${1:-help}; [ $# -gt 0 ] && shift
 case $cmd in
   help|-h|--help) usage; exit 0 ;;
   term)    term "$@"; exit ;;
+  pair)    pair "$@"; exit ;;
 esac
 
 command -v adb >/dev/null || die "adb not installed (apt install adb)"

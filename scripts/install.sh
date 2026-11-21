@@ -18,4 +18,6 @@ gh run download "$run" --name quest-claude-apk --dir dist
 echo "Installing on ${ANDROID_SERIAL:-default device}…"
 adb install -r -g dist/quest-claude.apk
 adb shell pm grant dev.questclaude com.termux.permission.RUN_COMMAND 2>/dev/null || true
+# Lets the app turn Wireless debugging back on after reboots (replaces Shizuku).
+adb shell pm grant dev.questclaude android.permission.WRITE_SECURE_SETTINGS
 adb shell am start -n dev.questclaude/.MainActivity

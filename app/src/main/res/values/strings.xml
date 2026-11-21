@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Quest Claude</string>
-    <string name="setup_help">In Termux:\n\n1. pkg install tmux\n2. echo "allow-external-apps=true" >> ~/.termux/termux.properties\n3. termux-reload-settings\n4. Tap \"Open Claude\" to start the tmux session (default name: claude).\n\nThe adb chip checks 127.0.0.1:5555. If it shows closed (after a reboot), start Shizuku, then tap \"Reconnect\" — it runs \"quest up\" in Ubuntu, which finds the Wireless debugging port and reopens 5555.\n\n\"Remote\" starts claude remote-control in its own tmux session (claude-rc), so you can drive the headset from claude.ai on another device.</string>
+    <string name="setup_help">In Termux:\n\n1. pkg install tmux\n2. echo "allow-external-apps=true" >> ~/.termux/termux.properties\n3. termux-reload-settings\n4. Tap \"Open Claude\" to start the tmux session (default name: claude).\n\nThe adb chip checks 127.0.0.1:5555. If it shows closed (after a reboot), tap \"Reconnect\": the app turns Wireless debugging back on, then runs \"quest up\" in Ubuntu, which finds its port and reopens 5555. First time only: pair Ubuntu's adb with \"quest pair\" (see README).\n\n\"Remote\" starts claude remote-control in its own tmux session (claude-rc), so you can drive the headset from claude.ai on another device.</string>
 </resources>

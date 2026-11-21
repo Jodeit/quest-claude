@@ -11,13 +11,16 @@ adb at `127.0.0.1:5555` (`ANDROID_SERIAL` is set in `~/.bashrc`). The `quest` co
 ## Always start with `quest up`
 
 Port 5555 closes on every reboot, Wi-Fi change, and sometimes on sleep. `quest up`:
-1. checks 5555; if closed, scans localhost for the Shizuku/Wireless debugging port (~15 s),
+1. checks 5555; if closed, scans localhost for the Wireless debugging port (~15 s),
    connects to it and runs `adb tcpip 5555`;
 2. reconnects to 5555;
 3. re-applies keep-awake (proximity override + stay-on while plugged in).
 
-If `quest up` can't find a port, Shizuku / Wireless debugging is off. Ask the user to open
-**Shizuku → Start** (it's already paired), then retry. Don't ask them to type ports.
+If `quest up` can't find a port, Wireless debugging is off. The Quest Claude app turns it back on
+at boot, when it opens, and on **Reconnect**, so ask the user to open Quest Claude and tap Reconnect.
+Otherwise they can turn it on in Settings > Developer. Don't ask them to type ports. If adb says the
+device is unauthorized, run the one-time pairing: `quest pair <port> <code>`, using the port and code from
+Settings > Developer > Wireless debugging > Pair device with pairing code.
 
 ## Commands
 
@@ -26,6 +29,7 @@ Run `quest help` for exact usage. The main ones:
 | Command | Does |
 | --- | --- |
 | `quest up` | reconnect adb + keep-awake (run first) |
+| `quest pair <port> <code>` | one-time pairing with Wireless debugging |
 | `quest status` | adb, battery, wakefulness |
 | `quest read [match]` | text of a Quest Browser tab via DevTools (`-l` lists tabs, `-a` whole page) |
 | `quest term [-n N]` | text of the Termux tmux pane Quest Claude drives (session `claude`) |
