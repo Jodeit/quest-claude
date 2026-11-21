@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings as SysSettings
+import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -192,6 +193,27 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Dictation -----------------------------------------------------------
 
+    /**
+     * Ctrl+Shift+D (or a keyboard's voice key) starts/stops dictation; Esc cancels a recording.
+     * Caught here, before the terminal, so Ctrl+Shift+D never reaches Claude as Ctrl+D (exit).
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val dictateKey = (event.keyCode == KeyEvent.KEYCODE_D && event.isCtrlPressed && event.isShiftPressed) ||
+            event.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST
+        val cancelKey = event.keyCode == KeyEvent.KEYCODE_ESCAPE && dictation.recording && !dictationBusy
+        if (!dictateKey && !cancelKey) return super.dispatchKeyEvent(event)
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            if (cancelKey) cancelDictation() else toggleDictation()
+        }
+        return true
+    }
+
+    private fun cancelDictation() {
+        dictation.cancel() // waits at most one 100 ms mic read
+        mic.text = getString(R.string.dictate)
+        showResult("dictation cancelled", AMBER)
+    }
+
     private fun toggleDictation() {
         if (dictationBusy) return
         if (dictation.recording) { finishDictation(); return }
@@ -233,7 +255,7 @@ class MainActivity : AppCompatActivity() {
         }
         speech.execute { runCatching { dictation.load() } } // warm up while you talk
         mic.text = "■ Stop"
-        showResult("● listening — tap Stop when you're done", RED)
+        showResult("● listening — Stop or Ctrl+Shift+D to finish, Esc to cancel", RED)
     }
 
     private fun finishDictation() {

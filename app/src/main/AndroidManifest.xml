@@ -28,9 +28,10 @@
             android:exported="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard">
-            <!-- Default panel size on Quest. -->
+            <!-- Default panel size on Quest. 1020dp fits Claude's 110-column ─ rules at 12sp
+                 (─ is a fallback glyph, 968dp for 110 of them) plus 48dp of padding. -->
             <layout
-                android:defaultWidth="960dp"
+                android:defaultWidth="1020dp"
                 android:defaultHeight="820dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -11,7 +11,7 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   you type). Tap it (or ⌨) and type: keys go straight to Claude, like a terminal. With a
   Bluetooth keyboard, Enter sends, Shift+Enter starts a new line, and Ctrl/Alt combos work.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
-  Tap Dictate, talk, tap Stop; the text is pasted into Claude's prompt (no Enter). Quest has no speech recognizer
+  Tap Dictate (or Ctrl+Shift+D), talk, tap Stop (same shortcut; Esc cancels); the text is pasted into Claude's prompt (no Enter). Quest has no speech recognizer
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
