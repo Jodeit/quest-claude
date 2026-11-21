@@ -94,7 +94,9 @@ class UbuntuService : Service() {
     /** Server, session and control client, each started only if it isn't already running. */
     private fun ensureUp() {
         if (!Proot.unpacked(this)) { status("no rootfs yet: tap Run checks on the main screen"); return }
-        if (!File(Proot.rootfs(this), "root/.local/bin/claude").exists())
+        // NOFOLLOW: the installer's symlink is absolute (/root/.local/share/…), so following it
+        // here would look on Android's filesystem instead of in the rootfs.
+        if (!java.nio.file.Files.exists(File(Proot.rootfs(this), "root/.local/bin/claude").toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
             status("Claude Code isn't installed in Ubuntu yet; starting the session anyway")
 
         if (server?.isAlive != true) {
