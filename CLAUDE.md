@@ -17,7 +17,13 @@ so always pull before starting work.
 - `scripts/quest` — the headset control CLI (`quest up`, `quest shot`, …). Runs inside proot Ubuntu.
 - `skills/quest/` — the Claude skill for driving the headset; `scripts/setup.sh` links it into
   `~/.claude/skills/`. Keep the command table in its SKILL.md in sync with `quest help`.
-- `scripts/install.sh` — download the latest CI APK and `adb install` it.
+- `cwaude/` — Cwaude (`dev.cwaude`), the Termux-free successor: runs its own Ubuntu through proot
+  (shipped as `lib*.so`, fetched by `scripts/fetch-ubuntu-prebuilts.sh`), keeps tmux alive in a
+  foreground service, and talks to it over one `tmux -C` control-mode pipe (`Tmux.kt`). Its UI
+  files (`Ansi`, `TapTargets`, `TerminalView`, `Dictation`) started as copies of `app/`'s; fix
+  bugs in both until Quest Claude is retired. Whisper's C code is shared from `app/src/main/cpp`.
+- `spike/` — the exec spike that proved Cwaude's approach; throwaway.
+- `scripts/install.sh` — download the latest CI APK and `adb install` it (`--cwaude` for Cwaude).
 
 ## Building
 

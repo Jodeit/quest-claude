@@ -66,7 +66,7 @@ jobs:
       - name: Fetch proot and the Ubuntu rootfs
         run: |
           sudo apt-get install -y -qq patchelf
-          spike/fetch-prebuilts.sh
+          scripts/fetch-ubuntu-prebuilts.sh spike
 
       - name: Build spike APK
         run: gradle --no-daemon :spike:assembleDebug
@@ -75,4 +75,38 @@ jobs:
         with:
           name: quest-claude-spike-apk
           path: spike/build/outputs/apk/debug/spike-debug.apk
+          retention-days: 30
+
+  # Cwaude (cwaude/): Quest Claude without Termux, running its own Ubuntu.
+  cwaude:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Fetch proot and the Ubuntu rootfs
+        run: |
+          sudo apt-get install -y -qq patchelf
+          scripts/fetch-ubuntu-prebuilts.sh cwaude
+
+      - name: Build Cwaude APK
+        run: gradle --no-daemon :cwaude:assembleDebug
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp cwaude/build/outputs/apk/debug/cwaude-debug.apk dist/cwaude.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cwaude-apk
+          path: dist/cwaude.apk
           retention-days: 30

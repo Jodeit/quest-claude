@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#16130F</color>
+    <color name="panel">#221E19</color>
+    <color name="panel_stroke">#3A332B</color>
+    <color name="fg">#F3EEE6</color>
+    <color name="muted">#A79E92</color>
+    <color name="accent">#D97757</color>
+    <color name="key">#2C2720</color>
+    <color name="term_bg">#0E0B09</color>
+</resources>

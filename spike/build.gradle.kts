@@ -1,5 +1,5 @@
 // Exec spike: can an app at targetSdk 34 run proot + an Ubuntu rootfs on its own, without Termux?
-// Run fetch-prebuilts.sh first; it fills src/main/jniLibs and src/main/assets.
+// Run scripts/fetch-ubuntu-prebuilts.sh first; it fills src/main/jniLibs and src/main/assets.
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")

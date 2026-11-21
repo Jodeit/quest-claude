@@ -1,4 +1,4 @@
-# Filled by fetch-prebuilts.sh (CI runs it before building).
+# Filled by scripts/fetch-ubuntu-prebuilts.sh (CI runs it before building).
 /src/main/jniLibs/
 /src/main/assets/
 /build/

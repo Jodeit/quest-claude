@@ -8,3 +8,4 @@ dependencyResolutionManagement {
 rootProject.name = "QuestClaude"
 include(":app")
 include(":spike")
+include(":cwaude")

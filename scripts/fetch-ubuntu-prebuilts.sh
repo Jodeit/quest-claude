@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Fetch what the exec spike ships, into spike/src/main/{jniLibs,assets} (both gitignored):
+# Fetch what Cwaude (or the exec spike) ships, into <module>/src/main/{jniLibs,assets} (gitignored):
 #   - Termux's Android build of proot (+ its loader, libtalloc, libandroid-shmem), renamed to
 #     lib*.so so Android extracts them to nativeLibraryDir, the one place a targetSdk 29+ app
 #     may exec from. patchelf points their DT_NEEDED entries at the renamed libraries.
 #   - Ubuntu 24.04 base arm64 rootfs, as an asset the app unpacks on first run.
-# Needs curl, ar (binutils), tar, xz and patchelf. Run from anywhere.
+# Needs curl, ar (binutils), tar, xz and patchelf.
+# Usage: scripts/fetch-ubuntu-prebuilts.sh <module>   (cwaude or spike)
 set -euo pipefail
-cd "$(dirname "$0")"
+module=${1:?usage: $0 <module>}
+cd "$(dirname "$0")/../$module"
 
 TERMUX=https://packages.termux.dev/apt/termux-main
 UBUNTU=https://cdimage.ubuntu.com/ubuntu-base/releases/noble/release
