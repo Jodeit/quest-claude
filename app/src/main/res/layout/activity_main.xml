@@ -22,6 +22,16 @@
             android:textStyle="bold" />
 
         <Button
+            android:id="@+id/reconnect"
+            style="@style/QcButton.Secondary"
+            android:text="Reconnect" />
+
+        <Button
+            android:id="@+id/remote"
+            style="@style/QcButton.Secondary"
+            android:text="Remote" />
+
+        <Button
             android:id="@+id/open_session"
             style="@style/QcButton.Secondary"
             android:text="Open Claude" />

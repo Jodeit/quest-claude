@@ -13,11 +13,23 @@ class Settings(ctx: Context) {
         get() = prefs.getString("launch", DEFAULT_LAUNCH)!!
         set(v) = prefs.edit().putString("launch", v.trim().ifEmpty { DEFAULT_LAUNCH }).apply()
 
+    var reconnectCommand: String
+        get() = prefs.getString("reconnect", DEFAULT_RECONNECT)!!
+        set(v) = prefs.edit().putString("reconnect", v.trim().ifEmpty { DEFAULT_RECONNECT }).apply()
+
+    var remoteCommand: String
+        get() = prefs.getString("remote", DEFAULT_REMOTE)!!
+        set(v) = prefs.edit().putString("remote", v.trim().ifEmpty { DEFAULT_REMOTE }).apply()
+
     var submitOnSend: Boolean
         get() = prefs.getBoolean("submit", true)
         set(v) = prefs.edit().putBoolean("submit", v).apply()
 
     companion object {
         const val DEFAULT_LAUNCH = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude'"
+        /** `quest up` finds the Wireless debugging port, reopens adb on 5555 and re-applies keep-awake. */
+        const val DEFAULT_RECONNECT = "proot-distro login ubuntu -- bash -lc 'quest up'"
+        const val DEFAULT_REMOTE = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude remote-control'"
+        const val REMOTE_SESSION = "claude-rc"
     }
 }

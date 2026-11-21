@@ -65,11 +65,25 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
     }
 
     /** Open (or re-attach) the tmux session in a visible Termux terminal. */
-    fun openSession() {
+    fun openSession() = open("open", settings.session, settings.launchCommand)
+
+    /**
+     * Open (or re-attach) a separate session running `claude remote-control`, so the same
+     * headset session can be driven from claude.ai or the Claude app on another device.
+     * Visible, because the first run prints a link and may ask for confirmation.
+     */
+    fun openRemote() = open("remote", Settings.REMOTE_SESSION, settings.remoteCommand)
+
+    /** Run the reconnect command (default `quest up`) in the background; result shows in the UI. */
+    fun reconnect() {
+        Termux.sh(ctx, "reconnect", "exec ${Termux.PREFIX}/bin/sh -c \"\$1\"", settings.reconnectCommand)
+    }
+
+    private fun open(label: String, session: String, command: String) {
         Termux.sh(
-            ctx, "open",
+            ctx, label,
             "exec $tmux new-session -A -s \"\$1\" \"\$2\"",
-            settings.session, settings.launchCommand,
+            session, command,
             background = false
         )
     }

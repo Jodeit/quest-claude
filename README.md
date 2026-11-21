@@ -7,6 +7,10 @@ A lightweight Android companion app for Meta Quest that drives
 - **Voice dictation**: the system speech recognizer if there is one, otherwise the keyboard's mic.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
+- **Reconnect**: runs `quest up` in Ubuntu, which finds Shizuku's Wireless debugging port, reopens
+  adb on 5555 and turns keep-awake back on. Tapping the status bar while 5555 is closed does the same.
+- **Remote**: starts `claude remote-control` in its own tmux session (`claude-rc`), so you can drive
+  the headset's Claude from claude.ai or the Claude app on another device.
 
 ## How it works
 
@@ -28,6 +32,18 @@ pkg install tmux
 echo "allow-external-apps=true" >> ~/.termux/termux.properties
 termux-reload-settings
 ```
+
+## Headset control: `quest` and the skill
+
+Inside proot Ubuntu, from a clone of this repo:
+
+```sh
+scripts/setup.sh
+```
+
+That puts `quest` on the PATH and links `skills/quest` into `~/.claude/skills/`, so every Claude
+session on the headset knows to run `quest up` first and how to take screenshots, open pages,
+launch apps and send input. Run `quest help` for the full command list.
 
 ## Build & install
 

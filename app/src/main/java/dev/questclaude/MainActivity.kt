@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var compose: EditText
     private lateinit var status: TextView
     private lateinit var lastResult: TextView
+    @Volatile private var adbListening = false
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -62,6 +63,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.mic).setOnClickListener { startDictation() }
         findViewById<Button>(R.id.clear).setOnClickListener { compose.text.clear() }
         findViewById<Button>(R.id.open_session).setOnClickListener { guarded { tmux.openSession() } }
+        findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
+        findViewById<Button>(R.id.remote).setOnClickListener { guarded { tmux.openRemote() } }
         findViewById<Button>(R.id.settings).setOnClickListener { showSettings() }
         status.setOnClickListener { fixSetup() }
 
@@ -154,6 +157,7 @@ class MainActivity : AppCompatActivity() {
         val adbOn = SysSettings.Global.getInt(contentResolver, SysSettings.Global.ADB_ENABLED, 0) == 1
         io.execute {
             val port = isListening(5555)
+            adbListening = port
             main.post {
                 val parts = listOf(
                     dot(termux) + " Termux",
@@ -177,6 +181,7 @@ class MainActivity : AppCompatActivity() {
         when {
             !Termux.isInstalled(this) -> toast("Install Termux (F-Droid build) first")
             !Termux.hasPermission(this) -> askTermuxPermission.launch(Termux.PERMISSION)
+            !adbListening -> reconnect()
             else -> AlertDialog.Builder(this)
                 .setTitle("Setup checklist")
                 .setMessage(getString(R.string.setup_help))
@@ -185,22 +190,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun reconnect() = guarded {
+        lastResult.text = "… reconnecting adb (scanning for the Wireless debugging port, ~15 s)"
+        lastResult.setTextColor(AMBER)
+        tmux.reconnect()
+    }
+
     // ---- Settings ------------------------------------------------------------
 
     private fun showSettings() {
         val v = layoutInflater.inflate(R.layout.dialog_settings, null)
         val session = v.findViewById<EditText>(R.id.session).apply { setText(settings.session) }
         val launch = v.findViewById<EditText>(R.id.launch).apply { setText(settings.launchCommand) }
+        val reconnect = v.findViewById<EditText>(R.id.reconnect_cmd).apply { setText(settings.reconnectCommand) }
+        val remote = v.findViewById<EditText>(R.id.remote_cmd).apply { setText(settings.remoteCommand) }
         AlertDialog.Builder(this)
             .setTitle("Settings")
             .setView(v)
             .setPositiveButton("Save") { _, _ ->
                 settings.session = session.text.toString()
                 settings.launchCommand = launch.text.toString()
+                settings.reconnectCommand = reconnect.text.toString()
+                settings.remoteCommand = remote.text.toString()
             }
             .setNeutralButton("Reset") { _, _ ->
                 settings.session = ""
                 settings.launchCommand = ""
+                settings.reconnectCommand = ""
+                settings.remoteCommand = ""
             }
             .setNegativeButton("Cancel", null)
             .show()
