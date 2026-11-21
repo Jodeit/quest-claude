@@ -58,7 +58,8 @@ Plain adb also works: `adb logcat -d -t 300`, `adb install -r app.apk`, `adb she
   (untested — check with a screenshot).
 - **System dialogs** like "X isn't responding" block input. Dump the UI, find "Wait" or
   "Close app", tap it.
-- **Termux wake lock** can't be set from adb. If the session keeps getting suspended, ask the user
-  to tap *Acquire wakelock* in the Termux notification.
+- **Termux wake lock** can't be set from adb, but Termux's own script works from inside proot:
+  `PATH=/data/data/com.termux/files/usr/bin:$PATH sh /data/data/com.termux/files/usr/bin/termux-wake-lock`.
+  Do it before long jobs (builds); verify with `adb shell dumpsys power | grep termux:service-wakelock`.
 - **Building APKs:** there are no Android build tools on arm64. Push to GitHub, let Actions build,
   then `scripts/install.sh` in the quest-claude repo downloads and installs the APK.
