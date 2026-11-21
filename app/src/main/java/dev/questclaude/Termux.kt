@@ -190,7 +190,10 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
      */
     private val paneScript = """
         us=${'$'}(printf '\037')
-        $tmux -u list-sessions -F "#{session_name}${'$'}us#{pane_title}" 2>/dev/null | while IFS= read -r l; do
+        # Oldest first, so a new tab goes on the end (tmux itself lists sessions by name).
+        $tmux -u list-sessions -F "#{session_created}${'$'}us#{session_name}${'$'}us#{pane_title}" 2>/dev/null |
+          ${Termux.PREFIX}/bin/sort -s -n -t "${'$'}us" -k1,1 | while IFS= read -r l; do
+          l=${'$'}{l#*"${'$'}us"}
           # 1 when the pane is showing a permission prompt ("Do you want to …" then "1. Yes").
           a=0
           $tmux capture-pane -p -t "=${'$'}{l%%"${'$'}us"*}:" 2>/dev/null | tail -n 30 |
