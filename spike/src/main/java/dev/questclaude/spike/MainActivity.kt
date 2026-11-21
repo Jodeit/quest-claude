@@ -42,14 +42,13 @@ class MainActivity : Activity() {
     @Volatile private var current: Process? = null
 
     private val libDir by lazy { applicationInfo.nativeLibraryDir }
-    private val rootfs by lazy { File(filesDir, "ubuntu") }
-    private val logFile by lazy { File(getExternalFilesDir(null), "spike.log") }
+    private val rootfs by lazy { Proot.rootfs(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
         if (savedInstanceState == null) {
-            logFile.delete()
+            SpikeLog.init(this, fresh = true)
             runChecks()
         }
         handle(intent)
@@ -120,40 +119,18 @@ class MainActivity : Activity() {
 
     // ---- processes ----
 
-    private fun baseEnv() = mapOf(
-        "LD_LIBRARY_PATH" to libDir,
-        // Termux's proot has its loader path baked in under com.termux; point it at ours.
-        "PROOT_LOADER" to "$libDir/libproot-loader.so",
-        "PROOT_TMP_DIR" to cacheDir.path,
-        "TMPDIR" to cacheDir.path,
-        "PATH" to "/system/bin",
-    )
+    private fun proot(cmd: String): Int = run(Proot.builder(this, cmd))
 
-    /** Runs [cmd] with `sh -c` inside Ubuntu, the way proot-distro's `login` does. */
-    private fun proot(cmd: String): Int {
-        val r = rootfs.path
-        return run(
-            listOf(
-                "$libDir/libproot.so",
-                "--kill-on-exit", "--link2symlink", "--sysvipc", "-L",
-                "--kernel-release=6.2.1-PRoot-Spike",
-                "-0", "-r", r, "-w", "/root",
-                "-b", "/dev", "-b", "/proc", "-b", "/sys", "-b", "$r/tmp:/dev/shm",
-                "/usr/bin/env", "-i",
-                "HOME=/root", "USER=root", "LANG=C.UTF-8", "TERM=xterm-256color", "TMPDIR=/tmp",
-                "DEBIAN_FRONTEND=noninteractive",
-                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                "/bin/sh", "-c", cmd,
-            ),
-            env = baseEnv(),
-        )
-    }
-
-    /** Runs [argv], streaming stdout+stderr into the log. Throws if exec itself fails. */
-    private fun run(argv: List<String>, env: Map<String, String> = baseEnv()): Int {
+    /** Runs [argv] outside Ubuntu, with proot's environment. */
+    private fun run(argv: List<String>): Int {
         val pb = ProcessBuilder(argv).redirectErrorStream(true).directory(filesDir)
         pb.environment().clear()
-        pb.environment().putAll(env)
+        pb.environment().putAll(Proot.hostEnv(this))
+        return run(pb)
+    }
+
+    /** Runs [pb], streaming stdout+stderr into the log. Throws if exec itself fails. */
+    private fun run(pb: ProcessBuilder): Int {
         val p = pb.start()
         current = p
         try {
@@ -237,6 +214,7 @@ class MainActivity : Activity() {
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun button(label: String, onTap: () -> Unit) =
             Button(this).apply { text = label; isAllCaps = false; setOnClickListener { onTap() } }.also { bar.addView(it) }
+        button("Mirror") { startActivity(Intent(this, MirrorActivity::class.java)) }
         button("Run checks") { runChecks() }
         button("apt-get update") { worker.execute { step("apt-get update") { proot("apt-get update") } } }
         button("Stop") { current?.destroy() }
@@ -267,8 +245,7 @@ class MainActivity : Activity() {
     }
 
     private fun log(line: String) {
-        Log.i("QCSpike", line)
-        try { logFile.appendText(line + "\n") } catch (_: IOException) {}
+        SpikeLog.log(line)
         ui.post {
             out.append(line + "\n")
             if (out.length() > 200_000) out.text = out.text.subSequence(out.length() - 150_000, out.length())
