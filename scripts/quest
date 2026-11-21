@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# quest — drive this Quest headset over its own adb (127.0.0.1:5555).
+# Run `quest help` for commands. Every command self-heals the adb link first.
+set -uo pipefail
+
+S=127.0.0.1:5555
+SHOTS=${QUEST_SHOTS:-$HOME/quest-shots}
+SCAN_FROM=${QUEST_SCAN_FROM:-30000}
+SCAN_TO=${QUEST_SCAN_TO:-49999}
+
+say() { printf '%s\n' "$*" >&2; }
+die() { say "quest: $*"; exit 1; }
+a()   { adb -s "$S" "$@"; }
+ok()  { [ "$(adb -s "$S" get-state 2>/dev/null)" = device ]; }
+
+# Open TCP ports on localhost in the Wireless-debugging range (parallel, ~15s).
+scan_ports() {
+  local step=2000 s
+  for ((s = SCAN_FROM; s <= SCAN_TO; s += step)); do
+    (
+      e=$((s + step - 1)); ((e > SCAN_TO)) && e=$SCAN_TO
+      for ((p = s; p <= e; p++)); do
+        (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null && echo "$p"
+      done
+    ) &
+  done
+  wait
+}
+
+# Find the Wireless debugging port, switch adbd to also listen on 5555.
+reopen_5555() {
+  say "quest: 5555 is closed; looking for the Wireless debugging port..."
+  local p found=
+  for p in $(scan_ports | sort -n); do
+    timeout 5 adb connect "127.0.0.1:$p" >/dev/null 2>&1
+    if [ "$(adb -s "127.0.0.1:$p" get-state 2>/dev/null)" = device ]; then
+      found=$p; break
+    fi
+    adb disconnect "127.0.0.1:$p" >/dev/null 2>&1
+  done
+  [ -n "$found" ] || die "no adb found. Open Settings > Developer > Wireless debugging (or tap Start in Shizuku), then rerun 'quest up'."
+  say "quest: Wireless debugging is on $found; reopening 5555"
+  adb -s "127.0.0.1:$found" tcpip 5555 >/dev/null 2>&1
+  adb disconnect >/dev/null 2>&1
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    adb connect "$S" >/dev/null 2>&1
+    ok && return 0
+    adb disconnect "$S" >/dev/null 2>&1
+  done
+  die "switched adbd to 5555 but couldn't connect; try 'quest up' again"
+}
+
+connect() {
+  ok && return 0
+  adb disconnect "$S" >/dev/null 2>&1
+  timeout 5 adb connect "$S" >/dev/null 2>&1
+  ok && return 0
+  reopen_5555
+  awake quiet
+}
+
+awake() {
+  a shell am broadcast -a com.oculus.vrpowermanager.prox_close >/dev/null 2>&1
+  a shell svc power stayon true >/dev/null 2>&1
+  [ "${1:-}" = quiet ] || say "quest: proximity sensor overridden and stay-on enabled (until reboot; 'quest sleep' undoes)"
+}
+
+shot() {
+  local mode=eye out=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -f|--full) mode=full ;;
+      -r|--raw)  mode=raw ;;
+      *) out=$1 ;;
+    esac; shift
+  done
+  mkdir -p "$SHOTS"
+  out=${out:-$SHOTS/shot-$(date +%Y%m%d-%H%M%S).png}
+  local raw=$out
+  [ "$mode" = raw ] || raw=$(mktemp --suffix=.png)
+  a exec-out screencap -p >"$raw" || die "screencap failed"
+  [ -s "$raw" ] || die "screencap returned nothing"
+  if [ "$mode" != raw ]; then
+    python3 - "$raw" "$out" "$mode" <<'PY'
+import sys
+from PIL import Image
+src, dst, mode = sys.argv[1:]
+im = Image.open(src).convert("RGB")
+w, h = im.size
+if mode == "eye":
+    # Left eye only, trimmed of the black lens border.
+    im = im.crop((int(w * 0.04), int(h * 0.06), int(w * 0.48), int(h * 0.94)))
+im.thumbnail((1400, 1400))
+im.save(dst, optimize=True)
+PY
+    rm -f "$raw"
+  fi
+  echo "$out"
+}
+
+keycode() {
+  case ${1,,} in
+    back) echo 4 ;; home) echo 3 ;; enter|return) echo 66 ;; tab) echo 61 ;;
+    esc|escape) echo 111 ;; up) echo 19 ;; down) echo 20 ;; left) echo 21 ;;
+    right) echo 22 ;; select|center|ok) echo 23 ;; del|backspace) echo 67 ;;
+    menu) echo 82 ;; space) echo 62 ;; volup) echo 24 ;; voldown) echo 25 ;;
+    mute) echo 164 ;; power) echo 26 ;; recent|apps) echo 187 ;;
+    play|pause|playpause) echo 85 ;;
+    [0-9]*) echo "$1" ;;
+    *) echo "KEYCODE_${1^^}" ;;
+  esac
+}
+
+# Quote one arg for the device's sh.
+q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+find_pkg() {
+  local want=${1,,} list hit
+  list=$(a shell pm list packages | sed 's/^package://' | tr -d '\r')
+  hit=$(grep -x -- "$1" <<<"$list") ||
+  hit=$(grep -i -- "$want" <<<"$list" | grep -v '^com\.oculus\.\|^com\.android\.\|^android' | head -1) ||
+  hit=$(grep -i -- "$want" <<<"$list" | head -1)
+  [ -n "$hit" ] || die "no installed package matches '$1' (see 'quest apps')"
+  echo "$hit"
+}
+
+usage() {
+  cat <<'EOF'
+quest — control this Quest over its own adb (self-heals the connection)
+
+  quest up                  reconnect (finds Wireless debugging port, reopens 5555) + keep awake
+  quest status              connection, battery, focused app
+  quest awake | sleep       override proximity sensor so it stays on | restore normal
+  quest shot [-f|-r] [out]  screenshot -> path. default: left eye, cropped, <=1400px
+                            -f both eyes (downscaled), -r raw full-res
+  quest open <url>          open URL in the browser
+  quest launch <name|pkg>   launch an app (substring match on package name)
+  quest stop <name|pkg>     force-stop an app
+  quest apps [filter]       list installed third-party packages (-a for all)
+  quest focus               what's in front right now
+  quest key <name|code>...  back home enter tab esc up down left right del space menu play ...
+  quest type <text>         type text into the focused field
+  quest tap <x> <y>         tap (display coordinates)
+  quest swipe x1 y1 x2 y2 [ms]
+  quest install <apk>       install/update an APK
+  quest log [lines] [grep]  recent logcat
+  quest sh <cmd...>         raw adb shell
+EOF
+}
+
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case $cmd in
+  help|-h|--help) usage; exit 0 ;;
+esac
+
+command -v adb >/dev/null || die "adb not installed (apt install adb)"
+connect
+
+case $cmd in
+  up)      awake; say "quest: connected to $S" ;;
+  status)
+    echo "adb:     $S connected"
+    a shell dumpsys battery | tr -d '\r' | awk -F': ' '/level|AC powered|USB powered/{printf "battery: %s=%s\n",$1,$2}' | sed 's/^battery:  */battery: /'
+    a shell dumpsys power | tr -d '\r' | grep -m1 -o 'mWakefulness=.*' ;
+    "$0" focus ;;
+  awake)   awake ;;
+  sleep)   a shell am broadcast -a com.oculus.vrpowermanager.prox_open >/dev/null
+           a shell am broadcast -a com.oculus.vrpowermanager.automation_disable >/dev/null
+           a shell svc power stayon false
+           say "quest: proximity sensor back to normal" ;;
+  shot|screenshot) shot "$@" ;;
+  open)    [ $# -ge 1 ] || die "usage: quest open <url>"
+           a shell am start -a android.intent.action.VIEW -d "$(q "$1")" >/dev/null && echo "opened $1" ;;
+  launch)  [ $# -ge 1 ] || die "usage: quest launch <name|pkg>"
+           p=$(find_pkg "$1") || exit 1
+           a shell monkey -p "$p" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 \
+             && echo "launched $p" || die "couldn't launch $p" ;;
+  stop)    p=$(find_pkg "$1") || exit 1; a shell am force-stop "$p" && echo "stopped $p" ;;
+  apps)    if [ "${1:-}" = -a ]; then shift; f="pm list packages"; else f="pm list packages -3"; fi
+           a shell $f | sed 's/^package://' | tr -d '\r' | sort | grep -i -- "${1:-}" ;;
+  focus)   a shell dumpsys activity activities | tr -d '\r' \
+             | grep -E 'topResumedActivity|visible=true.*A=' \
+             | grep -oE '(A=[0-9]+:[^ ]+)|(u0 [^ ]+)' | sed 's/^A=[0-9]*://; s/^u0 //' \
+             | grep -vE 'vrshell|systemux|panelapp' | awk '!seen[$0]++' ;;
+  key)     [ $# -ge 1 ] || die "usage: quest key <name|code>..."
+           for k in "$@"; do a shell input keyevent "$(keycode "$k")"; done ;;
+  type)    [ $# -ge 1 ] || die "usage: quest type <text>"
+           t="$*"; t=${t// /%s}
+           a shell input text "$(q "$t")" ;;
+  tap)     [ $# -eq 2 ] || die "usage: quest tap <x> <y>"; a shell input tap "$1" "$2" ;;
+  swipe)   [ $# -ge 4 ] || die "usage: quest swipe x1 y1 x2 y2 [ms]"; a shell input swipe "$@" ;;
+  install) [ -f "${1:-}" ] || die "usage: quest install <file.apk>"; a install -r -g "$1" ;;
+  log)     n=${1:-200}; if [ -n "${2:-}" ]; then a logcat -d -t "$n" | grep -i -- "$2"; else a logcat -d -t "$n"; fi ;;
+  sh|shell) a shell "$@" ;;
+  *)       usage; exit 1 ;;
+esac
