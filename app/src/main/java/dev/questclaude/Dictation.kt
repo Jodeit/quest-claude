@@ -38,7 +38,7 @@ class Dictation(ctx: Context) {
         private const val MAX_SECONDS = 180
         private const val THREADS = 4
         /** Audio past this is transcribed for good and dropped from the live window. */
-        private const val WINDOW_SECONDS = 8
+        private const val WINDOW_SECONDS = 6
         /** The commit cut goes at the quietest spot this far back from the window's end. */
         private const val CUT_SEARCH_SECONDS = 3
         /** Whisper's markers for non-speech, e.g. [BLANK_AUDIO], (wind blowing). */
@@ -63,6 +63,9 @@ class Dictation(ctx: Context) {
     /** Start of the live window; audio before it is already in [committed]. */
     private var windowStart = 0
     private var committed = ""
+    /** Speech span (absolute sample indices) of the last live pass and its text, to skip reruns. */
+    private var lastSpan = -1L
+    private var lastText = ""
     /**
      * Bumped by every start and cancel. A transcription pass that began under an older value is
      * thrown away, so a quick stop-and-restart can't mix the last dictation into this one.
@@ -126,7 +129,7 @@ class Dictation(ctx: Context) {
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
             rec.release(); error("couldn't open the microphone")
         }
-        synchronized(this) { size = 0; windowStart = 0; committed = ""; generation++ }
+        synchronized(this) { size = 0; windowStart = 0; committed = ""; lastSpan = -1L; generation++ }
         recording = true
         recorder = Thread {
             val chunk = FloatArray(RATE / 10)
@@ -226,7 +229,7 @@ class Dictation(ctx: Context) {
      * makes things up ("the", "[", "Thank you."), so a stretch with no speech gives "" without
      * running it, and silence before and after the speech is cut down to [PAD_MS].
      */
-    private fun pass(samples: FloatArray): String {
+    private fun pass(samples: FloatArray, offset: Int = -1): String {
         val frame = RATE / 20
         val rms = DoubleArray(samples.size / frame) { f ->
             var e = 0.0
@@ -247,11 +250,15 @@ class Dictation(ctx: Context) {
         val pad = RATE * PAD_MS / 1000
         val from = maxOf(0, first * frame - pad)
         val to = minOf(samples.size, (last + 1) * frame + pad)
+        // Same speech as the last live pass (you've paused): Whisper would only repeat itself.
+        val span = (offset + from).toLong() shl 32 or (offset + to).toLong()
+        if (offset >= 0 && span == lastSpan) return lastText
         val speech = samples.copyOfRange(from, to)
         val t0 = System.nanoTime()
         val text = run(speech, audioCtx(speech.size))
         Log.i("QuestClaude", "whisper: ${speech.size * 1000 / RATE} of ${samples.size * 1000 / RATE} ms " +
             "in ${(System.nanoTime() - t0) / 1_000_000} ms ($levels): \"$text\"")
+        if (offset >= 0) { lastSpan = span; lastText = text }
         return text
     }
 
@@ -280,7 +287,7 @@ class Dictation(ctx: Context) {
             }
             samples = samples.copyOfRange(cut, samples.size)
         }
-        val text = if (samples.size < RATE / 2) "" else pass(samples)
+        val text = if (samples.size < RATE / 2) "" else pass(samples, windowStart)
         synchronized(this) {
             if (gen != generation) return null
             return join(committed, text)
