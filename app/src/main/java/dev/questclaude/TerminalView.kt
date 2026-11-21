@@ -213,7 +213,8 @@ class TerminalView @JvmOverloads constructor(
             KeyEvent.KEYCODE_DPAD_UP -> "Up"
             KeyEvent.KEYCODE_DPAD_DOWN -> "Down"
             KeyEvent.KEYCODE_DPAD_LEFT -> "Left"
-            KeyEvent.KEYCODE_DPAD_RIGHT -> "Right"
+            // → accepts Claude's suggested prompt, like Tab; otherwise it moves the cursor.
+            KeyEvent.KEYCODE_DPAD_RIGHT -> if (TapTargets.hasSuggestion(text)) "Tab" else "Right"
             KeyEvent.KEYCODE_MOVE_HOME -> "Home"
             KeyEvent.KEYCODE_MOVE_END -> "End"
             KeyEvent.KEYCODE_PAGE_UP -> "PPage"

@@ -21,7 +21,7 @@ class TapSpan(val key: String? = null, val literal: String? = null, val command:
  *
  * Two exceptions. A list split by a rule (a question's options, a rule, then "Chat about this")
  * counts from the rule above it. And Claude's grey suggested next prompt in the input box is
- * tappable: Tab accepts it, Enter sends it. Text you typed yourself isn't grey, so it never is.
+ * tappable: Tab accepts it, Enter sends it. (The → key accepts it too, like Tab.) Text you typed yourself isn't grey, so it never is.
  *
  * And one control of our own: "· remote" at the end of the mode line under the input box
  * ("⏵⏵ auto mode on (shift+tab to cycle)"), which runs /remote-control in this tab's Claude.
@@ -148,6 +148,10 @@ object TapTargets {
         val r = Color.red(c); val g = Color.green(c); val b = Color.blue(c)
         return Color.alpha(c) < 255 || (maxOf(r, g, b) - minOf(r, g, b) < 16 && r in 80..190)
     }
+
+    /** Claude is showing a grey suggested prompt in the input box (as marked by [mark]). */
+    fun hasSuggestion(text: CharSequence): Boolean =
+        text is Spanned && text.getSpans(0, text.length, TapSpan::class.java).any { it.key == "Tab Enter" }
 
     /** The innermost target at [offset], so a hint inside an option line wins over the option. */
     fun at(text: CharSequence, offset: Int): TapSpan? {
