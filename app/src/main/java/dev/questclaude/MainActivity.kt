@@ -398,22 +398,25 @@ class MainActivity : AppCompatActivity() {
     // ---- Key bar -------------------------------------------------------------
 
     private fun buildKeyBar(bar: LinearLayout) {
+        fun send(vararg names: String): () -> Unit = { names.forEach(input::key) }
         val keys = listOf(
-            "Esc" to arrayOf("Escape"),
-            "Ctrl-C" to arrayOf("C-c"),
-            "Tab" to arrayOf("Tab"),
-            "⇧Tab" to arrayOf("BTab"),
-            "←" to arrayOf("Left"),
-            "↑" to arrayOf("Up"),
-            "↓" to arrayOf("Down"),
-            "→" to arrayOf("Right"),
-            "⏎" to arrayOf("Enter"),
+            "Esc" to send("Escape"),
+            "Ctrl-C" to send("C-c"),
+            // Esc and Ctrl-C interrupt Claude while it's working; Clear only empties the prompt.
+            "Clear" to input::clearPrompt,
+            "Tab" to send("Tab"),
+            "⇧Tab" to send("BTab"),
+            "←" to send("Left"),
+            "↑" to send("Up"),
+            "↓" to send("Down"),
+            "→" to send("Right"),
+            "⏎" to send("Enter"),
         )
-        for ((label, k) in keys) {
+        for ((label, action) in keys) {
             val b = layoutInflater.inflate(R.layout.key_button, bar, false) as Button
             b.text = label
             b.isFocusable = false // keep keyboard focus on the terminal
-            b.setOnClickListener { k.forEach(input::key) }
+            b.setOnClickListener { action() }
             bar.addView(b)
         }
     }

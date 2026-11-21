@@ -59,7 +59,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
     /**
      * Typed input, in order: "L:text" literal keys, "K:name" a tmux key name (Enter, C-c, BTab,
      * Up, ...), "N:count:name" that key repeated, "P:text" a bracketed paste, "S:lines" scroll
-     * back (positive) or forward (negative). Result arrives with label "input"; any tmux error
+     * back (positive) or forward (negative), "C:" clear Claude's prompt. Result arrives with label "input"; any tmux error
      * shows up as stdout rather than a failed command, since Termux posts a notification for
      * every failure and this runs per keystroke batch.
      */
@@ -85,6 +85,19 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
                   elif [ "${'$'}($tmux display -p -t "${'$'}t" '#{pane_in_mode}')" = 1 ]; then
                     $tmux send-keys -t "${'$'}t" -X -N "${'$'}m" scroll-down
                   fi ;;
+                C:) # Esc and Ctrl-C would interrupt Claude mid-turn, so delete the draft a line or
+                  # two per step (Claude drops control keys sent in one big burst), checking the
+                  # input box between steps. No box found (a menu, not Claude): do nothing.
+                  i=0
+                  while [ ${'$'}i -lt 100 ]; do
+                    s=${'$'}($tmux capture-pane -p -t "${'$'}t" | ${Termux.PREFIX}/bin/awk '
+                      p ~ /^─/ && /^❯/ { f = 1; l = ${'$'}0; gsub(/[ \302\240]/, "", l); getline n
+                                         s = (l == "❯" && n ~ /^─/) ? "empty" : "text" }
+                      { p = ${'$'}0 } END { print f ? s : "none" }')
+                    [ "${'$'}s" = text ] || break
+                    $tmux send-keys -t "${'$'}t" C-k C-u BSpace DC
+                    sleep 0.05; i=${'$'}((i + 1))
+                  done ;;
               esac
             done 2>&1
             exit 0

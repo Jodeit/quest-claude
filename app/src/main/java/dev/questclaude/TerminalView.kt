@@ -244,6 +244,9 @@ class InputQueue(private val send: (List<String>) -> Unit) {
         if (count == 1) key(name) else { pending += "N:$count:$name"; flush() }
     }
 
+    /** Empty Claude's prompt without interrupting it (unlike Esc or Ctrl-C while it works). */
+    fun clearPrompt() { pending += "C:"; flush() }
+
     /** Bracketed paste, so newlines don't submit. */
     fun paste(s: String) { pending += "P:$s"; flush() }
 

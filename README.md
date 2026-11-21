@@ -19,7 +19,8 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   corrected as Whisper hears more. Stop (same shortcut) does a final full pass; Esc cancels and
   removes the text. Nothing is sent until you press Enter. Quest has no speech recognizer
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
-- **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
+- **Key bar**: Esc, Ctrl-C, Clear, Tab, Shift-Tab, arrows, Enter. Esc and Ctrl-C interrupt Claude
+  while it works; **Clear** only empties the prompt, so it's safe mid-turn.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
 - **Reconnect**: turns Wireless debugging back on (Android switches it off at every boot), then runs
   `quest up` in Ubuntu, which finds its port, reopens adb on 5555 and turns keep-awake back on.
