@@ -421,7 +421,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startRecording() {
-        try {
+        val gen = try {
             dictation.start()
         } catch (e: Exception) {
             showDictation("✗ dictation: ${e.message}", RED); return
@@ -429,7 +429,7 @@ class MainActivity : AppCompatActivity() {
         streamed = ""
         dictationSession = settings.session
         speech.execute { runCatching { dictation.load() } } // warm up while you talk
-        speech.execute(::streamPartial)
+        speech.execute { streamPartial(gen) }
         mic.text = "■ Stop"
         showDictation("● listening — Stop or Ctrl+Shift+D to finish, Esc to cancel", RED)
     }
@@ -443,11 +443,12 @@ class MainActivity : AppCompatActivity() {
      * Runs on [speech] over and over while recording: transcribe what's been said so far and
      * type it into Claude's prompt as you talk, fixing earlier words as Whisper revises them.
      */
-    private fun streamPartial() {
-        if (!dictation.recording) return
-        val text = runCatching { dictation.partial() }.getOrNull()
-        main.post { if (text != null && dictation.recording) typeStreamed(text) }
-        if (dictation.recording) speech.execute(::streamPartial)
+    private fun streamPartial(gen: Int) {
+        if (!dictation.isLive(gen)) return
+        val text = runCatching { dictation.partial(gen) }.getOrNull()
+        // Checked again on the main thread: a stop or restart may have come in meanwhile.
+        main.post { if (text != null && dictation.isLive(gen)) typeStreamed(text) }
+        if (dictation.isLive(gen)) speech.execute { streamPartial(gen) }
     }
 
     /** Make the prompt show [text]: backspace over what changed, type the new tail. */

@@ -46,6 +46,8 @@ Java_dev_questclaude_WhisperNative_transcribe(JNIEnv *env, jobject thiz, jlong h
     wp.temperature_inc = 0.0f;
 
     jsize n = (*env)->GetArrayLength(env, samples);
+    // About 6 tokens a second is fast talk; past that Whisper is looping, so stop it there.
+    if (audio_ctx > 0) wp.max_tokens = n / 16000 * 6 + 16;
     jfloat *pcm = (*env)->GetFloatArrayElements(env, samples, NULL);
     int rc = whisper_full(ctx, wp, pcm, n);
     (*env)->ReleaseFloatArrayElements(env, samples, pcm, JNI_ABORT);
