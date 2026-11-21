@@ -38,6 +38,7 @@ Run `quest help` for exact usage. The main ones:
 | `quest open <url>` | open a URL in the Quest Browser |
 | `quest apps` / `quest launch <pkg>` | list / start apps |
 | `quest tap x y`, `quest swipe …`, `quest key back\|home\|enter`, `quest type "text"` | input on 2D panels |
+| `quest notifs [-f] [pkg]` | notifications' title and text (e.g. Termux RUN_COMMAND errors); `-f` follows new ones; run it with the Monitor tool to catch errors instead of asking the user to paste them |
 | `quest sleep` | undo keep-awake |
 
 Plain adb also works: `adb logcat -d -t 300`, `adb install -r app.apk`, `adb shell …`.
