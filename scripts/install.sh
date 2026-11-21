@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Download an APK from the latest successful CI run and install it on the headset.
-# Usage: scripts/install.sh [--cwaude] [run-id]
+# Usage: scripts/install.sh [--qlaude|--cwaude] [run-id]
 #   default   Quest Claude (dev.questclaude), which drives Claude in Termux
-#   --cwaude  Cwaude (dev.cwaude), which runs its own Ubuntu: no Termux needed
+#   --qlaude  Qlaude (formerly Cwaude; package dev.cwaude), which runs its own Ubuntu: no Termux
+#             needed. --cwaude still works.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 artifact=quest-claude-apk apk=quest-claude.apk pkg=dev.questclaude
-if [ "${1:-}" = "--cwaude" ]; then
+if [ "${1:-}" = "--qlaude" ] || [ "${1:-}" = "--cwaude" ]; then
   artifact=cwaude-apk apk=cwaude.apk pkg=dev.cwaude
   shift
 fi

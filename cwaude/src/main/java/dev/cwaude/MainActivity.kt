@@ -1,6 +1,9 @@
 package dev.cwaude
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.net.Uri
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -103,6 +106,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         ansi = Ansi(getColor(R.color.fg), getColor(R.color.term_bg))
         term.input = input
         term.onScroll = ::previewScroll
+        term.onLongPress = ::showCopyText
         findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
         tabs = findViewById(R.id.tabs)
         findViewById<Button>(R.id.new_tab).setOnClickListener { newSession() }
@@ -161,6 +165,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         val info = tabs.associate { it.name to TabInfo.parse(it.title, it.approval) }
         if (names != sessions || info != tabInfo) { sessions = names; tabInfo = info; renderTabs() }
     }
+
+    override fun copied(text: String) = runOnUiThread { copyToClipboard(text) }
 
     override fun frame(f: ControlClient.Frame) {
         // Styling is the slow part; keep it off the UI thread.
@@ -655,6 +661,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             "↓" to send("Down"),
             "→" to send("Right"),
             "⏎" to send("Enter"),
+            "Paste" to ::pasteClipboard,
         )
         for ((label, action) in keys) {
             val b = layoutInflater.inflate(R.layout.key_button, bar, false) as Button
@@ -663,6 +670,76 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             b.setOnClickListener { action() }
             bar.addView(b)
         }
+    }
+
+    // ---- Copy and paste --------------------------------------------------------
+    // Claude's "c to copy" puts text in a tmux buffer, which ControlClient hands us as copied().
+    // Long-pressing the terminal shows its text to select from, with buttons for any links.
+
+    private fun copyToClipboard(text: String, what: String = "Copied") {
+        if (text.isEmpty()) return
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Qlaude", text))
+        val first = text.lineSequence().first().let { if (it.length > 60) it.take(57) + "…" else it }
+        toast("$what: $first")
+    }
+
+    private fun pasteClipboard() {
+        val clip = getSystemService(ClipboardManager::class.java).primaryClip
+        val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        if (text.isEmpty()) return toast("Clipboard is empty")
+        input.paste(text)
+    }
+
+    private fun showCopyText() {
+        val c = control() ?: return showResult("✗ not connected yet", RED)
+        c.screenText(settings.session) { text -> runOnUiThread { if (!isFinishing) copyDialog(text) } }
+    }
+
+    private fun copyDialog(text: String) {
+        if (text.isBlank()) return toast("Nothing to copy")
+        val pad = (12 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0) }
+        // Links (newest first): wrapped lines are already joined, so a long login URL is whole.
+        val links = Regex("""https?://[^\s"'<>]+""").findAll(text).map { it.value.trimEnd('.', ',', ')') }
+            .toList().distinct().asReversed().take(3)
+        for (url in links) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(TextView(this).apply {
+                this.text = url; maxLines = 2; setTextColor(getColor(R.color.fg))
+                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(Button(this).apply { this.text = "Open"; setOnClickListener { openLink(url) } })
+            row.addView(Button(this).apply { this.text = "Copy"; setOnClickListener { copyToClipboard(url, "Copied link") } })
+            box.addView(row)
+        }
+        val body = TextView(this).apply {
+            this.text = text
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextColor(getColor(R.color.fg))
+            setBackgroundColor(getColor(R.color.term_bg))
+            setPadding(pad / 2, pad / 2, pad / 2, pad / 2)
+            setTextIsSelectable(true) // long-press or drag to select, then Copy
+        }
+        val scroll = ScrollView(this).apply { addView(body) }
+        box.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+            (resources.displayMetrics.heightPixels * 0.55f).toInt()))
+        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        AlertDialog.Builder(this)
+            .setTitle("Copy text")
+            .setView(box)
+            .setPositiveButton("Copy all") { _, _ -> copyToClipboard(text) }
+            .setNeutralButton("Copy selection") { _, _ ->
+                val a = body.selectionStart; val b = body.selectionEnd
+                if (a in 0 until b) copyToClipboard(text.substring(a, b)) else toast("Select some text first")
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun openLink(url: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        catch (e: Exception) { toast("Can't open link: ${e.message}") }
     }
 
     // ---- Status --------------------------------------------------------------
@@ -735,7 +812,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             when {
                 code == 0 -> showResult("✓ reconnect: $last", GREEN)
                 code == 127 || "command not found" in out -> showResult(
-                    "✗ '${cmd.substringBefore(' ')}' isn't installed in Cwaude's Ubuntu: clone quest-claude there " +
+                    "✗ '${cmd.substringBefore(' ')}' isn't installed in Qlaude's Ubuntu: clone quest-claude there " +
                         "and run scripts/setup.sh (or change the command in ⚙)", RED)
                 else -> showResult("✗ reconnect (exit $code): $last", RED)
             }

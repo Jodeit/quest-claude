@@ -25,6 +25,8 @@ class TerminalView @JvmOverloads constructor(
     var input: InputQueue? = null
     /** Lines scrolled back (positive) or forward, before they're sent; for a local preview. */
     var onScroll: ((Int) -> Unit)? = null
+    /** Long press (hold the trigger): select and copy text. */
+    var onLongPress: (() -> Unit)? = null
 
     companion object {
         private const val BASE_SP = 12f
@@ -38,6 +40,7 @@ class TerminalView @JvmOverloads constructor(
         isFocusable = true
         isFocusableInTouchMode = true
         setOnClickListener { if (!tapControl()) showKeyboard() }
+        setOnLongClickListener { onLongPress?.invoke(); onLongPress != null }
     }
 
     // ---- Tapping Claude's controls (see TapTargets) -----------------------------

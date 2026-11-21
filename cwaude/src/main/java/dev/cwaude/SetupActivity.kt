@@ -31,11 +31,11 @@ class SetupActivity : Activity() {
             setBackgroundColor(getColor(R.color.bg))
         }
         root.addView(TextView(this).apply {
-            text = "Setting up Cwaude"; textSize = 24f; setTypeface(typeface, Typeface.BOLD)
+            text = "Setting up Qlaude"; textSize = 24f; setTypeface(typeface, Typeface.BOLD)
             setTextColor(getColor(R.color.accent))
         })
         root.addView(TextView(this).apply {
-            text = "Cwaude runs Claude Code in its own Ubuntu, right here on the headset. The first start " +
+            text = "Qlaude, a Quest Claude Code app, runs Claude Code in its own Ubuntu, right here on the headset. The first start " +
                 "unpacks Ubuntu and downloads its packages and Claude Code (a few minutes, a few hundred MB). " +
                 "Keep this window open."
             textSize = 15f; setTextColor(getColor(R.color.fg)); setPadding(0, dp(8), 0, dp(12))

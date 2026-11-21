@@ -59,7 +59,7 @@ class CwaudeService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-            .setContentTitle("Cwaude is running")
+            .setContentTitle("Qlaude is running")
             .setContentText("Your Claude sessions keep going in the background.")
             .setContentIntent(open)
             .setOngoing(true)
@@ -131,6 +131,8 @@ class CwaudeService : Service() {
             override fun frame(f: ControlClient.Frame) { listener?.frame(f) }
             override fun tabs(tabs: List<ControlClient.Tab>) { listener?.tabs(tabs) }
             override fun sessionChanged(session: String) { listener?.sessionChanged(session) }
+            // Android only lets the focused app set the clipboard, so the screen does it.
+            override fun copied(text: String) { listener?.copied(text) }
             override fun closed(why: String) {
                 status("disconnected: $why")
                 listener?.closed(why)

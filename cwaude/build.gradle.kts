@@ -1,4 +1,4 @@
-// Cwaude: Quest Claude without Termux. Runs its own Ubuntu (proot) and talks to tmux over a
+// Qlaude (formerly Cwaude): Quest Claude without Termux. Runs its own Ubuntu (proot) and talks to tmux over a
 // control-mode pipe. Run scripts/fetch-ubuntu-prebuilts.sh cwaude first; it fills
 // src/main/jniLibs (proot) and src/main/assets (the Ubuntu rootfs).
 plugins {

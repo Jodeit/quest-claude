@@ -17,7 +17,9 @@ so always pull before starting work.
 - `scripts/quest` — the headset control CLI (`quest up`, `quest shot`, …). Runs inside proot Ubuntu.
 - `skills/quest/` — the Claude skill for driving the headset; `scripts/setup.sh` links it into
   `~/.claude/skills/`. Keep the command table in its SKILL.md in sync with `quest help`.
-- `cwaude/` — Cwaude (`dev.cwaude`), the Termux-free successor: runs its own Ubuntu through proot
+- `cwaude/` — Qlaude, "A Quest Claude Code App" (formerly Cwaude; the package, module and class
+  names are still `dev.cwaude`/`Cwaude*`, so updates install over the existing app and keep its
+  Ubuntu and Claude login). The Termux-free successor: runs its own Ubuntu through proot
   (shipped as `lib*.so`, fetched by `scripts/fetch-ubuntu-prebuilts.sh`), keeps tmux alive in a
   foreground service, and talks to it over one `tmux -C` control-mode pipe (`Tmux.kt`). Its UI
   files (`Ansi`, `TapTargets`, `TerminalView`, `Dictation`) started as copies of `app/`'s; fix

@@ -53,6 +53,8 @@ class ControlClient(private val ctx: Context, private val events: Events) {
         /** tmux moved this client to [session] (a switch we asked for, or a closed tab). */
         fun sessionChanged(session: String)
         fun closed(why: String)
+        /** A program copied [text] into a tmux buffer (Claude's "c to copy" runs `tmux load-buffer`). */
+        fun copied(text: String)
     }
 
     data class Frame(
@@ -344,6 +346,35 @@ class ControlClient(private val ctx: Context, private val events: Events) {
         }
     }
 
+    /** [session]'s screen and recent scrollback as plain text, wrapped lines joined (-J). */
+    fun screenText(session: String, cb: (String) -> Unit) =
+        command("capture-pane -p -J -S -300 -t ${Tmux.target(session)}") { ok, lines ->
+            cb(if (ok) lines.joinToString("\n") { it.trimEnd() }.trim('\n') else "")
+        }
+
+    // ---- Clipboard ----
+
+    /**
+     * Paste buffer [name] -> [Events.copied]. show-buffer turns newlines into '_' for control
+     * clients, so tmux saves it to a file in Ubuntu's /tmp and we read that. The tmux -C client
+     * writes the file, maybe just after the reply, so allow it a moment.
+     */
+    private fun readBuffer(name: String) {
+        val file = java.io.File(Ubuntu.rootfs(ctx), "tmp/qlaude-clip")
+        file.delete()
+        command("save-buffer -b ${Tmux.tq(name)} /tmp/qlaude-clip") { ok, _ ->
+            if (!ok) return@command
+            fun attempt(n: Int) {
+                if (file.exists() && (file.length() > 0 || n > 3)) {
+                    val text = runCatching { file.readText() }.getOrNull()
+                    file.delete()
+                    if (!text.isNullOrEmpty()) events.copied(text)
+                } else if (n < 20) runCatching { timer.schedule({ attempt(n + 1) }, 25, TimeUnit.MILLISECONDS) }
+            }
+            runCatching { timer.execute { attempt(0) } }
+        }
+    }
+
     // ---- History ----
 
     /**
@@ -393,6 +424,8 @@ class ControlClient(private val ctx: Context, private val events: Events) {
                         events.sessionChanged(session)
                         requestCapture()
                     }
+                    // Claude's copy (and tmux copy mode) fill a paste buffer; hand it to Android.
+                    line.startsWith("%paste-buffer-changed ") -> readBuffer(line.substringAfter(' ').trim())
                     line.startsWith("%sessions-changed") || line.startsWith("%session-renamed") -> requestTabs()
                     line.startsWith("%exit") -> why = "tmux: $line"
                     line.startsWith("%") -> {}
