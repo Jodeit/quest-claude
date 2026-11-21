@@ -4,6 +4,8 @@
 
     <!-- Lets us send commands to Termux (user grants it at runtime). -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <!-- For the 127.0.0.1:5555 status check. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Turn Wireless debugging back on after reboot (granted via adb pm grant; replaces Shizuku). -->
     <uses-permission
