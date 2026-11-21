@@ -10,6 +10,8 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
 - **Terminal**: the Claude tmux pane, in color, refreshed about once a second (right away after
   you type). Tap it (or ⌨) and type: keys go straight to Claude, like a terminal. With a
   Bluetooth keyboard, Enter sends, Shift+Enter starts a new line, and Ctrl/Alt combos work.
+  Scroll back through the conversation with the controller thumbstick, or pinch and drag
+  (hand tracking) up and down on the terminal; typing jumps back to the prompt.
 - **Tabs**: one per tmux session, above the terminal. **＋** starts another Claude (`claude-2`, …),
   tap a tab to switch (typing and the mirror follow it), long-press to close it.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
