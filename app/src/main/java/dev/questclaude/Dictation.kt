@@ -5,6 +5,7 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -38,7 +39,7 @@ class Dictation(ctx: Context) {
         private const val THREADS = 4
         /** Whisper's markers for non-speech, e.g. [BLANK_AUDIO], (wind blowing). */
         /** Audio past this is transcribed for good and dropped from the live window. */
-        private const val WINDOW_SECONDS = 20
+        private const val WINDOW_SECONDS = 12
         private val NON_SPEECH = Regex("""\[[^\]]*]|\([^)]*\)""")
     }
 
@@ -142,32 +143,38 @@ class Dictation(ctx: Context) {
 
     private fun join(a: String, b: String) = listOf(a, b).filter { it.isNotEmpty() }.joinToString(" ")
 
+    /** Encoder window sized to the audio: 50 frames per second plus margin, rounded up to 64. */
+    private fun audioCtx(samples: Int) = ((samples * 50 / RATE + 64 + 63) / 64 * 64).coerceAtMost(1500)
+
     /**
-     * Transcript so far, while recording. Uses a shortened encoder window sized to the audio
-     * (much faster than the full 30 s); once the live window passes [WINDOW_SECONDS] it is
-     * transcribed in full, committed, and a new window starts.
+     * Transcript so far. Every pass uses an encoder window sized to the audio (much faster than
+     * Whisper's full 30 s); once the live window passes [WINDOW_SECONDS] its text is committed
+     * and a new window starts, so passes stay short however long you talk.
      */
     fun partial(): String {
         val samples = window()
         if (samples.size < RATE / 2) return committed
+        val t0 = System.nanoTime()
+        val text = run(samples, audioCtx(samples.size))
+        Log.i("QuestClaude", "whisper: ${samples.size * 1000 / RATE} ms of audio in " +
+            "${(System.nanoTime() - t0) / 1_000_000} ms")
         if (samples.size >= RATE * WINDOW_SECONDS) {
-            committed = join(committed, run(samples, 0))
+            committed = join(committed, text)
             synchronized(this) { windowStart += samples.size }
             return committed
         }
-        // 50 encoder frames per second of audio, plus margin, rounded up to 64.
-        val ctx = ((samples.size * 50 / RATE + 64 + 63) / 64 * 64).coerceAtMost(1500)
-        return join(committed, run(samples, ctx))
+        return join(committed, text)
     }
 
-    /** Stops recording and returns the final transcript ("" if nothing was said). */
+    /**
+     * Stops recording and returns the final transcript. Just one more live-style pass to pick up
+     * the last words, not a slow full-window rerun of what you've already seen.
+     */
     fun stopAndTranscribe(): String {
         recording = false
         recorder?.join()
         recorder = null
-        val samples = window()
-        if (samples.size < RATE / 2) return committed
-        return join(committed, run(samples, 0))
+        return partial()
     }
 
     fun cancel() {

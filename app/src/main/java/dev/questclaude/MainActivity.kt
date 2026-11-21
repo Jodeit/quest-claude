@@ -10,6 +10,7 @@ import android.provider.Settings as SysSettings
 import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -114,7 +115,10 @@ class MainActivity : AppCompatActivity() {
         ResultReceiver.listener = { label, ok, msg, stdout ->
             runOnUiThread {
                 if (label == "mirror") showPane(ok, stdout, msg)
-                else if (label == "input") {
+                else if (label == "projects" && pickingProject) {
+                    pickingProject = false
+                    pickProject(stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }.sorted())
+                } else if (label == "input") {
                     input.done()
                     if (stdout.isNotBlank()) showResult("✗ typing: ${stdout.trim()}", RED)
                     refreshPaneSoon()
@@ -223,10 +227,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** A new tab running another Claude (the launch command), named claude-2, claude-3, ... */
+    /** ＋: ask Termux for the projects in ~, then [pickProject] when the list arrives. */
     private fun newSession() = guarded {
+        pickingProject = true
+        tmux.listProjects()
+    }
+
+    private var pickingProject = false
+
+    /**
+     * Where the new tab's Claude runs. For a git repo it gets its own worktree by default
+     * (`claude -w`), so several tabs can work on the same repo without editing the same files.
+     */
+    private fun pickProject(projects: List<String>) {
+        val items = listOf("~ (home)") + projects
+        var choice = items.indexOf(settings.lastProject).takeIf { it > 0 } ?: 0
+        val isolate = CheckBox(this).apply {
+            text = "Own git worktree, so it can't collide with other tabs on this repo"
+            setTextColor(getColor(R.color.fg))
+            isChecked = settings.isolateTabs
+            isEnabled = choice > 0
+            setPadding(24, 16, 24, 16)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("New Claude tab")
+            .setSingleChoiceItems(items.toTypedArray(), choice) { _, which ->
+                choice = which
+                isolate.isEnabled = which > 0
+            }
+            .setView(isolate)
+            .setPositiveButton("Open") { _, _ ->
+                val project = if (choice == 0) null else items[choice]
+                val worktree = project != null && isolate.isChecked
+                settings.lastProject = items[choice]
+                if (project != null) settings.isolateTabs = isolate.isChecked
+                openTab(project, worktree)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openTab(project: String?, worktree: Boolean) = guarded {
+        // Tab (and worktree) named after the project: quest-claude, quest-claude-2, ...
+        val base = (project ?: "claude").replace(Regex("[^A-Za-z0-9_-]"), "-")
         val taken = (sessions + settings.session).toSet()
-        val name = generateSequence(2) { it + 1 }.map { "claude-$it" }.first { it !in taken }
-        tmux.startSession(name)
+        val name = (sequenceOf(base) + generateSequence(2) { it + 1 }.map { "$base-$it" })
+            .first { it !in taken }
+        val command = if (project == null) settings.launchCommand
+            else TmuxBridge.claudeIn(project, if (worktree) name else null)
+        tmux.startSession(name, command)
         switchSession(name)
     }
 
@@ -358,8 +407,8 @@ class MainActivity : AppCompatActivity() {
     private fun finishDictation() {
         dictationBusy = true
         mic.isEnabled = false
-        mic.text = "… Transcribing"
-        showDictation("… transcribing", AMBER)
+        mic.text = "… Finishing"
+        showDictation("… finishing the last words", AMBER)
         speech.execute {
             val result = runCatching { dictation.stopAndTranscribe() }
             main.post {
@@ -367,8 +416,8 @@ class MainActivity : AppCompatActivity() {
                 mic.isEnabled = true
                 mic.text = getString(R.string.dictate)
                 result.onSuccess { text ->
-                    // The final pass (full encoder window) may differ from the live text; fix it
-                    // up in place. No Enter, so you can check it first.
+                    // Picks up the last words and any late corrections, in place. No Enter, so
+                    // you can check it first.
                     typeStreamed(text)
                     streamed = ""
                     term.requestFocus()

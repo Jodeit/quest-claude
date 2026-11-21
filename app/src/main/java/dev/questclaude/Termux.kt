@@ -52,6 +52,19 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         const val COLS = 110
         const val ROWS = 34
         const val NO_SESSION = "__QC_NO_SESSION__"
+
+        /**
+         * Command for a tab running Claude in ~/[project] (home when null). With [worktree],
+         * Claude starts in its own git worktree and branch (`claude -w`), so tabs on the same
+         * repo never edit the same files.
+         */
+        fun claudeIn(project: String?, worktree: String?): String {
+            val dir = if (project == null) "~" else "~/" + shq(project)
+            val inner = "cd $dir && claude" + (worktree?.let { " -w " + shq(it) } ?: "")
+            return "proot-distro login ubuntu -- bash -lc " + shq(inner)
+        }
+
+        private fun shq(s: String) = "'" + s.replace("'", "'\\''") + "'"
     }
 
     private val tmux = "${Termux.PREFIX}/bin/tmux"
@@ -122,7 +135,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
     fun ensureSession() = startSession(settings.session)
 
     /** Start [name] running the launch command, detached, unless it already exists. */
-    fun startSession(name: String) {
+    fun startSession(name: String, command: String = settings.launchCommand) {
         Termux.sh(
             ctx, "start",
             """
@@ -134,7 +147,29 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
               $tmux new-session -d -s "${'$'}1" -x $COLS -y $ROWS \
                 "${'$'}2; ec=\${'$'}?; echo; echo \"[exited with code \${'$'}ec] press Enter to close\"; read _"
             """.trimIndent(),
-            name, settings.launchCommand
+            name, command
+        )
+    }
+
+    /**
+     * Git repos directly under Ubuntu's home, one name per line, as stdout with label
+     * "projects". Read straight from the proot rootfs, so it doesn't need to start Ubuntu.
+     * Worktrees (where .git is a file) are skipped.
+     */
+    fun listProjects() {
+        Termux.sh(
+            ctx, "projects",
+            """
+            b=${Termux.PREFIX}/var/lib/proot-distro
+            for r in "${'$'}b"/containers/ubuntu/*/ "${'$'}b"/installed-rootfs/ubuntu/; do
+              [ -f "${'$'}r/etc/os-release" ] || continue
+              for d in "${'$'}r"/root/*/; do [ -d "${'$'}d.git" ] && basename "${'$'}d"; done
+              exit 0
+            done
+            # Unknown layout: ask Ubuntu itself (slower, starts proot).
+            proot-distro login ubuntu -- bash -c 'for d in ~/*/; do [ -d "${'$'}d.git" ] && basename "${'$'}d"; done' 2>/dev/null
+            exit 0
+            """.trimIndent()
         )
     }
 

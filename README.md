@@ -12,11 +12,14 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   Bluetooth keyboard, Enter sends, Shift+Enter starts a new line, and Ctrl/Alt combos work.
   Scroll back through the conversation with the controller thumbstick, or pinch and drag
   (hand tracking) up and down on the terminal; typing jumps back to the prompt.
-- **Tabs**: one per tmux session, above the terminal. **＋** starts another Claude (`claude-2`, …),
-  tap a tab to switch (typing and the mirror follow it), long-press to close it.
+- **Tabs**: one per tmux session, above the terminal. **＋** asks which project in `~` to open;
+  for a git repo the tab gets its own worktree and branch (`claude -w`, on by default), so several
+  Claudes can work on the same repo without editing the same files. Tap a tab to switch (typing
+  and the mirror follow it), long-press to close it. A worktree stays in `<repo>/.claude/worktrees/`
+  after its tab closes; reopening the same tab name picks it back up.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
   Tap Dictate (or Ctrl+Shift+D) and talk: words stream into Claude's prompt as you speak and get
-  corrected as Whisper hears more. Stop (same shortcut) does a final full pass; Esc cancels and
+  corrected as Whisper hears more. Stop (same shortcut) catches the last words; Esc cancels and
   removes the text. Nothing is sent until you press Enter. Quest has no speech recognizer
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
 - **Key bar**: Esc, Ctrl-C, Clear, Tab, Shift-Tab, arrows, Enter. Esc and Ctrl-C interrupt Claude

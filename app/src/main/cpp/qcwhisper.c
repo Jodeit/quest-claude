@@ -13,6 +13,7 @@ Java_dev_questclaude_WhisperNative_init(JNIEnv *env, jobject thiz, jstring path)
     const char *p = (*env)->GetStringUTFChars(env, path, NULL);
     struct whisper_context_params cp = whisper_context_default_params();
     cp.use_gpu = false;
+    cp.flash_attn = true;
     struct whisper_context *ctx = whisper_init_from_file_with_params(p, cp);
     if (!ctx) __android_log_print(ANDROID_LOG_ERROR, TAG, "failed to load model %s", p);
     (*env)->ReleaseStringUTFChars(env, path, p);
@@ -40,6 +41,9 @@ Java_dev_questclaude_WhisperNative_transcribe(JNIEnv *env, jobject thiz, jlong h
     // Live partials pass a smaller encoder window (0 = the full 30 s), which is much faster.
     wp.audio_ctx = audio_ctx;
     wp.single_segment = audio_ctx > 0;
+    // No temperature fallback: a low-confidence pass would otherwise re-run decoding up to 5
+    // more times, which is most of the lag on hard audio. The next live pass corrects it anyway.
+    wp.temperature_inc = 0.0f;
 
     jsize n = (*env)->GetArrayLength(env, samples);
     jfloat *pcm = (*env)->GetFloatArrayElements(env, samples, NULL);
