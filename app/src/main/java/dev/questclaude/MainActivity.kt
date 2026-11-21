@@ -524,6 +524,24 @@ class MainActivity : AppCompatActivity() {
             b.setOnClickListener { action() }
             bar.addView(b)
         }
+
+        // Thumbstick mode: scroll the conversation, or send arrow keys (highlighted).
+        val stick = layoutInflater.inflate(R.layout.key_button, bar, false) as Button
+        stick.isFocusable = false
+        fun showStick() {
+            term.stickArrows = settings.stickArrows
+            stick.text = if (settings.stickArrows) "🕹 ←→" else "🕹 ⇅"
+            stick.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                getColor(if (settings.stickArrows) R.color.accent else R.color.key))
+        }
+        stick.setOnClickListener {
+            settings.stickArrows = !settings.stickArrows
+            showStick()
+            showResult(if (settings.stickArrows) "Thumbstick: arrow keys" else "Thumbstick: scrolls the conversation",
+                getColor(R.color.muted))
+        }
+        showStick()
+        bar.addView(stick)
     }
 
     // ---- Status --------------------------------------------------------------

@@ -31,6 +31,11 @@ class Settings(ctx: Context) {
         get() = prefs.getBoolean("isolate_tabs", true)
         set(v) = prefs.edit().putBoolean("isolate_tabs", v).apply()
 
+    /** Thumbstick sends arrow keys instead of scrolling the conversation. */
+    var stickArrows: Boolean
+        get() = prefs.getBoolean("stick_arrows", false)
+        set(v) = prefs.edit().putBoolean("stick_arrows", v).apply()
+
     companion object {
         const val DEFAULT_SESSION = "claude"
         const val DEFAULT_LAUNCH = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude'"
