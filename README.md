@@ -26,7 +26,8 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
 - **Tap Claude's controls**: numbered options in a prompt (`❯ 1. Yes`, `2. No`) and shortcut hints
   below the input box or in a dialog (`esc to interrupt`, `shift+tab to cycle`, `Tab to amend`) are
-  underlined; tap one to press it. Tapping anywhere else opens the keyboard as before.
+  underlined; tap one to press it. Claude's grey suggested next prompt is underlined too: tap it
+  to send it. Tapping anywhere else opens the keyboard as before.
 - **Key bar**: Esc, Ctrl-C, Clear, Tab, Shift-Tab, arrows, Enter. Esc and Ctrl-C interrupt Claude
   while it works; **Clear** only empties the prompt, so it's safe mid-turn.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.

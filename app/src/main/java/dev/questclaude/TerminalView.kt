@@ -53,7 +53,7 @@ class TerminalView @JvmOverloads constructor(
         if (off < 0) return false
         val tap = TapTargets.at(text, off) ?: return false
         Log.i("QuestClaude", "tap control key=${tap.key} literal=${tap.literal}")
-        tap.key?.let(q::key)
+        tap.key?.split(' ')?.forEach(q::key)
         tap.literal?.let(q::literal)
         return true
     }
