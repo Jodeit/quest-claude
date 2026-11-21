@@ -160,7 +160,26 @@ class Dictation(ctx: Context) {
     private fun clean(s: String): String {
         val words = s.replace(NON_SPEECH, "").replace(MARKER_SCRAPS, "").replace(Regex("\\s+"), " ").trim()
         if (words.none { it.isLetterOrDigit() }) return "" // just punctuation, e.g. "..."
-        return "$words ".replace(LOOP, "$1").trim()
+        return collapseRepeats("$words ".replace(LOOP, "$1").trim())
+    }
+
+    /**
+     * Whisper on a short phrase often loops it to the end of the pass: "Fix the tabs. Fix the
+     * tabs. Fix the". Finds the earliest phrase of 3+ words that repeats back-to-back through to
+     * the end (the last copy may stop mid-word) and keeps one copy.
+     */
+    private fun collapseRepeats(s: String): String {
+        val w = s.split(" ")
+        val n = w.map { word -> word.lowercase().filter { it.isLetterOrDigit() } }
+        for (i in w.indices) {
+            for (p in 3..(w.size - i) / 2) {
+                val loops = (i + p until w.size).all { j ->
+                    n[j] == n[j - p] || (j == w.size - 1 && n[j].isNotEmpty() && n[j - p].startsWith(n[j]))
+                }
+                if (loops) return w.subList(0, i + p).joinToString(" ")
+            }
+        }
+        return s
     }
 
     /**

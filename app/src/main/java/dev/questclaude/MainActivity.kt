@@ -590,7 +590,11 @@ class MainActivity : AppCompatActivity() {
      */
     private fun streamPartial(gen: Int) {
         if (!dictation.isLive(gen)) return
+        val t0 = System.nanoTime()
         val text = runCatching { dictation.partial(gen) }.getOrNull()
+        // A pass with no speech returns at once; without this it spun thousands of times a second.
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        if (ms < 200) Thread.sleep(200 - ms)
         // Checked again on the main thread: a stop or restart may have come in meanwhile.
         main.post { if (text != null && dictation.isLive(gen)) typeStreamed(text) }
         if (dictation.isLive(gen)) speech.execute { streamPartial(gen) }
