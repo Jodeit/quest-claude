@@ -35,9 +35,10 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   `quest up` in Ubuntu, which finds its port, reopens adb on 5555 and turns keep-awake back on.
   Tapping the status bar while 5555 is closed does the same. The app also re-enables Wireless
   debugging at boot and whenever it opens, so Shizuku isn't needed.
-- **Remote** (bottom right of the terminal, by the model/usage line): runs `/remote-control` in the current tab, so you can drive that tab's Claude (its
-  conversation and folder) from claude.ai/code or the Claude app on another device. Each tab
-  connects separately; tap Remote again in that tab to disconnect. It clears an unsent draft first.
+- **· remote**: tappable at the end of Claude's mode line (after `auto mode on (shift+tab to cycle)`).
+  Runs `/remote-control` in the current tab, so you can drive that tab's Claude (its conversation
+  and folder) from claude.ai/code or the Claude app. Each tab connects separately; tap it again in
+  that tab to disconnect. It clears an unsent draft first.
 
 ## adb without Shizuku
 

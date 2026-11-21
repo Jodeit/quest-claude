@@ -8,9 +8,9 @@ import android.text.style.UnderlineSpan
 
 /**
  * A tappable bit of Claude's UI: tapping it sends [key] (a tmux key name; several separated by
- * spaces are pressed in turn) or types [literal].
+ * spaces are pressed in turn), types [literal], or runs the slash [command] (draft cleared first).
  */
-class TapSpan(val key: String? = null, val literal: String? = null)
+class TapSpan(val key: String? = null, val literal: String? = null, val command: String? = null)
 
 /**
  * Finds Claude's live controls in the pane and marks them tappable: numbered options in a
@@ -22,8 +22,12 @@ class TapSpan(val key: String? = null, val literal: String? = null)
  * Two exceptions. A list split by a rule (a question's options, a rule, then "Chat about this")
  * counts from the rule above it. And Claude's grey suggested next prompt in the input box is
  * tappable: Tab accepts it, Enter sends it. Text you typed yourself isn't grey, so it never is.
+ *
+ * And one control of our own: "· remote" at the end of the mode line under the input box
+ * ("⏵⏵ auto mode on (shift+tab to cycle)"), which runs /remote-control in this tab's Claude.
  */
 object TapTargets {
+    private const val REMOTE = " · remote"
     private val RULE = Regex("^\\s*─{20,}\\s*$")
     private val OPTION = Regex("^\\s*(?:❯\\s*)?(\\d)\\.\\s+\\S")
     // "esc to interrupt", "Tab to amend", "? for shortcuts", "↓ to manage", or a bare "(esc)".
@@ -76,6 +80,9 @@ object TapTargets {
                 span(starts[n] + m.range.first, starts[n] + m.range.last + 1, tap)
             }
         }
+        val inputBox = prevRule != null && line(prevRule + 1).trimStart().startsWith("❯") &&
+            !OPTION.containsMatchIn(line(prevRule + 1))
+
         // The input box: the lines between the last two rules, starting "❯". Grey text in it is
         // Claude's suggestion (typed text is the default color, so has no color span).
         if (prevRule != null && line(prevRule + 1).trimStart().startsWith("❯") &&
@@ -113,6 +120,22 @@ object TapTargets {
                 }
             }
             n++
+        }
+
+        // "· remote" after the last line under the input box (the mode line), if it fits the width.
+        if (inputBox) {
+            val width = line(lastRule).trimEnd().length
+            val last = (lastRule + 1 until starts.size).lastOrNull { line(it).isNotBlank() }
+            if (last != null) {
+                val end = starts[last] + line(last).trimEnd().length
+                if (line(last).trimEnd().length + REMOTE.length <= width) {
+                    out.insert(end, REMOTE)
+                    val a = end + 3 // after " · "
+                    out.setSpan(ForegroundColorSpan(Color.rgb(153, 153, 153)), end, end + REMOTE.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    span(a, end + REMOTE.length, TapSpan(command = "/remote-control"))
+                }
+            }
         }
         return out
     }

@@ -133,21 +133,6 @@
                 android:textSize="12sp" />
         </LinearLayout>
     </ScrollView>
-
-        <!-- Remote Control for this tab (runs /remote-control in it). Bottom right, beside
-             Claude's model and usage line, where the pane is empty. -->
-        <Button
-            android:id="@+id/remote"
-            style="@style/QcButton.Secondary"
-            android:layout_height="44dp"
-            android:layout_gravity="bottom|end"
-            android:layout_margin="6dp"
-            android:minWidth="0dp"
-            android:alpha="0.85"
-            android:focusable="false"
-            android:paddingHorizontal="14dp"
-            android:text="Remote"
-            android:textSize="15sp" />
     </FrameLayout>
 
     <!-- Dictation progress (listening / transcribing / done), right above the mic button. -->

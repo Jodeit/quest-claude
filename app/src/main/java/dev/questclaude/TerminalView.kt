@@ -55,6 +55,8 @@ class TerminalView @JvmOverloads constructor(
         Log.i("QuestClaude", "tap control key=${tap.key} literal=${tap.literal}")
         tap.key?.split(' ')?.forEach(q::key)
         tap.literal?.let(q::literal)
+        // A slash command: clear any draft so it runs on its own.
+        tap.command?.let { q.clearPrompt(); q.literal(it); q.key("Enter") }
         return true
     }
 
