@@ -40,6 +40,8 @@ class MainActivity : AppCompatActivity() {
     private val speech = Executors.newSingleThreadExecutor()
     @Volatile private var capturePending = 0L
     private var lastPane = ""
+    private var sessions = emptyList<String>()
+    private lateinit var tabs: LinearLayout
     private var started = false
     /** Set when Termux rejects a command, so we don't post an error notification every second. */
     @Volatile private var mirrorStopped = false
@@ -91,6 +93,9 @@ class MainActivity : AppCompatActivity() {
         ansi = Ansi(getColor(R.color.fg), getColor(R.color.term_bg))
         term.input = input
         findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
+        tabs = findViewById(R.id.tabs)
+        findViewById<Button>(R.id.new_tab).setOnClickListener { newSession() }
+        renderTabs()
         findViewById<Button>(R.id.open_session).setOnClickListener { guarded { tmux.openSession() } }
         findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
         findViewById<Button>(R.id.remote).setOnClickListener { guarded { tmux.openRemote() } }
@@ -164,6 +169,11 @@ class MainActivity : AppCompatActivity() {
             else "Termux refused the command: $msg\n\nReopen the app to retry."
             return
         }
+        // Line 1 is the session list for the tab strip; the rest is the active pane.
+        val nl0 = text.indexOf('\n')
+        val names = (if (nl0 >= 0) text.substring(0, nl0) else "").split('\t').filter { it.isNotBlank() }
+        if (names != sessions) { sessions = names; renderTabs() }
+        val text = if (nl0 >= 0) text.substring(nl0 + 1) else text
         if (text.contains(TmuxBridge.NO_SESSION)) {
             lastPane = ""
             term.text = "Claude isn't running yet. The first start installs tmux in Termux, which " +
@@ -181,6 +191,61 @@ class MainActivity : AppCompatActivity() {
         val atBottom = !termScroll.canScrollVertically(1)
         term.text = ansi.render(pane.trimEnd(), cursor)
         if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    // ---- Sessions (tabs) -------------------------------------------------------
+
+    private fun renderTabs() {
+        tabs.removeAllViews()
+        val names = (sessions + settings.session).distinct() // active one shows even before it exists
+        for (name in names) {
+            val b = layoutInflater.inflate(R.layout.tab_button, tabs, false) as Button
+            b.text = name
+            val active = name == settings.session
+            b.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                getColor(if (active) R.color.accent else R.color.key))
+            b.setOnClickListener { switchSession(name) }
+            b.setOnLongClickListener { confirmClose(name); true }
+            tabs.addView(b)
+        }
+    }
+
+    private fun switchSession(name: String) {
+        if (name == settings.session) { term.requestFocus(); return }
+        settings.session = name
+        lastPane = ""
+        term.text = "Opening $name…"
+        renderTabs()
+        term.requestFocus()
+        refreshPaneSoon()
+    }
+
+    /** A new tab running another Claude (the launch command), named claude-2, claude-3, ... */
+    private fun newSession() = guarded {
+        val taken = (sessions + settings.session).toSet()
+        val name = generateSequence(2) { it + 1 }.map { "claude-$it" }.first { it !in taken }
+        tmux.startSession(name)
+        switchSession(name)
+    }
+
+    private fun confirmClose(name: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Close $name?")
+            .setMessage("This ends the tmux session and the Claude running in it.")
+            .setPositiveButton("Close") { _, _ ->
+                guarded {
+                    tmux.killSession(name)
+                    sessions = sessions - name
+                    if (name == settings.session) {
+                        // Move to another tab; if none is left, autostart brings back a fresh one.
+                        val next = sessions.firstOrNull() ?: Settings.DEFAULT_SESSION
+                        if (next == Settings.DEFAULT_SESSION && next !in sessions) tmux.startSession(next)
+                        switchSession(next)
+                    } else renderTabs()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /** Capture right after typing, instead of waiting for the next 1.2 s tick. */

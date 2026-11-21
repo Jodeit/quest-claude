@@ -64,12 +64,41 @@
         android:textColor="@color/muted"
         android:textSize="15sp" />
 
-    <!-- Read-only mirror of the Claude tmux pane, refreshed while visible. -->
+    <!-- One tab per tmux session. Tap to switch, long-press to close, + for a new Claude. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <HorizontalScrollView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/tabs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <Button
+            android:id="@+id/new_tab"
+            style="@style/QcTab"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="0dp"
+            android:text="＋" />
+    </LinearLayout>
+
+    <!-- The Claude tmux pane, refreshed while visible; tap it to type. -->
     <ScrollView
         android:id="@+id/term_scroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="6dp"
         android:layout_weight="1"
         android:background="@color/term_bg"
         android:fillViewport="true"

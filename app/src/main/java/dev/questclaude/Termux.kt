@@ -64,7 +64,7 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
      */
     fun input(ops: List<String>) {
         val script = """
-            t="${'$'}1"; shift
+            t="=${'$'}1:"; shift
             for a; do
               case "${'$'}a" in
                 L:*) $tmux send-keys -t "${'$'}t" -l -- "${'$'}{a#L:}" ;;
@@ -91,7 +91,10 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
      * Make sure tmux is installed and the Claude session is running, without opening a Termux
      * window. Installs tmux on first run (takes a minute), then starts the session detached.
      */
-    fun ensureSession() {
+    fun ensureSession() = startSession(settings.session)
+
+    /** Start [name] running the launch command, detached, unless it already exists. */
+    fun startSession(name: String) {
         Termux.sh(
             ctx, "start",
             """
@@ -99,22 +102,29 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
               { echo "couldn't install tmux; run 'pkg install tmux' in Termux" >&2; exit 1; }
             # If the command exits, keep the pane open with its output and exit code, so the
             # error shows in the mirror instead of the session silently disappearing.
-            $tmux has-session -t "${'$'}1" 2>/dev/null ||
+            $tmux has-session -t "=${'$'}1" 2>/dev/null ||
               $tmux new-session -d -s "${'$'}1" -x $COLS -y $ROWS \
                 "${'$'}2; ec=\${'$'}?; echo; echo \"[exited with code \${'$'}ec] press Enter to close\"; read _"
             """.trimIndent(),
-            settings.session, settings.launchCommand
+            name, settings.launchCommand
         )
     }
 
-    /** Text of the Claude pane; arrives in ResultReceiver as stdout with label "mirror". */
+    /** End a session and whatever runs in it. */
+    fun killSession(name: String) {
+        Termux.sh(ctx, "close", "$tmux kill-session -t \"=${'$'}1\" 2>&1; exit 0", name)
+    }
+
+    /** Session list plus the active pane; arrives in ResultReceiver as stdout with label "mirror". */
     fun capture() {
         // Always exit 0: Termux posts a notification for every failed plugin command.
         Termux.sh(
             ctx, "mirror",
-            // First line: cursor column, row and visibility; then the pane with color escapes.
-            "$tmux display -p -t \"${'$'}1\" '#{cursor_x} #{cursor_y} #{cursor_flag}' 2>/dev/null &&" +
-                " $tmux capture-pane -p -e -t \"${'$'}1\" 2>/dev/null || echo $NO_SESSION; exit 0",
+            // Line 1: all session names, tab-separated (for the tab strip). Line 2: cursor column,
+            // row and visibility. Then the pane with color escapes.
+            "$tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\\n' '\\t'; echo;" +
+                " $tmux display -p -t \"=${'$'}1:\" '#{cursor_x} #{cursor_y} #{cursor_flag}' 2>/dev/null &&" +
+                " $tmux capture-pane -p -e -t \"=${'$'}1:\" 2>/dev/null || echo $NO_SESSION; exit 0",
             settings.session
         )
     }

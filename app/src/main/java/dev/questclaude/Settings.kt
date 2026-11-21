@@ -6,8 +6,8 @@ class Settings(ctx: Context) {
     private val prefs = ctx.getSharedPreferences("qc", Context.MODE_PRIVATE)
 
     var session: String
-        get() = prefs.getString("session", "claude")!!
-        set(v) = prefs.edit().putString("session", v.trim().ifEmpty { "claude" }).apply()
+        get() = prefs.getString("session", DEFAULT_SESSION)!!
+        set(v) = prefs.edit().putString("session", v.trim().ifEmpty { DEFAULT_SESSION }).apply()
 
     var launchCommand: String
         get() = prefs.getString("launch", DEFAULT_LAUNCH)!!
@@ -22,6 +22,7 @@ class Settings(ctx: Context) {
         set(v) = prefs.edit().putString("remote", v.trim().ifEmpty { DEFAULT_REMOTE }).apply()
 
     companion object {
+        const val DEFAULT_SESSION = "claude"
         const val DEFAULT_LAUNCH = "proot-distro login ubuntu -- bash -lc 'cd ~ && claude'"
         /** `quest up` finds the Wireless debugging port, reopens adb on 5555 and re-applies keep-awake. */
         const val DEFAULT_RECONNECT = "proot-distro login ubuntu -- bash -lc 'quest up'"

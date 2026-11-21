@@ -10,6 +10,8 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
 - **Terminal**: the Claude tmux pane, in color, refreshed about once a second (right away after
   you type). Tap it (or ⌨) and type: keys go straight to Claude, like a terminal. With a
   Bluetooth keyboard, Enter sends, Shift+Enter starts a new line, and Ctrl/Alt combos work.
+- **Tabs**: one per tmux session, above the terminal. **＋** starts another Claude (`claude-2`, …),
+  tap a tab to switch (typing and the mirror follow it), long-press to close it.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
   Tap Dictate (or Ctrl+Shift+D), talk, tap Stop (same shortcut; Esc cancels); the text is pasted into Claude's prompt (no Enter). Quest has no speech recognizer
   that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
