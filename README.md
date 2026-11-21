@@ -10,7 +10,10 @@ compose box, so you never need to open the Termux window. Termux needs one setti
 
 - **Terminal mirror**: the Claude tmux pane, refreshed about once a second while the app is in view.
 - **Compose box**: big multiline input; sent via tmux bracketed paste so newlines don't submit early.
-- **Voice dictation**: the system speech recognizer if there is one, otherwise the keyboard's mic.
+- **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
+  Tap Dictate, talk, tap Stop; the text lands in the compose box. Quest has no speech recognizer
+  that other apps can use, so it's built in. The first tap downloads the model (57 MB) once.
+- **Hardware keyboard**: Enter sends, Shift+Enter starts a new line.
 - **Key bar**: Esc, Ctrl-C, Tab, Shift-Tab, arrows, Enter.
 - **Status**: Termux installed, RUN_COMMAND permission, USB debugging, and whether adb is listening on `127.0.0.1:5555`.
 - **Reconnect**: turns Wireless debugging back on (Android switches it off at every boot), then runs

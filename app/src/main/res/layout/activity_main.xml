@@ -111,7 +111,7 @@
         <Button
             android:id="@+id/mic"
             style="@style/QcButton.Secondary"
-            android:text="🎤 Dictate" />
+            android:text="@string/dictate" />
 
         <Button
             android:id="@+id/clear"

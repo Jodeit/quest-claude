@@ -1,13 +1,14 @@
 package dev.questclaude
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings as SysSettings
-import android.speech.RecognizerIntent
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -33,6 +34,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lastResult: TextView
     private lateinit var term: TextView
     private lateinit var termScroll: ScrollView
+    private lateinit var mic: Button
+    private lateinit var dictation: Dictation
+    /** Downloading/loading the model or transcribing; Dictate is disabled meanwhile. */
+    private var dictationBusy = false
+    /** Whisper runs here so it never holds up the status checks on [io]. */
+    private val speech = Executors.newSingleThreadExecutor()
     @Volatile private var capturePending = 0L
     private var started = false
     /** Set when Termux rejects a command, so we don't post an error notification every second. */
@@ -62,12 +69,9 @@ class MainActivity : AppCompatActivity() {
     private val askTermuxPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refreshStatus() }
 
-    private val dictate =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-            val text = res.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull() ?: return@registerForActivityResult
-            insertAtCursor(text)
+    private val askMic =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) toggleDictation() else toast("Dictation needs microphone access")
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,7 +87,18 @@ class MainActivity : AppCompatActivity() {
         termScroll = findViewById(R.id.term_scroll)
 
         findViewById<Button>(R.id.send).setOnClickListener { send() }
-        findViewById<Button>(R.id.mic).setOnClickListener { startDictation() }
+        dictation = Dictation(this)
+        mic = findViewById(R.id.mic)
+        mic.setOnClickListener { toggleDictation() }
+        // Enter on a hardware keyboard sends; Shift+Enter adds a line. The on-screen keyboard
+        // (a virtual device) still inserts newlines.
+        compose.setOnKeyListener { _, code, ev ->
+            val enter = code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER
+            val hardware = ev.deviceId != KeyCharacterMap.VIRTUAL_KEYBOARD && ev.device?.isVirtual == false
+            if (!enter || !hardware || ev.isShiftPressed) return@setOnKeyListener false
+            if (ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0) send()
+            true
+        }
         findViewById<Button>(R.id.clear).setOnClickListener { compose.text.clear() }
         findViewById<Button>(R.id.open_session).setOnClickListener { guarded { tmux.openSession() } }
         findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
@@ -189,19 +204,74 @@ class MainActivity : AppCompatActivity() {
         compose.text.insert(start, if (needsSpace) " $text" else text)
     }
 
-    private fun startDictation() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Claude")
-        try {
-            dictate.launch(intent)
-        } catch (e: ActivityNotFoundException) {
-            // Quest often has no standalone recognizer; the system keyboard's mic works.
+    private fun toggleDictation() {
+        if (dictationBusy) return
+        if (dictation.recording) { finishDictation(); return }
+        if (!WhisperNative.loaded) {
+            // Shouldn't happen with a CI build, but the keyboard's own mic still works.
             compose.requestFocus()
             getSystemService(InputMethodManager::class.java)
                 .showSoftInput(compose, InputMethodManager.SHOW_IMPLICIT)
-            toast("No speech app found — use the mic on the keyboard")
+            toast("Whisper isn't available in this build — use the mic on the keyboard")
+            return
         }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            askMic.launch(Manifest.permission.RECORD_AUDIO); return
+        }
+        if (dictation.hasModel) { startRecording(); return }
+        dictationBusy = true
+        mic.isEnabled = false
+        showResult("… downloading the speech model (${Dictation.MODEL_MB} MB, once)", AMBER)
+        speech.execute {
+            try {
+                dictation.downloadModel { pct ->
+                    if (pct >= 0) main.post {
+                        showResult("… downloading the speech model: $pct% of ${Dictation.MODEL_MB} MB", AMBER)
+                    }
+                }
+                main.post { dictationBusy = false; mic.isEnabled = true; startRecording() }
+            } catch (e: Exception) {
+                main.post {
+                    dictationBusy = false; mic.isEnabled = true
+                    showResult("✗ dictation: ${e.message}", RED)
+                }
+            }
+        }
+    }
+
+    private fun startRecording() {
+        try {
+            dictation.start()
+        } catch (e: Exception) {
+            showResult("✗ dictation: ${e.message}", RED); return
+        }
+        speech.execute { runCatching { dictation.load() } } // warm up while you talk
+        mic.text = "■ Stop"
+        showResult("● listening — tap Stop when you're done", RED)
+    }
+
+    private fun finishDictation() {
+        dictationBusy = true
+        mic.isEnabled = false
+        mic.text = "… Transcribing"
+        showResult("… transcribing", AMBER)
+        speech.execute {
+            val result = runCatching { dictation.stopAndTranscribe() }
+            main.post {
+                dictationBusy = false
+                mic.isEnabled = true
+                mic.text = getString(R.string.dictate)
+                result.onSuccess { text ->
+                    if (text.isEmpty()) showResult("✗ didn't catch anything", AMBER)
+                    else { insertAtCursor(text); showResult("✓ dictated", GREEN) }
+                }.onFailure { showResult("✗ dictation: ${it.message}", RED) }
+            }
+        }
+    }
+
+    private fun showResult(text: String, color: Int) {
+        lastResult.text = text
+        lastResult.setTextColor(color)
     }
 
     // ---- Key bar -------------------------------------------------------------
@@ -324,6 +394,12 @@ class MainActivity : AppCompatActivity() {
             lastResult.text = "✗ ${e.javaClass.simpleName}: ${e.message}"
             lastResult.setTextColor(RED)
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        speech.execute { dictation.close() }
+        speech.shutdown()
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()

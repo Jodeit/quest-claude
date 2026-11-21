@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">Quest Claude</string>
     <string name="setup_help">Quest Claude starts everything itself: it turns on Wireless debugging, reconnects adb (quest up), installs tmux in Termux and starts Claude in a tmux session (default name: claude), shown live above the compose box.\n\nOne-time setup in Termux, if it isn\'t done yet:\n1. echo "allow-external-apps=true" >> ~/.termux/termux.properties\n2. termux-reload-settings\n\nFirst time on a new headset, pair Ubuntu\'s adb with \"quest pair\" (see README).\n\n\"Open Claude\" shows the same session in a full Termux window. \"Remote\" starts claude remote-control in its own tmux session (claude-rc), so you can drive the headset from claude.ai on another device.</string>
+    <string name="dictate">🎤 Dictate</string>
 </resources>
