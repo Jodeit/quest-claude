@@ -91,8 +91,11 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
             """
             command -v tmux >/dev/null 2>&1 || yes | pkg install -y tmux >/dev/null 2>&1 ||
               { echo "couldn't install tmux; run 'pkg install tmux' in Termux" >&2; exit 1; }
+            # If the command exits, keep the pane open with its output and exit code, so the
+            # error shows in the mirror instead of the session silently disappearing.
             $tmux has-session -t "${'$'}1" 2>/dev/null ||
-              $tmux new-session -d -s "${'$'}1" -x $COLS -y $ROWS "${'$'}2"
+              $tmux new-session -d -s "${'$'}1" -x $COLS -y $ROWS \
+                "${'$'}2; ec=\${'$'}?; echo; echo \"[exited with code \${'$'}ec] press Enter to close\"; read _"
             """.trimIndent(),
             settings.session, settings.launchCommand
         )

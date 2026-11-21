@@ -146,7 +146,7 @@ term() {
   sess=${1:-${QUEST_TMUX_SESSION:-claude}}
   [ -x "$T/bin/tmux" ] ||
     die "tmux isn't installed in Termux. In a Termux shell (outside proot): pkg install tmux, then tap Open session in Quest Claude"
-  sock=$(ls -d "$T"/tmp/tmux-*/default 2>/dev/null | head -1)
+  sock=$(ls -d "$T"/var/run/tmux-*/default "$T"/tmp/tmux-*/default 2>/dev/null | head -1)
   [ -S "$sock" ] || die "no Termux tmux server running; tap Open session in Quest Claude"
   "$T/bin/tmux" -S "$sock" capture-pane -p -J -t "$sess" ${n:+-S "-$n"} |
     sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
@@ -160,6 +160,34 @@ pair() {
   quest pair <port> <code>"
   adb pair "127.0.0.1:$1" "$2" || die "pairing failed; the code expires when the dialog closes"
   say "quest: paired. Now run 'quest up'."
+}
+
+# Current notifications as "pkg#id<TAB>title<TAB>text", optionally for one package.
+notif_list() {
+  a shell dumpsys notification --noredact 2>/dev/null | tr -d '\r' | awk -v want="${1:-}" '
+    function flush() { if (key != "" && (want == "" || pkg == want) && (title != "" || text != ""))
+                         printf "%s\t%s\t%s\n", key, title, text; key=""; title=""; text="" }
+    /NotificationRecord\(/ { flush(); match($0, /pkg=[^ ]+/); pkg=substr($0, RSTART+4, RLENGTH-4)
+                             match($0, / id=[-0-9]+/); key=pkg "#" substr($0, RSTART+4, RLENGTH-4) }
+    key != "" && /android\.title=/ { t=$0; sub(/.*android\.title=[A-Za-z]+ \(/, "", t); sub(/\)$/, "", t); title=t }
+    key != "" && /android\.(bigText|text)=/ && !/=null/ { t=$0; sub(/.*android\.(bigText|text)=[A-Za-z]+ \(/, "", t)
+                             sub(/\)$/, "", t); gsub(/  +/, " ", t); if (length(t) > length(text)) text=t }
+    END { flush() }' | grep -v 'ranker_group'
+}
+
+# quest notifs [-f] [pkg]: list notifications; -f prints only new ones as they appear.
+notifs() {
+  local follow= seen line
+  [ "${1:-}" = -f ] && { follow=1; shift; }
+  if [ -z "$follow" ]; then notif_list "${1:-}"; return; fi
+  seen=$(notif_list "${1:-}")
+  while :; do
+    sleep 3
+    connect
+    while IFS= read -r line; do
+      grep -qxF -- "$line" <<<"$seen" || { printf '%s %s\n' "$(date +%H:%M:%S)" "$line"; seen+=$'\n'"$line"; }
+    done < <(notif_list "${1:-}")
+  done
 }
 
 keycode() {
@@ -213,6 +241,7 @@ quest — control this Quest over its own adb (self-heals the connection)
   quest swipe x1 y1 x2 y2 [ms]
   quest install <apk>       install/update an APK
   quest log [lines] [grep]  recent logcat
+  quest notifs [-f] [pkg]   notifications (title + text); -f prints new ones as they arrive
   quest sh <cmd...>         raw adb shell
 EOF
 }
@@ -262,6 +291,7 @@ case $cmd in
   tap)     [ $# -eq 2 ] || die "usage: quest tap <x> <y>"; a shell input tap "$1" "$2" ;;
   swipe)   [ $# -ge 4 ] || die "usage: quest swipe x1 y1 x2 y2 [ms]"; a shell input swipe "$@" ;;
   install) [ -f "${1:-}" ] || die "usage: quest install <file.apk>"; a install -r -g "$1" ;;
+  notifs)  notifs "$@" ;;
   log)     n=${1:-200}; if [ -n "${2:-}" ]; then a logcat -d -t "$n" | grep -i -- "$2"; else a logcat -d -t "$n"; fi ;;
   sh|shell) a shell "$@" ;;
   *)       usage; exit 1 ;;
