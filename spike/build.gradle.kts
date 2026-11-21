@@ -27,7 +27,6 @@ android {
             keepDebugSymbols += "**/*.so"
         }
     }
-    androidResources { noCompress += "gz" }
 
     signingConfigs {
         getByName("debug") {

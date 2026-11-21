@@ -176,7 +176,10 @@ class MainActivity : Activity() {
         log("   $name")
         val dirModes = mutableListOf<Pair<File, Int>>()
         var files = 0; var links = 0; var hard = 0; var hardCopied = 0; var skipped = 0
-        TarArchiveInputStream(GZIPInputStream(BufferedInputStream(assets.open("rootfs.tar.gz"), 1 shl 16))).use { tar ->
+        // AGP's asset merge gunzips *.gz and drops the extension, so expect rootfs.tar.
+        val stream = if (assets.list("")?.contains("rootfs.tar") == true) BufferedInputStream(assets.open("rootfs.tar"), 1 shl 16)
+                     else GZIPInputStream(BufferedInputStream(assets.open("rootfs.tar.gz"), 1 shl 16))
+        TarArchiveInputStream(stream).use { tar ->
             while (true) {
                 val e = tar.nextEntry ?: break
                 val f = File(rootfs, e.name)
