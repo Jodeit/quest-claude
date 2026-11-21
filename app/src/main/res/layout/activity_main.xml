@@ -107,15 +107,32 @@
         android:fillViewport="true"
         android:padding="8dp">
 
-        <dev.questclaude.TerminalView
-            android:id="@+id/term"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:includeFontPadding="false"
-            android:text="Starting Claude…"
-            android:textColor="@color/fg"
-            android:textSize="12sp" />
+            android:orientation="vertical">
+
+            <!-- Scrollback: the conversation above the screen, appended as tmux keeps it. -->
+            <TextView
+                android:id="@+id/history"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:includeFontPadding="false"
+                android:textColor="@color/fg"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
+            <dev.questclaude.TerminalView
+                android:id="@+id/term"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:includeFontPadding="false"
+                android:text="Starting Claude…"
+                android:textColor="@color/fg"
+                android:textSize="12sp" />
+        </LinearLayout>
     </ScrollView>
 
     <!-- Dictation progress (listening / transcribing / done), right above the mic button. -->

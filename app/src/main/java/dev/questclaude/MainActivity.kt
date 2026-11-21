@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings as SysSettings
+import android.util.Log
+import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.View
 import android.widget.Button
@@ -34,6 +36,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var input: InputQueue
     private lateinit var ansi: Ansi
     private lateinit var termScroll: ScrollView
+    /** Scrollback mirrored above the screen (when Claude isn't fullscreen). */
+    private lateinit var history: TextView
+    private var histSession = ""
+    /** Scrollback lines shown so far, counted from the oldest. */
+    private var histCount = 0
+    /** When the outstanding history request was sent; 0 if none. */
+    private var histFetchAt = 0L
     private lateinit var mic: Button
     private lateinit var dictation: Dictation
     /** Downloading/loading the model or transcribing; Dictate is disabled meanwhile. */
@@ -88,6 +97,7 @@ class MainActivity : AppCompatActivity() {
         dictationStatus = findViewById(R.id.dictation_status)
         term = findViewById(R.id.term)
         termScroll = findViewById(R.id.term_scroll)
+        history = findViewById(R.id.history)
 
         dictation = Dictation(this)
         // Load the speech model now, not on the first Dictate, or the first seconds of talking
@@ -95,7 +105,11 @@ class MainActivity : AppCompatActivity() {
         if (dictation.hasModel) speech.execute { runCatching { dictation.load() } }
         mic = findViewById(R.id.mic)
         mic.setOnClickListener { toggleDictation() }
-        input = InputQueue { ops -> guarded { tmux.input(ops) } }
+        input = InputQueue { ops ->
+            // Typing while reading back through the scrollback jumps to the prompt, like a terminal.
+            if (ops.any { !it.startsWith("S:") }) scrollToBottom()
+            guarded { tmux.input(ops) }
+        }
         ansi = Ansi(getColor(R.color.fg), getColor(R.color.term_bg))
         term.input = input
         term.onScroll = ::previewScroll
@@ -119,6 +133,7 @@ class MainActivity : AppCompatActivity() {
         ResultReceiver.listener = { label, ok, msg, stdout ->
             runOnUiThread {
                 if (label == "mirror") showPane(ok, stdout, msg)
+                else if (label == "history") showHistory(stdout)
                 else if (label == "projects" && pickingProject) {
                     pickingProject = false
                     pickProject(stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }.sorted())
@@ -202,6 +217,11 @@ class MainActivity : AppCompatActivity() {
                 "takes about a minute. If it doesn't come up, reopen the app or tap Open Claude."
             return
         }
+        // Header: cursor x, y, visibility, whether Claude has the mouse (fullscreen), scrollback size.
+        val head0 = text.substringBefore('\n').split(' ')
+        val fullscreen = head0.getOrNull(3) == "1"
+        term.remoteScroll = fullscreen
+        syncHistory(fullscreen, head0.getOrNull(4)?.toIntOrNull() ?: 0)
         if (text == lastPane) return
         if (input.scrolling) return // taken mid-scroll; the scroll's own result follows
         lastPane = text
@@ -216,6 +236,61 @@ class MainActivity : AppCompatActivity() {
         term.text = ansi.render(pane.trimEnd(), cursor)
         if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
     }
+
+    // ---- Scrollback -----------------------------------------------------------
+    // Claude started with CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN writes the conversation into tmux
+    // scrollback. We copy it above the screen once, in chunks, then only the new lines, so
+    // scrolling back is the ScrollView's own: instant, with nothing to load.
+
+    private fun syncHistory(fullscreen: Boolean, size: Int) {
+        if (histSession != settings.session) resetHistory()
+        if (fullscreen) { if (histCount > 0) resetHistory(); return }
+        if (size < histCount) resetHistory() // /clear, or the session was replaced
+        val waiting = histFetchAt != 0L && System.currentTimeMillis() - histFetchAt < 5000
+        if (size > histCount && !waiting) fetchHistory()
+    }
+
+    private fun resetHistory() {
+        histSession = settings.session
+        histCount = 0
+        histFetchAt = 0
+        history.text = ""
+        history.visibility = View.GONE
+    }
+
+    private fun fetchHistory() {
+        histFetchAt = System.currentTimeMillis()
+        try { tmux.history(histSession, histCount) } catch (_: Exception) { histFetchAt = 0 }
+    }
+
+    /** A chunk from [TmuxBridge.history]: "session size from count" then the lines. */
+    private fun showHistory(stdout: String) {
+        histFetchAt = 0
+        val nl = stdout.indexOf('\n')
+        val head = (if (nl >= 0) stdout.substring(0, nl) else stdout).trim().split(' ')
+        if (head.size < 3 || head[0] != histSession || histSession != settings.session) return
+        if (head[2] == "reset") { resetHistory(); return } // the next capture fetches it again
+        val size = head[1].toIntOrNull() ?: return
+        val from = head[2].toIntOrNull() ?: return
+        val n = head.getOrNull(3)?.toIntOrNull() ?: return
+        if (from != histCount || n <= 0) return
+        val lines = (if (nl >= 0) stdout.substring(nl + 1) else "").split('\n')
+        if (lines.size < n) {
+            Log.w("QuestClaude", "history chunk cut short: ${lines.size} of $n lines, ${stdout.length} chars")
+            return
+        }
+        val atBottom = !termScroll.canScrollVertically(1)
+        if (history.textSize != term.textSize) history.setTextSize(TypedValue.COMPLEX_UNIT_PX, term.textSize)
+        if (histCount > 0) history.append("\n")
+        history.append(ansi.render("\u001B[0m" + lines.take(n).joinToString("\n"), null))
+        history.visibility = View.VISIBLE
+        histCount += n
+        if (atBottom) scrollToBottom()
+        if (histCount < size) fetchHistory()
+    }
+
+    private fun scrollToBottom() =
+        termScroll.post { termScroll.scrollTo(0, termScroll.getChildAt(0).height) }
 
     /** Raw (ANSI) lines of the pane on screen, for [previewScroll]. */
     private var shownLines: List<String>? = null
@@ -344,6 +419,7 @@ class MainActivity : AppCompatActivity() {
         if (name == settings.session) { term.requestFocus(); return }
         settings.session = name
         lastPane = ""
+        resetHistory()
         term.text = "Opening $name…"
         renderTabs()
         term.requestFocus()

@@ -4,6 +4,7 @@
 #   - installs the `quest` skill for every Claude session (~/.claude/skills/quest)
 #   - sets the Claude status line (model, context, plan usage) unless you have your own
 #   - sets ANDROID_SERIAL and puts ~/.local/bin (claude) on PATH for login shells
+#   - runs Claude without fullscreen mode, so its conversation is tmux scrollback the app mirrors
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -45,6 +46,11 @@ grep -q 'quest-claude: PATH' "$HOME/.profile" 2>/dev/null ||
   printf '%s\n' '# quest-claude: PATH for claude in login shells' \
     'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac' \
     >> "$HOME/.profile"
+# Claude's fullscreen mode keeps the conversation to itself; the classic mode writes it to
+# tmux scrollback, which Quest Claude mirrors so scrolling back is instant.
+grep -q 'quest-claude: scrollback' "$HOME/.profile" 2>/dev/null ||
+  printf '%s\n' '# quest-claude: scrollback the app can mirror (no fullscreen mode)' \
+    'export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1' >> "$HOME/.profile"
 
 command -v python3 >/dev/null && python3 -c 'import PIL' 2>/dev/null ||
   echo "tip: apt install -y python3-pil (quest shot uses it to crop/resize)"

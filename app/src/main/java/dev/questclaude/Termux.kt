@@ -54,6 +54,10 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         const val NO_SESSION = "__QC_NO_SESSION__"
         /** Separates an input batch's errors from the pane captured right after it. */
         const val PANE_MARK = "__QC_PANE__"
+        /** Scrollback lines per [history] call: Termux cuts results off at a few tens of KB. */
+        const val HISTORY_CHUNK = 60
+        /** Scrollback kept per pane; big so tmux never drops old lines (which would shift ours). */
+        const val HISTORY_LIMIT = 100000
 
         /**
          * Command for a tab running Claude in ~/[project] (home when null). With [worktree],
@@ -147,6 +151,10 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
             """
             command -v tmux >/dev/null 2>&1 || yes | pkg install -y tmux >/dev/null 2>&1 ||
               { echo "couldn't install tmux; run 'pkg install tmux' in Termux" >&2; exit 1; }
+            # Keep the whole conversation as scrollback for the mirror (new servers read the conf;
+            # a running one gets it for new panes).
+            grep -q 'history-limit' ~/.tmux.conf 2>/dev/null || echo 'set -g history-limit $HISTORY_LIMIT' >> ~/.tmux.conf
+            $tmux set -g history-limit $HISTORY_LIMIT 2>/dev/null
             # If the command exits, keep the pane open with its output and exit code, so the
             # error shows in the mirror instead of the session silently disappearing.
             $tmux has-session -t "=${'$'}1" 2>/dev/null ||
@@ -185,6 +193,29 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
     }
 
     /**
+     * Up to [HISTORY_CHUNK] scrollback lines of [session], starting [from] lines after the oldest,
+     * as stdout with label "history": a header "session history_size from count" (or
+     * "session history_size reset" if the scrollback shrank below [from], e.g. after /clear),
+     * then the lines with color escapes. Chunked because Termux truncates large results.
+     */
+    fun history(session: String, from: Int) {
+        Termux.sh(
+            ctx, "history",
+            """
+            t="=${'$'}1:"; from=${'$'}2
+            h=${'$'}($tmux display -p -t "${'$'}t" '#{history_size}' 2>/dev/null)
+            [ -n "${'$'}h" ] || { echo "${'$'}1 0 reset"; exit 0; }
+            [ "${'$'}h" -ge "${'$'}from" ] || { echo "${'$'}1 ${'$'}h reset"; exit 0; }
+            n=${'$'}((h - from)); [ ${'$'}n -le $HISTORY_CHUNK ] || n=$HISTORY_CHUNK
+            echo "${'$'}1 ${'$'}h ${'$'}from ${'$'}n"
+            [ ${'$'}n -gt 0 ] && $tmux capture-pane -p -e -t "${'$'}t" -S "-${'$'}((h - from))" -E "-${'$'}((h - from - n + 1))" 2>/dev/null
+            exit 0
+            """.trimIndent(),
+            session, from.toString()
+        )
+    }
+
+    /**
      * Prints the session list and the pane of tmux target ${'$'}t (set by the caller): see [capture].
      * Clobbers the positional parameters.
      */
@@ -200,14 +231,16 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
             ${Termux.PREFIX}/bin/awk '/Do you want to/ { q = 1 } q && /1\. Yes/ { f = 1 } END { exit !f }' && a=1
           printf '%s%s%s\t' "${'$'}l" "${'$'}us" "${'$'}a"
         done; echo
-        set -- ${'$'}($tmux display -p -t "${'$'}t" '#{cursor_x} #{cursor_y} #{cursor_flag} #{pane_in_mode} #{scroll_position} #{pane_height}' 2>/dev/null)
+        # ':'-separated, because tmux prints some of these as empty strings, which word splitting
+        # on spaces would drop.
+        IFS=:; set -- ${'$'}($tmux display -p -t "${'$'}t" '#{cursor_x}:#{cursor_y}:#{cursor_flag}:#{pane_in_mode}:#{scroll_position}:#{pane_height}:#{mouse_any_flag}:#{history_size}' 2>/dev/null); unset IFS
         if [ ${'$'}# -lt 3 ]; then
           echo $NO_SESSION
         elif [ "${'$'}4" = 1 ] && [ -n "${'$'}5" ]; then
-          echo "${'$'}1 ${'$'}2 0"
+          echo "${'$'}1 ${'$'}2 0 ${'$'}7 ${'$'}8"
           $tmux capture-pane -p -e -t "${'$'}t" -S "-${'$'}5" -E "${'$'}((${'$'}6 - 1 - ${'$'}5))" 2>/dev/null
         else
-          echo "${'$'}1 ${'$'}2 ${'$'}3"
+          echo "${'$'}1 ${'$'}2 ${'$'}3 ${'$'}7 ${'$'}8"
           $tmux capture-pane -p -e -t "${'$'}t" 2>/dev/null
         fi
     """.trimIndent()

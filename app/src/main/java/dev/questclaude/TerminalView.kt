@@ -41,8 +41,12 @@ class TerminalView @JvmOverloads constructor(
     }
 
     // ---- Scrolling: thumbstick / wheel, and pinch-drag -------------------------
-    // The mirror only ever shows Claude's screen, so scrolling doesn't move this view: it's
-    // sent to Claude (as mouse wheel events) and the next capture shows the earlier messages.
+    // Normally the conversation is tmux scrollback, mirrored above this view, and scrolling is
+    // the ScrollView's own. When Claude runs fullscreen it keeps the transcript itself, so
+    // scrolls over this view are sent to Claude (as mouse wheel events) instead.
+
+    /** Claude asked for the mouse (fullscreen mode): scrolls here go to Claude. */
+    var remoteScroll = false
 
     private val touchSlop = android.view.ViewConfiguration.get(ctx).scaledTouchSlop
     private var scrollAcc = 0f
@@ -58,7 +62,7 @@ class TerminalView @JvmOverloads constructor(
 
     /** Controller thumbstick (and mouse wheel): positive AXIS_VSCROLL means up, i.e. back. */
     override fun onGenericMotionEvent(event: android.view.MotionEvent): Boolean {
-        if (event.action == android.view.MotionEvent.ACTION_SCROLL) {
+        if (remoteScroll && event.action == android.view.MotionEvent.ACTION_SCROLL) {
             val v = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
             if (v != 0f) { scrollBy(v * WHEEL_LINES); return true }
         }
@@ -68,6 +72,7 @@ class TerminalView @JvmOverloads constructor(
     /** Pinch (or finger) and drag: the text follows your hand, a line per line height. Tap still types. */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (!remoteScroll) { dragging = false; return super.onTouchEvent(event) }
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 downY = event.y; lastY = event.y; dragging = false; scrollAcc = 0f
