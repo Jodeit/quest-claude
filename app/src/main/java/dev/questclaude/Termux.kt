@@ -189,7 +189,14 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
      * Clobbers the positional parameters.
      */
     private val paneScript = """
-        $tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' '\t'; echo
+        us=${'$'}(printf '\037')
+        $tmux -u list-sessions -F "#{session_name}${'$'}us#{pane_title}" 2>/dev/null | while IFS= read -r l; do
+          # 1 when the pane is showing a permission prompt ("Do you want to …" then "1. Yes").
+          a=0
+          $tmux capture-pane -p -t "=${'$'}{l%%"${'$'}us"*}:" 2>/dev/null | tail -n 30 |
+            ${Termux.PREFIX}/bin/awk '/Do you want to/ { q = 1 } q && /1\. Yes/ { f = 1 } END { exit !f }' && a=1
+          printf '%s%s%s\t' "${'$'}l" "${'$'}us" "${'$'}a"
+        done; echo
         set -- ${'$'}($tmux display -p -t "${'$'}t" '#{cursor_x} #{cursor_y} #{cursor_flag} #{pane_in_mode} #{scroll_position} #{pane_height}' 2>/dev/null)
         if [ ${'$'}# -lt 3 ]; then
           echo $NO_SESSION
@@ -207,7 +214,9 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         // Always exit 0: Termux posts a notification for every failed plugin command.
         Termux.sh(
             ctx, "mirror",
-            // Line 1: all session names, tab-separated (for the tab strip). Line 2: cursor column,
+            // Line 1: one tab-separated entry per session for the tab strip, each "name␟pane
+            // title␟awaiting approval (0/1)"; Claude titles its pane "✳ topic" when it's waiting
+            // for you and spins the first character while it works. Line 2: cursor column,
             // row and visibility. Then the pane with color escapes; if it's scrolled back in copy
             // mode, the lines it's showing, with no cursor.
             "t=\"=${'$'}1:\"\n$paneScript\nexit 0",

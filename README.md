@@ -12,7 +12,9 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   Bluetooth keyboard, Enter sends, Shift+Enter starts a new line, and Ctrl/Alt combos work.
   Scroll back through the conversation with the controller thumbstick, or pinch and drag
   (hand tracking) up and down on the terminal; typing jumps back to the prompt.
-- **Tabs**: one per tmux session, above the terminal. **＋** asks which project in `~` to open;
+- **Tabs**: one per tmux session, above the terminal. Each shows whether its Claude is
+  **working**, waiting on **your turn**, or wants you to **approve** something, with the topic
+  Claude gave the conversation underneath, so you know what you're switching into. **＋** asks which project in `~` to open;
   for a git repo the tab gets its own worktree and branch (`claude -w`, on by default), so several
   Claudes can work on the same repo without editing the same files. Tap a tab to switch (typing
   and the mirror follow it), ✕ next to the active tab (or a long-press) to close it. A worktree stays in `<repo>/.claude/worktrees/`

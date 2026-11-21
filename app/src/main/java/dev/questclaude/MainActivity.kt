@@ -187,8 +187,11 @@ class MainActivity : AppCompatActivity() {
         }
         // Line 1 is the session list for the tab strip; the rest is the active pane.
         val nl0 = text.indexOf('\n')
-        val names = (if (nl0 >= 0) text.substring(0, nl0) else "").split('\t').filter { it.isNotBlank() }
-        if (names != sessions) { sessions = names; renderTabs() }
+        val entries = (if (nl0 >= 0) text.substring(0, nl0) else "").split('\t')
+            .filter { it.isNotBlank() }.map { it.split('\u001f') }
+        val names = entries.map { it[0] }
+        val info = entries.associate { it[0] to TabInfo.parse(it.getOrElse(1) { "" }, it.getOrNull(2) == "1") }
+        if (names != sessions || info != tabInfo) { sessions = names; tabInfo = info; renderTabs() }
         val text = if (nl0 >= 0) text.substring(nl0 + 1) else text
         if (text.contains(TmuxBridge.NO_SESSION)) {
             lastPane = ""
@@ -221,6 +224,18 @@ class MainActivity : AppCompatActivity() {
      * per wheel event), leaving a pinned prompt header at the top in place. The real pane
      * replaces this as soon as it arrives.
      */
+    private var skeletons = 0
+
+    /**
+     * A dim placeholder bar for a line that's still on its way from Claude, so a preview reads
+     * as loading rather than empty. Lengths vary like text; each bar keeps its length as it moves.
+     */
+    private fun skeletonLine(): String {
+        val i = skeletons++
+        val width = 28 + (i * 37 + (i * i) % 23) % 60
+        return "  \u001B[38;5;237m" + "░".repeat(width) + "\u001B[0m"
+    }
+
     private fun previewScroll(lines: Int) {
         val cur = shownLines ?: return
         val plain = cur.map { ansiEscape.replace(it, "") }
@@ -234,7 +249,8 @@ class MainActivity : AppCompatActivity() {
         val region = cur.subList(top, box)
         if (region.isEmpty()) return
         val n = lines.coerceIn(-region.size, region.size)
-        val shifted = if (n > 0) List(n) { "" } + region.dropLast(n) else region.drop(-n) + List(-n) { "" }
+        val shifted = if (n > 0) List(n) { skeletonLine() } + region.dropLast(n)
+        else region.drop(-n) + List(-n) { skeletonLine() }
         val next = cur.subList(0, top) + shifted + cur.subList(box, cur.size)
         shownLines = next
         lastPane = "" // so the real pane is drawn even if it matches the last capture
@@ -248,8 +264,8 @@ class MainActivity : AppCompatActivity() {
         val names = (sessions + settings.session).distinct() // active one shows even before it exists
         for (name in names) {
             val b = layoutInflater.inflate(R.layout.tab_button, tabs, false) as Button
-            b.text = name
             val active = name == settings.session
+            b.text = tabLabel(name, tabInfo[name], active)
             b.backgroundTintList = android.content.res.ColorStateList.valueOf(
                 getColor(if (active) R.color.accent else R.color.key))
             b.setOnClickListener { switchSession(name) }
@@ -269,6 +285,56 @@ class MainActivity : AppCompatActivity() {
                 tabs.addView(x)
             }
         }
+    }
+
+    /** What each tab's Claude is doing and about, from its pane title; see [TmuxBridge.capture]. */
+    private var tabInfo = emptyMap<String, TabInfo>()
+
+    data class TabInfo(val state: State?, val topic: String) {
+        enum class State { WORKING, YOUR_TURN, APPROVE }
+
+        companion object {
+            /** Claude titles its pane "✳ topic" while waiting and swaps ✳ for a spinner while working. */
+            fun parse(title: String, approval: Boolean): TabInfo {
+                val sp = title.indexOf(' ')
+                if (sp !in 1..2 || title[0].isLetterOrDigit()) return TabInfo(null, "") // not Claude
+                val state = when {
+                    approval -> State.APPROVE
+                    title.substring(0, sp) == "✳" -> State.YOUR_TURN
+                    else -> State.WORKING
+                }
+                return TabInfo(state, title.substring(sp + 1).trim())
+            }
+        }
+    }
+
+    /** "name · status" over a smaller topic line. */
+    private fun tabLabel(name: String, info: TabInfo?, active: Boolean): CharSequence {
+        val s = android.text.SpannableStringBuilder(name)
+        val (label, color) = when (info?.state) {
+            TabInfo.State.WORKING -> "◐ working" to AMBER
+            TabInfo.State.YOUR_TURN -> "● your turn" to GREEN
+            TabInfo.State.APPROVE -> "● approve?" to RED
+            null -> null to 0
+        }
+        if (label != null) {
+            s.append("  ")
+            val start = s.length
+            s.append(label)
+            // The active tab is accent-colored, so its status stays white but bold.
+            if (!active) s.setSpan(android.text.style.ForegroundColorSpan(color), start, s.length, 0)
+            s.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, s.length, 0)
+        }
+        val topic = info?.topic.orEmpty()
+        if (topic.isNotEmpty()) {
+            s.append('\n')
+            val start = s.length
+            s.append(if (topic.length > 30) topic.take(29).trimEnd() + "…" else topic)
+            s.setSpan(android.text.style.RelativeSizeSpan(0.8f), start, s.length, 0)
+            s.setSpan(android.text.style.ForegroundColorSpan(
+                if (active) Color.WHITE else getColor(R.color.muted)), start, s.length, 0)
+        }
+        return s
     }
 
     private fun switchSession(name: String) {
