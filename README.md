@@ -15,7 +15,7 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
 - **Tabs**: one per tmux session, above the terminal. **＋** asks which project in `~` to open;
   for a git repo the tab gets its own worktree and branch (`claude -w`, on by default), so several
   Claudes can work on the same repo without editing the same files. Tap a tab to switch (typing
-  and the mirror follow it), long-press to close it. A worktree stays in `<repo>/.claude/worktrees/`
+  and the mirror follow it), ✕ next to the active tab (or a long-press) to close it. A worktree stays in `<repo>/.claude/worktrees/`
   after its tab closes; reopening the same tab name picks it back up.
 - **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`base.en`).
   Tap Dictate (or Ctrl+Shift+D) and talk: words stream into Claude's prompt as you speak and get

@@ -213,6 +213,19 @@ class MainActivity : AppCompatActivity() {
             b.setOnClickListener { switchSession(name) }
             b.setOnLongClickListener { confirmClose(name); true }
             tabs.addView(b)
+            // A ✕ right after the active tab, so closing doesn't depend on knowing about long-press.
+            if (active) {
+                val x = layoutInflater.inflate(R.layout.tab_button, tabs, false) as Button
+                x.text = "✕"
+                x.minWidth = 0
+                x.minimumWidth = 0
+                x.setPadding(dp(12), 0, dp(12), 0)
+                x.contentDescription = "Close $name"
+                x.backgroundTintList = b.backgroundTintList
+                (b.layoutParams as LinearLayout.LayoutParams).marginEnd = dp(2)
+                x.setOnClickListener { confirmClose(name) }
+                tabs.addView(x)
+            }
         }
     }
 
@@ -582,6 +595,8 @@ class MainActivity : AppCompatActivity() {
         speech.execute { dictation.close() }
         speech.shutdown()
     }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 

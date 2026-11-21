@@ -67,7 +67,7 @@
             android:text="⚙" />
     </LinearLayout>
 
-    <!-- One tab per tmux session. Tap to switch, long-press to close, + for a new Claude. -->
+    <!-- One tab per tmux session. Tap to switch, ✕ (or long-press) to close, + for a new Claude. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
