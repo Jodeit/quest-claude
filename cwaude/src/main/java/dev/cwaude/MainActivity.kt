@@ -49,7 +49,9 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     private var histCount = 0
     /** When the outstanding history request was sent; 0 if none. */
     private var histFetchAt = 0L
-    private lateinit var mic: Button
+    private lateinit var mic: android.widget.ImageButton
+    private lateinit var promptTools: View
+    private lateinit var keybar: LinearLayout
     private lateinit var dictation: Dictation
     /** Downloading/loading the model or transcribing; Dictate is disabled meanwhile. */
     private var dictationBusy = false
@@ -97,6 +99,10 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         if (dictation.hasModel) speech.execute { runCatching { dictation.load() } }
         mic = findViewById(R.id.mic)
         mic.setOnClickListener { toggleDictation() }
+        promptTools = findViewById(R.id.prompt_tools)
+        keybar = findViewById(R.id.keybar)
+        findViewById<View>(R.id.paste).setOnClickListener { pasteClipboard() }
+        findViewById<View>(R.id.keys_toggle).setOnClickListener { showKeys(!settings.showKeys) }
         input = InputQueue { ops ->
             // Typing while reading back through the scrollback jumps to the prompt, like a terminal.
             if (ops.any { !it.startsWith("S:") }) {
@@ -124,7 +130,9 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         findViewById<Button>(R.id.settings).setOnClickListener { showSettings() }
         status.setOnClickListener { fixSetup() }
 
-        buildKeyBar(findViewById(R.id.keybar))
+        buildKeyBar(keybar)
+        showKeys(settings.showKeys, animate = false)
+        term.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> placePromptTools() }
         term.requestFocus() // so a hardware keyboard types into Claude right away
     }
 
@@ -214,6 +222,56 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         lastPane = raw
         shownLines = raw.split('\n')
         term.text = TapTargets.mark(styled) // followBottom keeps it at the bottom if pinned
+        placePromptTools()
+    }
+
+    // ---- Prompt line tools -------------------------------------------------------
+    // The keys toggle, paste and the mic sit at the right end of Claude's "❯" input line and
+    // move with it, like the tappable hints. With no input box on screen (a dialog) they hide,
+    // except while dictating, when they wait in the card's bottom corner so Stop stays in reach.
+
+    private fun placePromptTools() {
+        if (!::promptTools.isInitialized) return // a scroll during onCreate
+        val layout = term.layout
+        val at = if (layout == null) -1 else TapTargets.promptAt(term.text)
+        val content = termScroll.getChildAt(0) ?: return
+        val card = termScroll.parent as View
+        val h = promptTools.height.takeIf { it > 0 } ?: dp(40)
+        var y = if (at < 0) -1f else {
+            val line = layout!!.getLineForOffset(at)
+            val mid = (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
+            termScroll.top + termScroll.paddingTop + content.top + term.top + term.paddingTop +
+                mid - termScroll.scrollY - h / 2f
+        }
+        if (y < termScroll.top || y > termScroll.bottom - h) y = -1f
+        if (y < 0 && (dictation.recording || dictationBusy)) y = card.height - h - dp(16).toFloat()
+        promptTools.visibility = if (y < 0) View.INVISIBLE else View.VISIBLE
+        if (y >= 0) promptTools.translationY = y
+    }
+
+    /** Slide the key dock out from under the terminal, or tuck it away. */
+    private fun showKeys(show: Boolean, animate: Boolean = true) {
+        settings.showKeys = show
+        if (animate) android.transition.TransitionManager.beginDelayedTransition(
+            keybar.parent as android.view.ViewGroup,
+            android.transition.TransitionSet()
+                .addTransition(android.transition.Slide(android.view.Gravity.BOTTOM))
+                .addTransition(android.transition.ChangeBounds())
+                .setDuration(180))
+        keybar.visibility = if (show) View.VISIBLE else View.GONE
+        findViewById<android.widget.ImageButton>(R.id.keys_toggle).apply {
+            isActivated = show
+            contentDescription = if (show) "Hide keys" else "Show keys"
+        }
+    }
+
+    /** The mic button: idle, recording (accent, Stop), or finishing (dimmed). */
+    private fun micState(recording: Boolean = false, busy: Boolean = false) {
+        mic.isActivated = recording
+        mic.setImageResource(if (recording) R.drawable.ic_stop else R.drawable.ic_mic)
+        mic.alpha = if (busy) 0.5f else 1f
+        mic.contentDescription = if (recording) "Stop dictating" else getString(R.string.dictate)
+        placePromptTools()
     }
 
     // ---- Scrollback -----------------------------------------------------------
@@ -274,6 +332,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         // pinned. This runs before drawing, so the old position never shows.
         termScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> if (pinned) snapToBottom() }
         termScroll.setOnScrollChangeListener { _, _, y, _, oldY ->
+            placePromptTools()
             val atBottom = !termScroll.canScrollVertically(1)
             val byUser = SystemClock.uptimeMillis() - userScrollAt < USER_SCROLL_MS
             when {
@@ -582,7 +641,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         dictation.cancel() // waits at most one 100 ms mic read
         typeStreamed("") // take back what was typed live
         streamed = ""
-        mic.text = getString(R.string.dictate)
+        micState()
         showDictation("dictation cancelled", AMBER, hideAfterMs = 3000)
     }
 
@@ -628,7 +687,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         dictationSession = settings.session
         speech.execute { runCatching { dictation.load() } } // warm up while you talk
         speech.execute { streamPartial(gen) }
-        mic.text = "■ Stop"
+        micState(recording = true)
         showDictation("● listening — Stop or Ctrl+Shift+D to finish, Esc to cancel", RED)
     }
 
@@ -664,14 +723,14 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     private fun finishDictation() {
         dictationBusy = true
         mic.isEnabled = false
-        mic.text = "… Finishing"
+        micState(busy = true)
         showDictation("… finishing the last words", AMBER)
         speech.execute {
             val result = runCatching { dictation.stopAndTranscribe() }
             main.post {
                 dictationBusy = false
                 mic.isEnabled = true
-                mic.text = getString(R.string.dictate)
+                micState()
                 result.onSuccess { text ->
                     // Picks up the last words and any late corrections, in place. No Enter, so
                     // you can check it first.

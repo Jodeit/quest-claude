@@ -147,6 +147,47 @@
                         android:textSize="12sp" />
                 </LinearLayout>
             </ScrollView>
+
+            <!-- Tools on Claude's prompt line, kept beside it as it moves (MainActivity.placePromptTools):
+                 the key dock toggle, paste, and dictation. -->
+            <LinearLayout
+                android:id="@+id/prompt_tools"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_marginEnd="18dp"
+                android:orientation="horizontal"
+                android:visibility="invisible">
+
+                <ImageButton
+                    android:id="@+id/keys_toggle"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/btn_round"
+                    android:contentDescription="Show keys"
+                    android:focusable="false"
+                    android:src="@drawable/ic_keys" />
+
+                <ImageButton
+                    android:id="@+id/paste"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/btn_round"
+                    android:contentDescription="Paste"
+                    android:focusable="false"
+                    android:src="@drawable/ic_paste" />
+
+                <ImageButton
+                    android:id="@+id/mic"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/btn_round"
+                    android:contentDescription="@string/dictate"
+                    android:focusable="false"
+                    android:src="@drawable/ic_mic" />
+            </LinearLayout>
         </FrameLayout>
 
         <!-- Status line: dictation progress, and the result of the last command (reconnect, …). -->
@@ -178,8 +219,8 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- The key dock. Tap the terminal (or ⌨) to type into Claude; a hardware keyboard works
-             once it has focus. Keys come in groups: input, editing keys, arrows, then send. -->
+        <!-- The key dock, hidden until the keys button on the prompt line slides it out. Tap the
+             terminal (or ⌨) to type into Claude; a hardware keyboard works once it has focus. -->
         <LinearLayout
             android:id="@+id/keybar"
             android:layout_width="match_parent"
@@ -188,18 +229,13 @@
             android:background="@drawable/dock"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:padding="6dp">
-
-            <Button
-                android:id="@+id/mic"
-                style="@style/QcButton.Secondary"
-                android:layout_marginStart="0dp"
-                android:text="@string/dictate" />
+            android:padding="6dp"
+            android:visibility="gone">
 
             <Button
                 android:id="@+id/keyboard"
                 style="@style/QcButton.Secondary"
-                android:layout_marginStart="6dp"
+                android:layout_marginStart="0dp"
                 android:background="@drawable/btn_ghost"
                 android:contentDescription="Show keyboard"
                 android:minWidth="52dp"

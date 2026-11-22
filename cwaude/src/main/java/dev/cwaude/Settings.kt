@@ -30,6 +30,11 @@ class Settings(ctx: Context) {
         get() = prefs.getBoolean("isolate_tabs", true)
         set(v) = prefs.edit().putBoolean("isolate_tabs", v).apply()
 
+    /** Whether the key dock under the terminal is out (it's hidden to start with). */
+    var showKeys: Boolean
+        get() = prefs.getBoolean("show_keys", false)
+        set(v) = prefs.edit().putBoolean("show_keys", v).apply()
+
     /** Tabs open in the last run, oldest first, so [Restore] can bring them back. */
     var openTabs: List<String>
         get() = prefs.getString("open_tabs", "")!!.split('\n').filter { it.isNotEmpty() }

@@ -140,6 +140,22 @@ object TapTargets {
         return out
     }
 
+    /**
+     * Offset of the "❯" that starts Claude's input box (the lines between the last two full-width
+     * rules), or -1 when there's no input box on screen (a dialog, or Claude isn't running).
+     */
+    fun promptAt(text: CharSequence): Int {
+        val s = text.toString()
+        val starts = mutableListOf(0)
+        s.forEachIndexed { i, c -> if (c == '\n') starts += i + 1 }
+        fun line(n: Int) = s.substring(starts[n], if (n + 1 < starts.size) starts[n + 1] - 1 else s.length)
+        val rules = starts.indices.filter { RULE.matches(line(it)) }
+        if (rules.size < 2) return -1
+        val first = line(rules[rules.size - 2] + 1)
+        if (!first.trimStart().startsWith("❯") || OPTION.containsMatchIn(first)) return -1
+        return starts[rules[rules.size - 2] + 1] + first.indexOf('❯')
+    }
+
     /** Drawn dim, or in a neutral grey: how Claude shows hints and suggestions. */
     private fun grey(text: CharSequence, at: Int): Boolean {
         if (text !is Spanned) return false
