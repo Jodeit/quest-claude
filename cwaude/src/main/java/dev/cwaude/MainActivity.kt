@@ -279,24 +279,14 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             val atBottom = !termScroll.canScrollVertically(1)
             val byUser = SystemClock.uptimeMillis() - userScrollAt < USER_SCROLL_MS
             when {
-                // Only your own scrolling moves the pin: down to the bottom pins, up unpins.
-                byUser -> {
-                    readingAt = y
-                    if (atBottom) pinned = true else if (y < oldY) pinned = false
-                }
-                pinned -> if (!atBottom) termScroll.post { if (pinned) snapToBottom() } // the view moved itself
-                // Reading back while Claude works: something else moved the view (the text
-                // view chasing its cursor, content shrinking under you). Put it back.
-                y != readingAt && termScroll.canScrollVertically(if (readingAt > y) 1 else -1) -> termScroll.post {
-                    if (!pinned && SystemClock.uptimeMillis() - userScrollAt >= USER_SCROLL_MS)
-                        termScroll.scrollTo(0, readingAt)
-                }
+                // Scrolling (yours, or a fling running on) down to the bottom pins. Being clamped
+                // there because the content shrank moves up, so it doesn't.
+                atBottom && (byUser || y > oldY) -> pinned = true
+                byUser && y < oldY -> pinned = false // only your own scrolling unpins
+                pinned && !atBottom -> termScroll.post { if (pinned) snapToBottom() } // the view moved itself
             }
         }
     }
-
-    /** Where you scrolled to while reading back; held until you scroll again or type. */
-    private var readingAt = 0
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_MOVE) {

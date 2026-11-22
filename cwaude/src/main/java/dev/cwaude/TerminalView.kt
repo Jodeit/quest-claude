@@ -211,6 +211,14 @@ class TerminalView @JvmOverloads constructor(
         context.getSystemService(InputMethodManager::class.java).showSoftInput(this, 0)
     }
 
+    /**
+     * Selectable text puts the selection back at 0 on every new frame and then scrolls that
+     * point into view: the screen's top line, so reading back got pulled down to it and the
+     * bottom bounced. MainActivity decides scrolling; only a selection being dragged moves it.
+     */
+    override fun requestRectangleOnScreen(rectangle: android.graphics.Rect, immediate: Boolean) =
+        hasSelection() && super.requestRectangleOnScreen(rectangle, immediate)
+
     override fun onCheckIsTextEditor() = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
