@@ -73,7 +73,8 @@ class CwaudeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            "stop" -> worker.execute { stopServer(); stopSelf() }
+            // Stopped on purpose: don't bring the tabs back next start.
+            "stop" -> worker.execute { Settings(this).openTabs = emptyList(); stopServer(); stopSelf() }
             else -> ensureUp()
         }
         return START_STICKY
@@ -110,6 +111,12 @@ class CwaudeService : Service() {
         // start its own short-lived server instead of waiting for ours.
         val sock = Ubuntu.tmuxSocket(this)
         sock.delete()
+        // Every Claude died with the last server; work out which tabs to reopen before this
+        // run's Claudes start writing their own session files.
+        val settings = Settings(this)
+        val restore = runCatching { Restore.plan(this, settings.openTabs, settings.serverStartedAt) }
+            .onFailure { Log.w(TAG, "couldn't plan tab restore", it) }.getOrDefault(emptyList())
+        settings.serverStartedAt = System.currentTimeMillis()
         status("starting tmux")
         val p = Ubuntu.builder(this, "exec tmux -D", killOnExit = false).start()
         p.outputStream.close()
@@ -122,6 +129,10 @@ class CwaudeService : Service() {
         val t0 = System.currentTimeMillis()
         while (!sock.exists() && System.currentTimeMillis() - t0 < 10_000) Thread.sleep(50)
         if (!sock.exists()) error("the tmux server didn't come up")
+        if (restore.isNotEmpty()) {
+            status("reopening ${restore.size} tab(s)")
+            runCatching { Restore.create(this, restore) }.onFailure { Log.w(TAG, "tab restore failed", it) }
+        }
     }
 
     private fun startControl() {
@@ -129,7 +140,11 @@ class CwaudeService : Service() {
         val settings = Settings(this)
         val c = ControlClient(this, object : ControlClient.Events {
             override fun frame(f: ControlClient.Frame) { listener?.frame(f) }
-            override fun tabs(tabs: List<ControlClient.Tab>) { listener?.tabs(tabs) }
+            override fun tabs(tabs: List<ControlClient.Tab>) {
+                // Empty means tmux didn't answer (or is going away), not that every tab closed.
+                if (tabs.isNotEmpty()) tabs.map { it.name }.let { if (it != settings.openTabs) settings.openTabs = it }
+                listener?.tabs(tabs)
+            }
             override fun sessionChanged(session: String) { listener?.sessionChanged(session) }
             // Android only lets the focused app set the clipboard, so the screen does it.
             override fun copied(text: String) { listener?.copied(text) }

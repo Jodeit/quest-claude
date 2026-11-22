@@ -30,6 +30,16 @@ class Settings(ctx: Context) {
         get() = prefs.getBoolean("isolate_tabs", true)
         set(v) = prefs.edit().putBoolean("isolate_tabs", v).apply()
 
+    /** Tabs open in the last run, oldest first, so [Restore] can bring them back. */
+    var openTabs: List<String>
+        get() = prefs.getString("open_tabs", "")!!.split('\n').filter { it.isNotEmpty() }
+        set(v) = prefs.edit().putString("open_tabs", v.joinToString("\n")).apply()
+
+    /** When the current run's tmux server started (ms); Claudes started before it are older runs'. */
+    var serverStartedAt: Long
+        get() = prefs.getLong("server_started_at", 0L)
+        set(v) = prefs.edit().putLong("server_started_at", v).apply()
+
     companion object {
         const val DEFAULT_SESSION = "claude"
         const val DEFAULT_LAUNCH = "cd ~ && claude"
