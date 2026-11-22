@@ -1,4 +1,95 @@
-# Quest Claude
+# Qlaude
+
+**Claude Code on your Meta Quest, running on the headset itself. No PC, no Termux.**
+
+Qlaude is a sideloaded Android app that carries its own Ubuntu, installs Claude Code into it on first
+launch, and gives you a terminal panel made for a headset: tabs for several Claudes at once,
+on-device voice dictation, and tap-to-press for Claude's prompts and shortcuts.
+
+![Qlaude on a Quest 3: a session rail on the left, Claude's conversation on the right](docs/qlaude.png)
+
+[![Buy me a coffee on Ko-fi](https://img.shields.io/badge/Ko--fi-buy%20me%20a%20coffee-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/jodeit)
+
+## Install
+
+You need a Quest in [developer mode](https://developers.meta.com/horizon/documentation/native/android/mobile-device-setup/)
+and a Claude account (Pro, Max, or an API key).
+
+1. Download [`qlaude.apk`](https://github.com/Jodeit/quest-claude/releases/latest/download/qlaude.apk)
+   from the latest release.
+2. Sideload it with [SideQuest](https://sidequestvr.com/) or `adb install qlaude.apk`.
+3. Open **Qlaude** from *Unknown sources* in your library. The first start unpacks Ubuntu and
+   downloads Claude Code: a few minutes and a few hundred MB, once.
+4. Claude asks you to log in. Tap the link it shows, sign in in the browser, and you're coding.
+
+Updates install over the old version and keep Ubuntu, your files and your Claude login.
+
+## What you get
+
+- **Sessions**: every Claude runs in its own tmux session, listed in the rail on the left. Each one
+  shows whether its Claude is **working**, waiting on **your turn**, or wants you to **approve**
+  something, with the topic Claude gave the conversation, so you know what you're switching into.
+  **New session** (or Ctrl+T) asks which project in `~` to open; for a git repo the session gets its
+  own worktree and branch (`claude -w`), so several Claudes can work on one repo without editing the
+  same files.
+- **They keep running**: a foreground service keeps Ubuntu and every Claude alive while the panel is
+  closed. If the app is updated or killed, your sessions reopen with `claude --resume`.
+- **Voice dictation**: on-device [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Tap the mic
+  (or Ctrl+Shift+D) and talk; words stream into Claude's prompt as you speak. Nothing is sent until
+  you press Enter, and no audio leaves the headset. The first tap downloads the model once.
+- **Tap Claude's controls**: numbered options (`❯ 1. Yes`), shortcut hints (`esc to interrupt`,
+  `shift+tab to cycle`) and Claude's suggested next prompt are underlined; tap one to press it.
+- **Made for a headset**: scroll with the thumbstick or a pinch-and-drag, select and copy straight
+  from the terminal, tap links to open them, paste from the Android clipboard. A key dock (Esc,
+  Ctrl-C, Tab, Shift-Tab, arrows, Enter) is one tap away, and a Bluetooth keyboard works like a
+  normal terminal.
+- **· remote**: tap it at the end of Claude's mode line to run `/remote-control`, then carry on with
+  that session from claude.ai/code or the Claude app on your phone.
+
+## Let Claude drive the headset (optional)
+
+Claude can see and control the Quest it runs on: take screenshots, open pages, launch and test apps,
+install APKs. Inside Qlaude's Ubuntu, from a clone of this repo:
+
+```sh
+scripts/setup.sh
+```
+
+That puts the `quest` command on the PATH, links the `quest` skill into `~/.claude/skills/` and adds
+a status line with context and plan usage. `quest` talks to the headset over its own Wireless
+debugging; pair once with `quest pair <port> <code>` (Settings > Developer > Wireless debugging >
+Pair device with pairing code). Android switches Wireless debugging off at every reboot; Qlaude's
+**Reconnect** turns it back on. `quest help` lists everything.
+
+## How it works
+
+Qlaude ships [proot](https://proot-me.github.io/) and an Ubuntu arm64 root filesystem inside the APK
+(fetched at build time by `scripts/fetch-ubuntu-prebuilts.sh`), so it needs no Termux and runs at
+`targetSdk` 34. A foreground service keeps a tmux server alive in that Ubuntu, and the panel talks to
+it over a single `tmux -C` control-mode pipe: output streams in as Claude writes it, and keys go
+straight to the session.
+
+## Build
+
+GitHub Actions builds the APK on every push to `main`; tags `v*` also publish a release with
+`qlaude.apk`. From the headset:
+
+```sh
+scripts/install.sh --qlaude   # latest successful main build
+```
+
+`debug.keystore` is a throwaway debug key committed on purpose, so every CI build installs over the
+previous one.
+
+## Support
+
+If Qlaude saves you some time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/jodeit) ☕.
+There's a link in the app's ⚙ Settings too.
+
+## Quest Claude (the original, Termux-based app)
+
+Qlaude grew out of Quest Claude (`app/`), which drives Claude Code running in Termux instead of
+carrying its own Ubuntu. It still works and lives in this repo, but new work goes into Qlaude.
 
 A lightweight Android companion app for Meta Quest that drives
 [Claude Code](https://claude.com/claude-code) running in Termux.
@@ -40,7 +131,7 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
   and folder) from claude.ai/code or the Claude app. Each tab connects separately; tap it again in
   that tab to disconnect. It clears an unsent draft first.
 
-## adb without Shizuku
+### adb without Shizuku
 
 `quest` uses Ubuntu's own adb against the headset's Wireless debugging. Once per headset:
 
@@ -51,7 +142,7 @@ Termux, and Claude in a detached tmux session. A live copy of the Claude pane ap
 
 After a reboot, open Quest Claude and tap **Reconnect** (or run `quest up`).
 
-## How it works
+### How it works
 
 The app never talks to Claude directly. It sends Termux
 [`RUN_COMMAND`](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent) intents that run
@@ -64,7 +155,7 @@ proot-distro login ubuntu -- bash -lc 'cd ~ && claude'
 
 Both the session name and the command can be changed in ⚙ Settings.
 
-## One-time Termux setup
+### One-time Termux setup
 
 ```sh
 pkg install tmux
@@ -72,7 +163,7 @@ echo "allow-external-apps=true" >> ~/.termux/termux.properties
 termux-reload-settings
 ```
 
-## Headset control: `quest` and the skill
+### Headset control: `quest` and the skill
 
 Inside proot Ubuntu, from a clone of this repo:
 
@@ -85,7 +176,7 @@ with time to reset) in every tab, puts `quest` on the PATH and links `skills/que
 session on the headset knows to run `quest up` first and how to take screenshots, open pages,
 launch apps and send input. Run `quest help` for the full command list.
 
-## Build & install
+### Build & install
 
 There are no Android build tools on arm64 Termux/proot, so GitHub Actions builds the APK on every
 push to `main` (tags `v*` also get a GitHub release). From the headset:
@@ -99,8 +190,3 @@ That downloads the artifact with `gh`, then `adb install -r -g` and grants the T
 
 `debug.keystore` is a throwaway debug key committed on purpose, so every CI build installs over the
 previous one. Don't use it for anything you publish.
-
-## Support
-
-If Qlaude saves you some time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/jodeit) ☕.
-There's a link in the app's ⚙ Settings too.

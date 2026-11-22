@@ -45,7 +45,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/quest-claude.apk --generate-notes
+        # The cwaude job may have created the release first.
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes || true
+          gh release upload "$GITHUB_REF_NAME" dist/quest-claude.apk --clobber
 
   # Exec spike (spike/): proot + Ubuntu with no Termux, at targetSdk 34. Its own job so a
   # broken download never blocks the main APK.
@@ -110,3 +113,13 @@ jobs:
           name: cwaude-apk
           path: dist/cwaude.apk
           retention-days: 30
+
+      # The README's download link points at releases/latest/download/qlaude.apk.
+      - name: Publish to the release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp dist/cwaude.apk dist/qlaude.apk
+          gh release create "$GITHUB_REF_NAME" --generate-notes || true
+          gh release upload "$GITHUB_REF_NAME" dist/qlaude.apk --clobber
