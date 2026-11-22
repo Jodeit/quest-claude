@@ -98,7 +98,12 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         mic.setOnClickListener { toggleDictation() }
         input = InputQueue { ops ->
             // Typing while reading back through the scrollback jumps to the prompt, like a terminal.
-            if (ops.any { !it.startsWith("S:") }) scrollToBottom()
+            if (ops.any { !it.startsWith("S:") }) {
+                scrollToBottom()
+                // Typing ends a selection, so the frames held back for it show again.
+                (term.text as? android.text.Spannable)?.let(android.text.Selection::removeSelection)
+                term.onSelectionEnd?.invoke()
+            }
             val c = control()
             if (c == null) { main.post { input.done() }; showResult("✗ not connected yet", RED) }
             else c.input(ops) { main.post { input.done() } }
@@ -106,7 +111,10 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         ansi = Ansi(getColor(R.color.fg), getColor(R.color.term_bg))
         term.input = input
         term.onScroll = ::previewScroll
-        term.onLongPress = ::showCopyText
+        term.onLink = ::openLink
+        term.onCopy = { copyToClipboard(it) }
+        term.onSelectionEnd = { held?.let { (f, raw, styled) -> held = null; showPane(f, raw, styled) } }
+        TerminalView.selectable(history, { copyToClipboard(it) })
         findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
         tabs = findViewById(R.id.tabs)
         findViewById<Button>(R.id.new_tab).setOnClickListener { newSession() }
@@ -186,6 +194,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     }
 
     private var lastPane = ""
+    /** Newest frame that arrived while text was selected. */
+    private var held: Triple<ControlClient.Frame, String, CharSequence>? = null
 
     private fun showPane(f: ControlClient.Frame, raw: String, styled: CharSequence) {
         if (f.session != settings.session) return // a frame from before a tab switch
@@ -197,6 +207,9 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         }
         if (raw == lastPane) return
         if (input.scrolling) return // taken mid-scroll; the scroll's own frame follows
+        // New text would drop the selection you're making; show it once you're done.
+        if (term.hasSelection()) { held = Triple(f, raw, styled); return }
+        held = null
         lastPane = raw
         val atBottom = !termScroll.canScrollVertically(1)
         shownLines = raw.split('\n')
@@ -674,7 +687,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
 
     // ---- Copy and paste --------------------------------------------------------
     // Claude's "c to copy" puts text in a tmux buffer, which ControlClient hands us as copied().
-    // Long-pressing the terminal shows its text to select from, with buttons for any links.
+    // Long-press selects text right on the terminal or scrollback (TerminalView.selectable);
+    // tapping a link opens it.
 
     private fun copyToClipboard(text: String, what: String = "Copied") {
         if (text.isEmpty()) return
@@ -688,53 +702,6 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
         if (text.isEmpty()) return toast("Clipboard is empty")
         input.paste(text)
-    }
-
-    private fun showCopyText() {
-        val c = control() ?: return showResult("✗ not connected yet", RED)
-        c.screenText(settings.session) { text -> runOnUiThread { if (!isFinishing) copyDialog(text) } }
-    }
-
-    private fun copyDialog(text: String) {
-        if (text.isBlank()) return toast("Nothing to copy")
-        val pad = (12 * resources.displayMetrics.density).toInt()
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0) }
-        // Links (newest first): wrapped lines are already joined, so a long login URL is whole.
-        val links = Regex("""https?://[^\s"'<>]+""").findAll(text).map { it.value.trimEnd('.', ',', ')') }
-            .toList().distinct().asReversed().take(3)
-        for (url in links) {
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(TextView(this).apply {
-                this.text = url; maxLines = 2; setTextColor(getColor(R.color.fg))
-                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            row.addView(Button(this).apply { this.text = "Open"; setOnClickListener { openLink(url) } })
-            row.addView(Button(this).apply { this.text = "Copy"; setOnClickListener { copyToClipboard(url, "Copied link") } })
-            box.addView(row)
-        }
-        val body = TextView(this).apply {
-            this.text = text
-            typeface = android.graphics.Typeface.MONOSPACE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            setTextColor(getColor(R.color.fg))
-            setBackgroundColor(getColor(R.color.term_bg))
-            setPadding(pad / 2, pad / 2, pad / 2, pad / 2)
-            setTextIsSelectable(true) // long-press or drag to select, then Copy
-        }
-        val scroll = ScrollView(this).apply { addView(body) }
-        box.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-            (resources.displayMetrics.heightPixels * 0.55f).toInt()))
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-        AlertDialog.Builder(this)
-            .setTitle("Copy text")
-            .setView(box)
-            .setPositiveButton("Copy all") { _, _ -> copyToClipboard(text) }
-            .setNeutralButton("Copy selection") { _, _ ->
-                val a = body.selectionStart; val b = body.selectionEnd
-                if (a in 0 until b) copyToClipboard(text.substring(a, b)) else toast("Select some text first")
-            }
-            .setNegativeButton("Close", null)
-            .show()
     }
 
     private fun openLink(url: String) {

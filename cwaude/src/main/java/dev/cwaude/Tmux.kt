@@ -346,12 +346,6 @@ class ControlClient(private val ctx: Context, private val events: Events) {
         }
     }
 
-    /** [session]'s screen and recent scrollback as plain text, wrapped lines joined (-J). */
-    fun screenText(session: String, cb: (String) -> Unit) =
-        command("capture-pane -p -J -S -300 -t ${Tmux.target(session)}") { ok, lines ->
-            cb(if (ok) lines.joinToString("\n") { it.trimEnd() }.trim('\n') else "")
-        }
-
     // ---- Clipboard ----
 
     /**

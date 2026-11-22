@@ -25,8 +25,8 @@ class TerminalView @JvmOverloads constructor(
     var input: InputQueue? = null
     /** Lines scrolled back (positive) or forward, before they're sent; for a local preview. */
     var onScroll: ((Int) -> Unit)? = null
-    /** Long press (hold the trigger): select and copy text. */
-    var onLongPress: (() -> Unit)? = null
+    /** Opens a tapped link. */
+    var onLink: ((String) -> Unit)? = null
 
     companion object {
         private const val BASE_SP = 12f
@@ -34,13 +34,78 @@ class TerminalView @JvmOverloads constructor(
         private const val MAX_SP = 20f
         /** Transcript lines per thumbstick/wheel notch. */
         private const val WHEEL_LINES = 3f
-    }
+        private val URL = Regex("""https?://[^\s"'<>]+""")
+
+        /**
+         * Long-press selects text in place (Android's own handles and Copy). Copy puts the text
+         * on the clipboard through [copy] with tmux's line wraps taken out, so a long link copies
+         * whole; [ended] runs when the selection closes.
+         */
+        fun selectable(tv: android.widget.TextView, copy: (String) -> Unit, ended: () -> Unit = {}) {
+            tv.setTextIsSelectable(true)
+            tv.customSelectionActionModeCallback = object : android.view.ActionMode.Callback {
+                override fun onCreateActionMode(m: android.view.ActionMode, menu: android.view.Menu) = true
+                override fun onPrepareActionMode(m: android.view.ActionMode, menu: android.view.Menu) = false
+                override fun onActionItemClicked(m: android.view.ActionMode, item: android.view.MenuItem): Boolean {
+                    if (item.itemId != android.R.id.copy) return false
+                    val a = minOf(tv.selectionStart, tv.selectionEnd)
+                    val b = maxOf(tv.selectionStart, tv.selectionEnd)
+                    if (a in 0 until b) copy(unwrap(tv.text.toString(), a, b))
+                    m.finish()
+                    return true
+                }
+                override fun onDestroyActionMode(m: android.view.ActionMode) = ended()
+            }
+        }
+
+        /** [text] from [a] to [b], minus the newlines tmux added where a line filled the width. */
+        fun unwrap(text: String, a: Int, b: Int): String {
+            val out = StringBuilder()
+            for (i in a until b) {
+                val c = text[i]
+                if (c == '\n' && i - (text.lastIndexOf('\n', i - 1) + 1) >= Tmux.COLS) continue
+                out.append(c)
+            }
+            return out.toString().lines().joinToString("\n") { it.trimEnd() }
+        }
+
+        /** The link at [off], following it across wrapped lines; null if there's none there. */
+        fun linkAt(text: String, off: Int): String? {
+            if (off !in text.indices) return null
+            var start = text.lastIndexOf('\n', off - 1) + 1
+            var end = text.indexOf('\n', off).let { if (it < 0) text.length else it }
+            // Grow to the whole wrapped line: earlier lines that filled the width, and later ones.
+            while (start > 0) {
+                val prev = text.lastIndexOf('\n', start - 2) + 1
+                if (start - 1 - prev >= Tmux.COLS) start = prev else break
+            }
+            while (end < text.length && end - (text.lastIndexOf('\n', end - 1) + 1) >= Tmux.COLS)
+                end = text.indexOf('\n', end + 1).let { if (it < 0) text.length else it }
+            val joined = unwrap(text, start, end)
+            val at = off - start - text.substring(start, off).count { it == '\n' }
+            return URL.findAll(joined).firstOrNull { at in it.range }?.value?.trimEnd('.', ',', ')')
+        }
 
     init {
         isFocusable = true
         isFocusableInTouchMode = true
-        setOnClickListener { if (!tapControl()) showKeyboard() }
-        setOnLongClickListener { onLongPress?.invoke(); onLongPress != null }
+        selectable(this, { onCopy?.invoke(it) }, { onSelectionEnd?.invoke() })
+        setOnClickListener {
+            // A tap that only closes a selection shouldn't pop the keyboard.
+            if (!selAtDown && !tapControl() && !tapLink()) showKeyboard()
+        }
+    }
+
+    var onCopy: ((String) -> Unit)? = null
+    /** The selection closed; the screen can update again (see MainActivity.showPane). */
+    var onSelectionEnd: (() -> Unit)? = null
+    private var selAtDown = false
+
+    private fun tapLink(): Boolean {
+        if (layout == null) return false
+        val url = linkAt(text.toString(), getOffsetForPosition(tapX, tapY)) ?: return false
+        onLink?.invoke(url)
+        return true
     }
 
     // ---- Tapping Claude's controls (see TapTargets) -----------------------------
@@ -95,7 +160,7 @@ class TerminalView @JvmOverloads constructor(
     /** Pinch (or finger) and drag: the text follows your hand, a line per line height. Tap still types. */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
-        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) { tapX = event.x; tapY = event.y }
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) { tapX = event.x; tapY = event.y; selAtDown = hasSelection() }
         if (!remoteScroll) { dragging = false; return super.onTouchEvent(event) }
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
