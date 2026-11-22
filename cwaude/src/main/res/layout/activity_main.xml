@@ -9,16 +9,18 @@
     android:paddingEnd="16dp"
     android:paddingBottom="14dp">
 
-    <!-- One top bar, like a browser: name and status, the tabs, then reconnect and settings. -->
+    <!-- One top bar, like a browser: name and status, the tabs, then reconnect and settings.
+         The tabs wrap onto more rows when they don't fit; the name and buttons stay on the
+         top row and the tabs' last row sits on the terminal. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="bottom"
         android:orientation="horizontal">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="40dp"
+            android:layout_gravity="top"
             android:fontFamily="sans-serif-medium"
             android:gravity="center_vertical"
             android:text="@string/app_name"
@@ -31,9 +33,10 @@
             android:id="@+id/status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_gravity="top"
             android:layout_marginStart="10dp"
+            android:layout_marginTop="9dp"
             android:layout_marginEnd="14dp"
-            android:layout_marginBottom="9dp"
             android:background="@drawable/panel"
             android:maxWidth="260dp"
             android:ellipsize="end"
@@ -44,50 +47,42 @@
             android:textColor="@color/muted"
             android:textSize="13sp" />
 
-        <!-- One tab per tmux session. Tap to switch, ✕ (or long-press) to close, + for a new Claude. -->
-        <HorizontalScrollView
+        <!-- One tab per tmux session, then ＋. Tap to switch, ✕ (or long-press) to close. -->
+        <dev.cwaude.TabFlow
+            android:id="@+id/tabs"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:scrollbars="none">
+            android:layout_gravity="bottom"
+            android:layout_weight="1">
 
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="bottom"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:id="@+id/tabs"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal" />
-
-                <Button
-                    android:id="@+id/new_tab"
-                    style="@style/QcButton.Icon"
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:layout_marginStart="2dp"
-                    android:layout_marginBottom="2dp"
-                    android:contentDescription="New tab"
-                    android:focusable="false"
-                    android:text="＋"
-                    android:textSize="18sp" />
-            </LinearLayout>
-        </HorizontalScrollView>
+            <Button
+                android:id="@+id/new_tab"
+                style="@style/QcButton.Icon"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="2dp"
+                android:layout_marginBottom="2dp"
+                android:contentDescription="New tab"
+                android:focusable="false"
+                android:text="＋"
+                android:textSize="18sp" />
+        </dev.cwaude.TabFlow>
 
         <Button
             android:id="@+id/reconnect"
             style="@style/QcButton.Icon"
-            android:layout_marginBottom="4dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="top"
             android:contentDescription="Reconnect adb"
             android:text="⟳" />
 
         <Button
             android:id="@+id/settings"
             style="@style/QcButton.Icon"
-            android:layout_marginBottom="4dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="top"
             android:contentDescription="Settings"
             android:text="⚙" />
     </LinearLayout>

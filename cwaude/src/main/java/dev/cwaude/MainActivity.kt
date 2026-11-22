@@ -56,7 +56,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     /** Whisper runs here so it never holds up anything else. */
     private val speech = Executors.newSingleThreadExecutor()
     private var sessions = emptyList<String>()
-    private lateinit var tabs: LinearLayout
+    private lateinit var tabs: TabFlow
+    private lateinit var newTab: Button
     private var started = false
     @Volatile private var adbListening = false
     private var connection = "starting"
@@ -118,7 +119,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         TerminalView.selectable(history, { copyToClipboard(it) })
         findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
         tabs = findViewById(R.id.tabs)
-        findViewById<Button>(R.id.new_tab).setOnClickListener { newSession() }
+        newTab = findViewById(R.id.new_tab)
+        newTab.setOnClickListener { newSession() }
         renderTabs()
         findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
         findViewById<Button>(R.id.settings).setOnClickListener { showSettings() }
@@ -402,6 +404,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             }
             tabs.addView(tab)
         }
+        tabs.addView(newTab) // ＋ right after the last tab
     }
 
     /** What each tab's Claude is doing and about, from its pane title. */
@@ -739,7 +742,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             ),
             listOf(
                 Key("Paste", 1.2f, ::pasteClipboard),
-                Key("⏎", 1.2f, send("Enter"), primary = true),
+                // A word, not ⏎: the glyph comes out thin and faint on the accent fill.
+                Key("Enter", 1.3f, send("Enter"), primary = true),
             ),
         )
         for ((g, keys) in groups.withIndex()) {
@@ -748,7 +752,11 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
                 b.text = k.label
                 b.isFocusable = false // keep keyboard focus on the terminal
                 b.setOnClickListener { k.action() }
-                if (k.primary) { b.setBackgroundResource(R.drawable.btn_accent); b.setTextColor(Color.WHITE) }
+                if (k.primary) {
+                    b.setBackgroundResource(R.drawable.btn_accent)
+                    b.setTextColor(Color.WHITE)
+                    b.setTypeface(b.typeface, android.graphics.Typeface.BOLD)
+                }
                 (b.layoutParams as LinearLayout.LayoutParams).apply {
                     weight = k.weight
                     marginStart = if (i == 0) dp(if (g == 0) 16 else 14) else 0
