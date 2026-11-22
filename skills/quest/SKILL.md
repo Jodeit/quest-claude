@@ -63,3 +63,6 @@ Plain adb also works: `adb logcat -d -t 300`, `adb install -r app.apk`, `adb she
   Do it before long jobs (builds); verify with `adb shell dumpsys power | grep termux:service-wakelock`.
 - **Building APKs:** there are no Android build tools on arm64. Push to GitHub, let Actions build,
   then `scripts/install.sh` in the quest-claude repo downloads and installs the APK.
+  For Qlaude (`--qlaude`), installing kills every tab, including yours. The tabs reopen with
+  `claude --resume`, but a reply in progress is cut off, so the script refuses (exit 3) while
+  other tabs are mid-reply. Tell the user which tabs are busy; pass `--force` only if they say so.
