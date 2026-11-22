@@ -557,6 +557,11 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             if (event.action == KeyEvent.ACTION_DOWN) cycleTab(if (event.isShiftPressed) -1 else 1)
             return true
         }
+        // Ctrl+T: new tab, like a browser (so Claude's own Ctrl+T, the task list, isn't reachable).
+        if (event.keyCode == KeyEvent.KEYCODE_T && event.isCtrlPressed && !event.isShiftPressed && !event.isAltPressed) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) newSession()
+            return true
+        }
         val dictateKey = (event.keyCode == KeyEvent.KEYCODE_D && event.isCtrlPressed && event.isShiftPressed) ||
             event.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST
         val cancelKey = event.keyCode == KeyEvent.KEYCODE_ESCAPE && dictation.recording && !dictationBusy
