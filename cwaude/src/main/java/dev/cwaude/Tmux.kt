@@ -71,7 +71,7 @@ class ControlClient(private val ctx: Context, private val events: Events) {
     )
 
     /** A session for the tab strip. [title] is the pane title Claude sets ("✳ topic" etc.). */
-    data class Tab(val name: String, val title: String, val approval: Boolean)
+    data class Tab(val name: String, val title: String, val approval: Boolean, val working: Boolean)
 
     /** A history chunk; [lines] is empty for a reset (scrollback shrank below what we had). */
     data class History(val session: String, val size: Int, val from: Int, val lines: List<String>, val reset: Boolean)
@@ -80,6 +80,10 @@ class ControlClient(private val ctx: Context, private val events: Events) {
         const val MIN_FRAME_MS = 16L
         private const val MARK = "CWFRAME"
         private const val TAG = "Cwaude"
+
+        /** Claude's footer, below the prompt's last ─ rule, says "esc to interrupt" while it works. */
+        fun working(pane: List<String>): Boolean =
+            pane.drop(pane.indexOfLast { it.startsWith("─") } + 1).any { "esc to interrupt" in it }
     }
 
     private val writer = Executors.newSingleThreadExecutor()
@@ -339,7 +343,7 @@ class ControlClient(private val ctx: Context, private val events: Events) {
                     // A permission prompt: "Do you want to …" with "1. Yes" at or below it.
                     val tail = pane.takeLast(30)
                     val q = tail.indexOfFirst { "Do you want to" in it }
-                    tabs[i] = Tab(name, title, q >= 0 && tail.drop(q).any { "1. Yes" in it })
+                    tabs[i] = Tab(name, title, q >= 0 && tail.drop(q).any { "1. Yes" in it }, working(tail))
                     if (--left == 0) { tabsInFlight = false; events.tabs(tabs.filterNotNull()) }
                 }
             }

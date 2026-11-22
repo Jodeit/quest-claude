@@ -171,7 +171,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
 
     override fun tabs(tabs: List<ControlClient.Tab>) = runOnUiThread {
         val names = tabs.map { it.name }
-        val info = tabs.associate { it.name to TabInfo.parse(it.title, it.approval) }
+        val info = tabs.associate { it.name to TabInfo.parse(it.title, it.approval, it.working) }
         if (names != sessions || info != tabInfo) { sessions = names; tabInfo = info; renderTabs() }
     }
 
@@ -372,14 +372,17 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         enum class State { WORKING, YOUR_TURN, APPROVE }
 
         companion object {
-            /** Claude titles its pane "✳ topic" while waiting and swaps ✳ for a spinner while working. */
-            fun parse(title: String, approval: Boolean): TabInfo {
+            /**
+             * Claude titles its pane "✳ topic". It used to swap ✳ for a spinner while working but
+             * no longer does, so [working] comes from its footer ("esc to interrupt").
+             */
+            fun parse(title: String, approval: Boolean, working: Boolean): TabInfo {
                 val sp = title.indexOf(' ')
                 if (sp !in 1..2 || title[0].isLetterOrDigit()) return TabInfo(null, "") // not Claude
                 val state = when {
                     approval -> State.APPROVE
-                    title.substring(0, sp) == "✳" -> State.YOUR_TURN
-                    else -> State.WORKING
+                    working || title.substring(0, sp) != "✳" -> State.WORKING
+                    else -> State.YOUR_TURN
                 }
                 return TabInfo(state, title.substring(sp + 1).trim())
             }

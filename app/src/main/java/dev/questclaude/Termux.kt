@@ -218,10 +218,11 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         $tmux -u list-sessions -F "#{session_created}${'$'}us#{session_name}${'$'}us#{pane_title}" 2>/dev/null |
           ${Termux.PREFIX}/bin/sort -s -n -t "${'$'}us" -k1,1 | while IFS= read -r l; do
           l=${'$'}{l#*"${'$'}us"}
-          # 1 when the pane is showing a permission prompt ("Do you want to …" then "1. Yes").
-          a=0
-          $tmux capture-pane -p -t "=${'$'}{l%%"${'$'}us"*}:" 2>/dev/null | tail -n 30 |
-            ${Termux.PREFIX}/bin/awk '/Do you want to/ { q = 1 } q && /1\. Yes/ { f = 1 } END { exit !f }' && a=1
+          # 1 when the pane is showing a permission prompt ("Do you want to …" then "1. Yes"),
+          # else 2 when Claude is working: "esc to interrupt" below the prompt's last ─ rule.
+          a=${'$'}($tmux capture-pane -p -t "=${'$'}{l%%"${'$'}us"*}:" 2>/dev/null | tail -n 30 |
+            ${Termux.PREFIX}/bin/awk '/Do you want to/ { q = 1 } q && /1\. Yes/ { f = 1 } /^─/ { w = 0 } /esc to interrupt/ { w = 1 }
+              END { if (f) print 1; else if (w) print 2; else print 0 }')
           printf '%s%s%s\t' "${'$'}l" "${'$'}us" "${'$'}a"
         done; echo
         # ':'-separated, because tmux prints some of these as empty strings, which word splitting
@@ -244,8 +245,8 @@ class TmuxBridge(private val ctx: Context, private val settings: Settings) {
         Termux.sh(
             ctx, "mirror",
             // Line 1: one tab-separated entry per session for the tab strip, each "name␟pane
-            // title␟awaiting approval (0/1)"; Claude titles its pane "✳ topic" when it's waiting
-            // for you and spins the first character while it works. Line 2: cursor column,
+            // title␟0 idle / 1 awaiting approval / 2 working"; Claude titles its pane "✳ topic"
+            // (the topic shows under the tab name). Line 2: cursor column,
             // row and visibility. Then the pane with color escapes; if it's scrolled back in copy
             // mode, the lines it's showing, with no cursor.
             "t=\"=${'$'}1:\"\n$paneScript\nexit 0",

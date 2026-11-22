@@ -208,7 +208,7 @@ class MainActivity : AppCompatActivity() {
         val entries = (if (nl0 >= 0) text.substring(0, nl0) else "").split('\t')
             .filter { it.isNotBlank() }.map { it.split('\u001f') }
         val names = entries.map { it[0] }
-        val info = entries.associate { it[0] to TabInfo.parse(it.getOrElse(1) { "" }, it.getOrNull(2) == "1") }
+        val info = entries.associate { it[0] to TabInfo.parse(it.getOrElse(1) { "" }, it.getOrNull(2) == "1", it.getOrNull(2) == "2") }
         if (names != sessions || info != tabInfo) { sessions = names; tabInfo = info; renderTabs() }
         val text = if (nl0 >= 0) text.substring(nl0 + 1) else text
         if (text.contains(TmuxBridge.NO_SESSION)) {
@@ -372,14 +372,17 @@ class MainActivity : AppCompatActivity() {
         enum class State { WORKING, YOUR_TURN, APPROVE }
 
         companion object {
-            /** Claude titles its pane "✳ topic" while waiting and swaps ✳ for a spinner while working. */
-            fun parse(title: String, approval: Boolean): TabInfo {
+            /**
+             * Claude titles its pane "✳ topic". It used to swap ✳ for a spinner while working but
+             * no longer does, so [working] comes from its footer ("esc to interrupt").
+             */
+            fun parse(title: String, approval: Boolean, working: Boolean): TabInfo {
                 val sp = title.indexOf(' ')
                 if (sp !in 1..2 || title[0].isLetterOrDigit()) return TabInfo(null, "") // not Claude
                 val state = when {
                     approval -> State.APPROVE
-                    title.substring(0, sp) == "✳" -> State.YOUR_TURN
-                    else -> State.WORKING
+                    working || title.substring(0, sp) != "✳" -> State.WORKING
+                    else -> State.YOUR_TURN
                 }
                 return TabInfo(state, title.substring(sp + 1).trim())
             }
