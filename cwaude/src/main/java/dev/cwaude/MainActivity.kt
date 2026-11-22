@@ -275,14 +275,26 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         termScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> if (pinned) snapToBottom() }
         termScroll.setOnScrollChangeListener { _, _, y, _, oldY ->
             val atBottom = !termScroll.canScrollVertically(1)
-            val byUser = SystemClock.uptimeMillis() - userScrollAt < 1500
+            val byUser = SystemClock.uptimeMillis() - userScrollAt < USER_SCROLL_MS
             when {
-                atBottom -> pinned = true
-                byUser && y < oldY -> pinned = false
-                pinned -> termScroll.post { if (pinned) snapToBottom() } // the view moved itself
+                // Only your own scrolling moves the pin: down to the bottom pins, up unpins.
+                byUser -> {
+                    readingAt = y
+                    if (atBottom) pinned = true else if (y < oldY) pinned = false
+                }
+                pinned -> if (!atBottom) termScroll.post { if (pinned) snapToBottom() } // the view moved itself
+                // Reading back while Claude works: something else moved the view (the text
+                // view chasing its cursor, content shrinking under you). Put it back.
+                y != readingAt && termScroll.canScrollVertically(if (readingAt > y) 1 else -1) -> termScroll.post {
+                    if (!pinned && SystemClock.uptimeMillis() - userScrollAt >= USER_SCROLL_MS)
+                        termScroll.scrollTo(0, readingAt)
+                }
             }
         }
     }
+
+    /** Where you scrolled to while reading back; held until you scroll again or type. */
+    private var readingAt = 0
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_MOVE) {
@@ -463,6 +475,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         if (name == settings.session) { term.requestFocus(); return }
         settings.session = name
         lastPane = ""
+        pinned = true // a tab opens at its prompt
         resetHistory()
         term.text = "Opening $name…"
         renderTabs()
@@ -893,6 +906,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     companion object {
         /** Sideways scroll (in scroll units) one gesture needs before it switches tabs. */
         private const val SWITCH_SCROLL = 0.5f
+        /** How long after you touch or wheel the terminal its scrolling counts as yours. */
+        private const val USER_SCROLL_MS = 1500L
         private val GREEN = Color.parseColor("#7BD88F")
         private val AMBER = Color.parseColor("#F2C063")
         private val RED = Color.parseColor("#FF7A7A")
