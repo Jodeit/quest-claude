@@ -96,7 +96,7 @@ class CwaudeService : Service() {
     fun ensureUp() = worker.execute {
         if (!Ubuntu.ready(this)) { status("Ubuntu isn't set up yet"); return@execute }
         try {
-            if (server?.isAlive != true) startServer()
+            if (server?.isAlive != true) { Ubuntu.fixLinks(this); startServer() }
             if (control?.alive != true) startControl()
             status("up")
         } catch (e: Exception) {

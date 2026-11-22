@@ -47,7 +47,11 @@ object Ubuntu {
      */
     fun builder(ctx: Context, cmd: String, vararg args: String, killOnExit: Boolean = true): ProcessBuilder {
         val lib = ctx.applicationInfo.nativeLibraryDir
-        val r = rootfs(ctx).path
+        // The canonical path (/data/data/<pkg>, not the /data/user/0 alias filesDir gives):
+        // proot's hardlink emulation stores absolute host paths in its .l2s. symlinks, and only
+        // maps them back into Ubuntu if they start with the rootfs as given here. With the alias,
+        // anything dpkg had hardlinked (perl, so debconf and most apt installs) was unreachable.
+        val r = rootfs(ctx).canonicalPath
         val argv = mutableListOf("$lib/libproot.so")
         if (killOnExit) argv += "--kill-on-exit"
         argv += listOf(
@@ -82,6 +86,37 @@ object Ubuntu {
         val out = StringBuilder()
         val code = run(ctx, cmd, *args) { out.append(it).append('\n') }
         return code to out.toString()
+    }
+
+    /**
+     * Once: point symlinks made while proot ran on the /data/user/0 alias at the canonical path
+     * instead (see [builder]). Call before starting anything in Ubuntu.
+     */
+    fun fixLinks(ctx: Context) {
+        val root = rootfs(ctx)
+        val marker = File(root, "root/.cwaude/links-canonical")
+        if (!unpacked(ctx) || marker.exists()) return
+        val alias = root.absolutePath + "/"
+        val real = root.canonicalPath + "/"
+        if (alias == real) { marker.parentFile?.mkdirs(); marker.writeText(""); return }
+        var fixed = 0
+        java.nio.file.Files.walkFileTree(root.toPath(), object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+            override fun visitFile(f: java.nio.file.Path, a: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                if (a.isSymbolicLink) runCatching {
+                    val t = Os.readlink(f.toString())
+                    if (t.startsWith(alias)) {
+                        File(f.toString()).delete()
+                        Os.symlink(real + t.substring(alias.length), f.toString())
+                        fixed++
+                    }
+                }
+                return java.nio.file.FileVisitResult.CONTINUE
+            }
+            override fun visitFileFailed(f: java.nio.file.Path, e: java.io.IOException) = java.nio.file.FileVisitResult.CONTINUE
+        })
+        Log.i("Cwaude", "fixLinks: repointed $fixed symlinks from $alias to $real")
+        marker.parentFile?.mkdirs()
+        marker.writeText("$fixed\n")
     }
 
     // ---- First-run setup ----
