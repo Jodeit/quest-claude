@@ -57,7 +57,6 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     private val speech = Executors.newSingleThreadExecutor()
     private var sessions = emptyList<String>()
     private lateinit var tabs: TabFlow
-    private lateinit var newTab: Button
     private var started = false
     @Volatile private var adbListening = false
     private var connection = "starting"
@@ -119,8 +118,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         TerminalView.selectable(history, { copyToClipboard(it) })
         findViewById<Button>(R.id.keyboard).setOnClickListener { term.showKeyboard() }
         tabs = findViewById(R.id.tabs)
-        newTab = findViewById(R.id.new_tab)
-        newTab.setOnClickListener { newSession() }
+        findViewById<Button>(R.id.new_tab).setOnClickListener { newSession() }
         renderTabs()
         findViewById<Button>(R.id.reconnect).setOnClickListener { reconnect() }
         findViewById<Button>(R.id.settings).setOnClickListener { showSettings() }
@@ -394,7 +392,6 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             }
             tabs.addView(tab)
         }
-        tabs.addView(newTab) // ＋ right after the last tab
     }
 
     /** What each tab's Claude is doing and about, from its pane title. */

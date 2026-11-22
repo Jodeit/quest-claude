@@ -47,26 +47,25 @@
             android:textColor="@color/muted"
             android:textSize="13sp" />
 
-        <!-- One tab per tmux session, then ＋. Tap to switch, ✕ (or long-press) to close. -->
+        <!-- One tab per tmux session. Tap to switch, ✕ (or long-press) to close. -->
         <dev.cwaude.TabFlow
             android:id="@+id/tabs"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:layout_weight="1">
+            android:layout_weight="1" />
 
-            <Button
-                android:id="@+id/new_tab"
-                style="@style/QcButton.Icon"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginBottom="2dp"
-                android:contentDescription="New tab"
-                android:focusable="false"
-                android:text="＋"
-                android:textSize="18sp" />
-        </dev.cwaude.TabFlow>
+        <!-- ＋ stays put on the top row, so it never takes a row of its own when the tabs wrap. -->
+        <Button
+            android:id="@+id/new_tab"
+            style="@style/QcButton.Icon"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="top"
+            android:layout_marginStart="8dp"
+            android:contentDescription="New tab"
+            android:focusable="false"
+            android:text="＋" />
 
         <Button
             android:id="@+id/reconnect"
