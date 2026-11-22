@@ -8,4 +8,8 @@
     <color name="accent">#D97757</color>
     <color name="key">#2C2720</color>
     <color name="term_bg">#0E0B09</color>
+    <color name="key_hover">#373028</color>
+    <color name="key_pressed">#463D33</color>
+    <color name="accent_hover">#E38A6C</color>
+    <color name="accent_pressed">#C0623F</color>
 </resources>

@@ -341,27 +341,49 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         tabs.removeAllViews()
         val names = (sessions + settings.session).distinct() // active one shows even before it exists
         for (name in names) {
-            val b = layoutInflater.inflate(R.layout.tab_button, tabs, false) as Button
+            val tab = layoutInflater.inflate(R.layout.tab, tabs, false)
             val active = name == settings.session
-            b.text = tabLabel(name, tabInfo[name], active)
-            b.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                getColor(if (active) R.color.accent else R.color.key))
-            b.setOnClickListener { switchSession(name) }
-            b.setOnLongClickListener { confirmClose(name); true }
-            tabs.addView(b)
-            // A ✕ right after the active tab, so closing doesn't depend on knowing about long-press.
-            if (active) {
-                val x = layoutInflater.inflate(R.layout.tab_button, tabs, false) as Button
-                x.text = "✕"
-                x.minWidth = 0
-                x.minimumWidth = 0
-                x.setPadding(dp(12), 0, dp(12), 0)
-                x.contentDescription = "Close $name"
-                x.backgroundTintList = b.backgroundTintList
-                (b.layoutParams as LinearLayout.LayoutParams).marginEnd = dp(2)
-                x.setOnClickListener { confirmClose(name) }
-                tabs.addView(x)
+            val info = tabInfo[name]
+            tab.setBackgroundResource(if (active) R.drawable.tab_active else R.drawable.tab_inactive)
+            tab.findViewById<TextView>(R.id.tab_name).apply {
+                text = name
+                setTextColor(getColor(if (active) R.color.fg else R.color.muted))
             }
+            // State as a colored dot: amber working, green your turn, red waiting on approval.
+            tab.findViewById<TextView>(R.id.tab_dot).apply {
+                val (glyph, color) = when (info?.state) {
+                    TabInfo.State.WORKING -> "◐" to AMBER
+                    TabInfo.State.YOUR_TURN -> "●" to GREEN
+                    TabInfo.State.APPROVE -> "●" to RED
+                    null -> null to 0
+                }
+                visibility = if (glyph == null) View.GONE else View.VISIBLE
+                if (glyph != null) { text = glyph; setTextColor(color) }
+            }
+            val topic = info?.topic.orEmpty()
+            tab.findViewById<TextView>(R.id.tab_topic).apply {
+                text = topic
+                visibility = if (topic.isEmpty()) View.GONE else View.VISIBLE
+            }
+            tab.contentDescription = listOfNotNull(name, info?.state?.label, topic.ifEmpty { null })
+                .joinToString(", ")
+            tab.setOnClickListener { switchSession(name) }
+            tab.setOnLongClickListener { confirmClose(name); true }
+            // ✕ shows on the active tab, and on the others while the pointer is over them, so
+            // closing doesn't depend on knowing about long-press. Invisible (not gone) keeps
+            // tabs from changing width under the pointer.
+            val close = tab.findViewById<TextView>(R.id.tab_close)
+            close.contentDescription = "Close $name"
+            close.setOnClickListener { confirmClose(name) }
+            close.visibility = if (active) View.VISIBLE else View.INVISIBLE
+            if (!active) tab.setOnHoverListener { _, e ->
+                when (e.actionMasked) {
+                    android.view.MotionEvent.ACTION_HOVER_ENTER -> close.visibility = View.VISIBLE
+                    android.view.MotionEvent.ACTION_HOVER_EXIT -> close.visibility = View.INVISIBLE
+                }
+                false
+            }
+            tabs.addView(tab)
         }
     }
 
@@ -369,7 +391,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     private var tabInfo = emptyMap<String, TabInfo>()
 
     data class TabInfo(val state: State?, val topic: String) {
-        enum class State { WORKING, YOUR_TURN, APPROVE }
+        enum class State(val label: String) { WORKING("working"), YOUR_TURN("your turn"), APPROVE("needs approval") }
 
         companion object {
             /**
@@ -387,35 +409,6 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
                 return TabInfo(state, title.substring(sp + 1).trim())
             }
         }
-    }
-
-    /** "name · status" over a smaller topic line. */
-    private fun tabLabel(name: String, info: TabInfo?, active: Boolean): CharSequence {
-        val s = android.text.SpannableStringBuilder(name)
-        val (label, color) = when (info?.state) {
-            TabInfo.State.WORKING -> "◐ working" to AMBER
-            TabInfo.State.YOUR_TURN -> "● your turn" to GREEN
-            TabInfo.State.APPROVE -> "● approve?" to RED
-            null -> null to 0
-        }
-        if (label != null) {
-            s.append("  ")
-            val start = s.length
-            s.append(label)
-            // The active tab is accent-colored, so its status stays white but bold.
-            if (!active) s.setSpan(android.text.style.ForegroundColorSpan(color), start, s.length, 0)
-            s.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, s.length, 0)
-        }
-        val topic = info?.topic.orEmpty()
-        if (topic.isNotEmpty()) {
-            s.append('\n')
-            val start = s.length
-            s.append(if (topic.length > 30) topic.take(29).trimEnd() + "…" else topic)
-            s.setSpan(android.text.style.RelativeSizeSpan(0.8f), start, s.length, 0)
-            s.setSpan(android.text.style.ForegroundColorSpan(
-                if (active) Color.WHITE else getColor(R.color.muted)), start, s.length, 0)
-        }
-        return s
     }
 
     // ---- Microgestures --------------------------------------------------------
@@ -682,9 +675,15 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         }
     }
 
+    private val hideResult = Runnable { lastResult.visibility = View.GONE }
+
+    /** The last command's result, on the status line above the keys; successes fade after a while. */
     private fun showResult(text: String, color: Int) = runOnUiThread {
+        main.removeCallbacks(hideResult)
         lastResult.text = text
         lastResult.setTextColor(color)
+        lastResult.visibility = View.VISIBLE
+        if (color == GREEN) main.postDelayed(hideResult, 8000)
     }
 
     private val hideDictation = Runnable { dictationStatus.visibility = View.GONE }
@@ -702,26 +701,43 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
 
     private fun buildKeyBar(bar: LinearLayout) {
         fun send(vararg names: String): () -> Unit = { names.forEach(input::key) }
-        val keys = listOf(
-            "Esc" to send("Escape"),
-            "Ctrl-C" to send("C-c"),
-            // Esc and Ctrl-C interrupt Claude while it's working; Clear only empties the prompt.
-            "Clear" to input::clearPrompt,
-            "Tab" to send("Tab"),
-            "⇧Tab" to send("BTab"),
-            "←" to send("Left"),
-            "↑" to send("Up"),
-            "↓" to send("Down"),
-            "→" to send("Right"),
-            "⏎" to send("Enter"),
-            "Paste" to ::pasteClipboard,
+        // Groups with a gap between them: interrupt/edit keys, arrows, then paste and send.
+        // Weights make the word keys wider than the arrows.
+        class Key(val label: String, val weight: Float, val action: () -> Unit, val primary: Boolean = false)
+        val groups = listOf(
+            listOf(
+                Key("Esc", 1f, send("Escape")),
+                Key("Ctrl-C", 1.3f, send("C-c")),
+                // Esc and Ctrl-C interrupt Claude while it's working; Clear only empties the prompt.
+                Key("Clear", 1.2f, input::clearPrompt),
+                Key("Tab", 1f, send("Tab")),
+                Key("⇧Tab", 1.1f, send("BTab")),
+            ),
+            listOf(
+                Key("←", 0.75f, send("Left")),
+                Key("↑", 0.75f, send("Up")),
+                Key("↓", 0.75f, send("Down")),
+                Key("→", 0.75f, send("Right")),
+            ),
+            listOf(
+                Key("Paste", 1.2f, ::pasteClipboard),
+                Key("⏎", 1.2f, send("Enter"), primary = true),
+            ),
         )
-        for ((label, action) in keys) {
-            val b = layoutInflater.inflate(R.layout.key_button, bar, false) as Button
-            b.text = label
-            b.isFocusable = false // keep keyboard focus on the terminal
-            b.setOnClickListener { action() }
-            bar.addView(b)
+        for ((g, keys) in groups.withIndex()) {
+            for ((i, k) in keys.withIndex()) {
+                val b = layoutInflater.inflate(R.layout.key_button, bar, false) as Button
+                b.text = k.label
+                b.isFocusable = false // keep keyboard focus on the terminal
+                b.setOnClickListener { k.action() }
+                if (k.primary) { b.setBackgroundResource(R.drawable.btn_accent); b.setTextColor(Color.WHITE) }
+                (b.layoutParams as LinearLayout.LayoutParams).apply {
+                    weight = k.weight
+                    marginStart = if (i == 0) dp(if (g == 0) 16 else 14) else 0
+                    marginEnd = if (i == keys.lastIndex) 0 else dp(6)
+                }
+                bar.addView(b)
+            }
         }
     }
 

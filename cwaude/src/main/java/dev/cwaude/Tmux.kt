@@ -11,7 +11,8 @@ import kotlin.concurrent.thread
 
 object Tmux {
     /** Size of every session; the mirror is laid out for it. */
-    const val COLS = 110
+    // 96 columns: TerminalView fits them to the panel width, which comes to ~14sp, readable in VR.
+    const val COLS = 96
     const val ROWS = 34
     /** Scrollback lines per history request. */
     const val HISTORY_CHUNK = 500

@@ -4,21 +4,26 @@
     android:layout_height="match_parent"
     android:background="@color/bg"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:paddingStart="16dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="14dp">
 
+    <!-- One top bar, like a browser: name and status, the tabs, then reconnect and settings. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
+        android:gravity="bottom"
         android:orientation="horizontal">
 
         <TextView
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="40dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center_vertical"
             android:text="@string/app_name"
             android:textColor="@color/accent"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+            android:textSize="20sp" />
 
         <!-- One dot for the whole setup: "Ready" when everything's up, otherwise what isn't.
              Tap it to fix the first problem (or see the checklist). -->
@@ -26,46 +31,20 @@
             android:id="@+id/status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="14dp"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="14dp"
+            android:layout_marginBottom="9dp"
             android:background="@drawable/panel"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="4dp"
-            android:text="○ Checking…"
-            android:textColor="@color/muted"
-            android:textSize="14sp" />
-
-        <!-- Result of the last command; lives in the header so it never crowds the key bar. -->
-        <TextView
-            android:id="@+id/last_result"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_weight="1"
+            android:maxWidth="260dp"
             android:ellipsize="end"
-            android:maxLines="2"
+            android:maxLines="1"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="3dp"
+            android:text="○ Checking…"
             android:textColor="@color/muted"
             android:textSize="13sp" />
 
-        <Button
-            android:id="@+id/reconnect"
-            style="@style/QcButton.Secondary"
-            android:text="Reconnect" />
-
-
-        <Button
-            android:id="@+id/settings"
-            style="@style/QcButton.Secondary"
-            android:text="⚙" />
-    </LinearLayout>
-
-    <!-- One tab per tmux session. Tap to switch, ✕ (or long-press) to close, + for a new Claude. -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
+        <!-- One tab per tmux session. Tap to switch, ✕ (or long-press) to close, + for a new Claude. -->
         <HorizontalScrollView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -73,34 +52,63 @@
             android:scrollbars="none">
 
             <LinearLayout
-                android:id="@+id/tabs"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal" />
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/tabs"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+
+                <Button
+                    android:id="@+id/new_tab"
+                    style="@style/QcButton.Icon"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginBottom="2dp"
+                    android:contentDescription="New tab"
+                    android:focusable="false"
+                    android:text="＋"
+                    android:textSize="18sp" />
+            </LinearLayout>
         </HorizontalScrollView>
 
         <Button
-            android:id="@+id/new_tab"
-            style="@style/QcTab"
-            android:layout_marginStart="6dp"
-            android:layout_marginEnd="0dp"
-            android:text="＋" />
+            android:id="@+id/reconnect"
+            style="@style/QcButton.Icon"
+            android:layout_marginBottom="4dp"
+            android:contentDescription="Reconnect adb"
+            android:text="⟳" />
+
+        <Button
+            android:id="@+id/settings"
+            style="@style/QcButton.Icon"
+            android:layout_marginBottom="4dp"
+            android:contentDescription="Settings"
+            android:text="⚙" />
     </LinearLayout>
 
     <!-- The Claude tmux pane, redrawn whenever it changes; tap it to type. -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="6dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:background="@drawable/term_frame"
+        android:padding="1dp">
 
     <ScrollView
         android:id="@+id/term_scroll"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/term_bg"
         android:fillViewport="true"
-        android:padding="8dp">
+        android:paddingStart="14dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="10dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -131,17 +139,38 @@
     </ScrollView>
     </FrameLayout>
 
-    <!-- Dictation progress (listening / transcribing / done), right above the mic button. -->
-    <TextView
-        android:id="@+id/dictation_status"
+    <!-- Status line: dictation progress, and the result of the last command (reconnect, …). -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:textSize="13sp"
-        android:visibility="gone" />
+        android:orientation="horizontal">
 
-    <!-- Tap the terminal (or ⌨) to type into Claude; a hardware keyboard works once it has focus. -->
+        <TextView
+            android:id="@+id/dictation_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/last_result"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="end"
+            android:maxLines="1"
+            android:textColor="@color/muted"
+            android:textSize="13sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Tap the terminal (or ⌨) to type into Claude; a hardware keyboard works once it has focus.
+         Keys come in groups: input, editing keys, arrows, then send. -->
     <LinearLayout
+        android:id="@+id/keybar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
@@ -157,16 +186,9 @@
         <Button
             android:id="@+id/keyboard"
             style="@style/QcButton.Secondary"
-            android:layout_marginEnd="8dp"
-            android:minWidth="64dp"
+            android:layout_marginStart="6dp"
+            android:contentDescription="Show keyboard"
+            android:minWidth="56dp"
             android:text="⌨" />
-
-        <!-- Keys share the rest of the width evenly. -->
-        <LinearLayout
-            android:id="@+id/keybar"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="horizontal" />
     </LinearLayout>
 </LinearLayout>
