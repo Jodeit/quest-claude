@@ -67,7 +67,16 @@ echo "Downloading $artifact from run $run…"
 gh run download "$run" --name "$artifact" --dir dist
 
 echo "Installing on ${ANDROID_SERIAL:-default device}…"
-adb install -r -g "dist/$apk"
+if ! out=$(adb install -r -g "dist/$apk" 2>&1); then
+  echo "$out" >&2
+  if grep -q UPDATE_INCOMPATIBLE <<<"$out"; then
+    echo "The installed $pkg is signed with a different key (Qlaude builds moved from the shared" >&2
+    echo "debug key to the private release key). Updating means uninstalling first, which deletes" >&2
+    echo "its Ubuntu, files and Claude login:  adb uninstall $pkg && $0 $*" >&2
+  fi
+  exit 1
+fi
+echo "$out"
 [ "$pkg" = dev.questclaude ] &&
   { adb shell pm grant dev.questclaude com.termux.permission.RUN_COMMAND 2>/dev/null || true; }
 # Lets the app turn Wireless debugging back on after reboots (replaces Shizuku).

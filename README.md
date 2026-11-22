@@ -78,8 +78,10 @@ GitHub Actions builds the APK on every push to `main`; tags `v*` also publish a 
 scripts/install.sh --qlaude   # latest successful main build
 ```
 
-`debug.keystore` is a throwaway debug key committed on purpose, so every CI build installs over the
-previous one.
+CI signs Qlaude with a private release key kept in the repo's secrets (`QLAUDE_KEYSTORE_B64`,
+`QLAUDE_KEYSTORE_PASSWORD`), so only builds from this repo can update an installed Qlaude. Builds
+without those secrets (forks, pull requests) use the committed throwaway `debug.keystore` and won't
+install over a release.
 
 ## Support
 

@@ -46,10 +46,22 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        // The private Qlaude key, for builds people download. CI sets these from repo secrets;
+        // without them (forks, pull requests) builds fall back to the debug key.
+        create("qlaude") {
+            System.getenv("QLAUDE_KEYSTORE")?.let { storeFile = file(it) }
+            storeType = "pkcs12"
+            storePassword = System.getenv("QLAUDE_KEYSTORE_PASSWORD")
+            keyAlias = "qlaude"
+            keyPassword = System.getenv("QLAUDE_KEYSTORE_PASSWORD")
+        }
     }
 
     buildTypes {
-        debug { signingConfig = signingConfigs.getByName("debug") }
+        debug {
+            signingConfig = signingConfigs.getByName(
+                if (System.getenv("QLAUDE_KEYSTORE").isNullOrEmpty()) "debug" else "qlaude")
+        }
     }
 
     compileOptions {

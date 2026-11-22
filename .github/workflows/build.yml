@@ -100,7 +100,21 @@ jobs:
           sudo apt-get install -y -qq patchelf
           scripts/fetch-ubuntu-prebuilts.sh cwaude
 
+      # Sign with the private Qlaude key when the repo secrets are there (not on forks' PRs).
+      - name: Unpack the Qlaude signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.QLAUDE_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/qlaude.p12"
+            echo "QLAUDE_KEYSTORE=$RUNNER_TEMP/qlaude.p12" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::QLAUDE_KEYSTORE_B64 is not set; refusing to release a debug-signed APK"; exit 1
+          fi
+
       - name: Build Cwaude APK
+        env:
+          QLAUDE_KEYSTORE_PASSWORD: ${{ secrets.QLAUDE_KEYSTORE_PASSWORD }}
         run: gradle --no-daemon :cwaude:assembleDebug
 
       - name: Rename APK
