@@ -85,6 +85,7 @@ class TerminalView @JvmOverloads constructor(
             val at = off - start - text.substring(start, off).count { it == '\n' }
             return URL.findAll(joined).firstOrNull { at in it.range }?.value?.trimEnd('.', ',', ')')
         }
+    }
 
     init {
         isFocusable = true
