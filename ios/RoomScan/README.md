@@ -30,9 +30,36 @@ On the server side, the scan shows up in `list_scans` with `stage: "live"` while
 
 ## Installing it
 
-There's no App Store build. Two ways on:
+There's no App Store build. Three ways on:
 
-**From CI, no Mac needed.** Every push that touches `ios/` builds an unsigned
+**TestFlight, no computer at all** (needs the paid Apple Developer Program, $99 a year). CI signs
+the app with your account and uploads every build; the TestFlight app installs it. Builds last 90
+days and update by themselves. Everything below works from the iPhone:
+
+1. **Join the Developer Program**: the *Apple Developer* app → Account → Enroll. Approval can
+   take a day or two.
+2. **Make the app record**: [App Store Connect](https://appstoreconnect.apple.com) → Apps → **+** →
+   New App. Platform iOS, name *RoomScan* (any unused name), bundle ID `dev.qlaude.roomscan`
+   (register it at developer.apple.com → Identifiers → **+** → App IDs if it isn't offered),
+   SKU anything.
+3. **Make an API key**: App Store Connect → Users and Access → Integrations → App Store Connect API
+   → Team Keys → **+**, access **Admin** (Xcode's cloud signing needs it to make the certificate).
+   Note the **Key ID** and the **Issuer ID** above the list, and download the `.p8` file (one chance;
+   it lands in Files). Your **Team ID** is at developer.apple.com → Account → Membership details.
+4. **Give them to GitHub**: in Safari (request the desktop site), the repo → Settings → Secrets and
+   variables → Actions → New repository secret, four times:
+   `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8` (the whole `.p8` file's text,
+   including the BEGIN/END lines; open it in Files, select all, copy).
+5. **Build**: Actions → *RoomScan iOS* → Run workflow (or push anything under `ios/`). The
+   *testflight* job uploads; Apple takes 5–30 minutes to process it.
+6. **Install**: App Store Connect → your app → TestFlight → Internal Testing → **+** group, add
+   yourself. Install the **TestFlight** app, accept the invite, tap Install.
+
+Internal testers (up to 100 people on your account's team) don't need Apple's beta review. If a
+build is held for *Missing Compliance*, it's already answered in the app (standard encryption only);
+re-run, or answer "None" in App Store Connect.
+
+**Sideload, with a PC or Mac for the first install.** Every push that touches `ios/` builds an unsigned
 `RoomScan-unsigned.ipa` (Actions → *RoomScan iOS* → artifacts). Sideload it with
 [Sideloadly](https://sideloadly.io) or AltStore, which re-sign it with your Apple ID. With a free
 Apple ID it runs for 7 days, then needs re-signing; a paid developer account gives a year.
