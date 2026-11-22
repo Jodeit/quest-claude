@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A key in the dock, or a rail button: no fill until the pointer is over it. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true"><shape><solid android:color="@color/key_pressed" /><corners android:radius="26dp" /></shape></item>
+    <item android:state_hovered="true"><shape><solid android:color="@color/key_hover" /><corners android:radius="26dp" /></shape></item>
+    <item><shape><solid android:color="@android:color/transparent" /><corners android:radius="26dp" /></shape></item>
+</selector>

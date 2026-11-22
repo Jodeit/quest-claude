@@ -11,9 +11,10 @@ import kotlin.concurrent.thread
 
 object Tmux {
     /** Size of every session; the mirror is laid out for it. */
-    // 96 columns: TerminalView fits them to the panel width, which comes to ~14sp, readable in VR.
-    const val COLS = 96
-    const val ROWS = 34
+    // 84 x 26: TerminalView fits the columns to the card beside the side rail, which comes to
+    // ~18sp of JetBrains Mono at the default panel size, and 26 rows of that fill the card.
+    const val COLS = 84
+    const val ROWS = 26
     /** Scrollback lines per history request. */
     const val HISTORY_CHUNK = 500
 

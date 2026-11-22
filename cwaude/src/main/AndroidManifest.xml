@@ -27,11 +27,11 @@
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard">
-            <!-- Default panel size on Quest. 1020dp fits Claude's 110-column ─ rules at 12sp
-                 plus 48dp of padding. -->
+            <!-- Default panel size on Quest: the side rail plus a card wide enough for Tmux.COLS
+                 columns at ~18sp, and tall enough for Tmux.ROWS rows of it. -->
             <layout
-                android:defaultWidth="1020dp"
-                android:defaultHeight="820dp" />
+                android:defaultWidth="1280dp"
+                android:defaultHeight="900dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

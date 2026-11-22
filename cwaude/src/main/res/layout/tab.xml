@@ -1,60 +1,68 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One browser-style tab: status dot, Claude's topic (or the tmux name), repo, and ✕ on the active tab. -->
+<!-- One session in the side rail: status dot, Claude's topic (or the tmux name) and ✕ on the
+     first line; the repo and what Claude is doing under it. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="wrap_content"
-    android:layout_height="40dp"
-    android:layout_marginEnd="4dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="4dp"
     android:background="@drawable/tab_inactive"
     android:clickable="true"
     android:focusable="false"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingStart="14dp"
-    android:paddingEnd="8dp">
+    android:minHeight="56dp"
+    android:orientation="vertical"
+    android:paddingStart="12dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="6dp"
+    android:paddingBottom="8dp">
 
-    <TextView
-        android:id="@+id/tab_dot"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="8dp"
-        android:text="●"
-        android:textSize="12sp"
-        android:visibility="gone" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
-    <TextView
-        android:id="@+id/tab_name"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:ellipsize="end"
-        android:fontFamily="sans-serif-medium"
-        android:maxLines="1"
-        android:maxWidth="240dp"
-        android:textColor="@color/muted"
-        android:textSize="15sp" />
+        <TextView
+            android:id="@+id/tab_dot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:text="●"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tab_name"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:textColor="@color/muted"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tab_close"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/tab_close"
+            android:clickable="true"
+            android:focusable="false"
+            android:gravity="center"
+            android:text="✕"
+            android:textColor="@color/muted"
+            android:textSize="13sp"
+            android:visibility="invisible" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/tab_topic"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
         android:ellipsize="end"
         android:maxLines="1"
-        android:maxWidth="140dp"
         android:textColor="@color/muted"
-        android:textSize="13sp"
+        android:textSize="12sp"
         android:visibility="gone" />
-
-    <TextView
-        android:id="@+id/tab_close"
-        android:layout_width="28dp"
-        android:layout_height="28dp"
-        android:layout_marginStart="6dp"
-        android:background="@drawable/tab_close"
-        android:clickable="true"
-        android:focusable="false"
-        android:gravity="center"
-        android:text="✕"
-        android:textColor="@color/muted"
-        android:textSize="13sp"
-        android:visibility="invisible" />
 </LinearLayout>

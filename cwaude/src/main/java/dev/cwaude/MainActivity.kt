@@ -56,7 +56,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
     /** Whisper runs here so it never holds up anything else. */
     private val speech = Executors.newSingleThreadExecutor()
     private var sessions = emptyList<String>()
-    private lateinit var tabs: TabFlow
+    private lateinit var tabs: LinearLayout
     private var started = false
     @Volatile private var adbListening = false
     private var connection = "starting"
@@ -368,9 +368,11 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
                 visibility = if (glyph == null) View.GONE else View.VISIBLE
                 if (glyph != null) { text = glyph; setTextColor(color) }
             }
+            // Under it, the repo and what Claude is doing: "quest-claude · working".
             tab.findViewById<TextView>(R.id.tab_topic).apply {
-                text = repoOf(name)
-                visibility = if (topic.isEmpty()) View.GONE else View.VISIBLE
+                text = listOfNotNull(repoOf(name).takeIf { topic.isNotEmpty() }, info?.state?.label)
+                    .joinToString(" · ")
+                visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
             }
             tab.contentDescription = listOfNotNull(name, info?.state?.label, topic.ifEmpty { null })
                 .joinToString(", ")
@@ -741,12 +743,12 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
                 b.setOnClickListener { k.action() }
                 if (k.primary) {
                     b.setBackgroundResource(R.drawable.btn_accent)
-                    b.setTextColor(Color.WHITE)
+                    b.setTextColor(getColor(R.color.on_accent))
                     b.setTypeface(b.typeface, android.graphics.Typeface.BOLD)
                 }
                 (b.layoutParams as LinearLayout.LayoutParams).apply {
                     weight = k.weight
-                    marginStart = if (i == 0) dp(if (g == 0) 16 else 14) else 0
+                    marginStart = if (i == 0) dp(if (g == 0) 12 else 10) else 0
                     marginEnd = if (i == keys.lastIndex) 0 else dp(6)
                 }
                 bar.addView(b)

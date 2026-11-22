@@ -1,15 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Spatial glass: warm, see-through surfaces over the room, light text, one clay accent. -->
 <resources>
-    <color name="bg">#16130F</color>
-    <color name="panel">#221E19</color>
-    <color name="panel_stroke">#3A332B</color>
-    <color name="fg">#F3EEE6</color>
-    <color name="muted">#A79E92</color>
-    <color name="accent">#D97757</color>
-    <color name="key">#2C2720</color>
-    <color name="term_bg">#0E0B09</color>
-    <color name="key_hover">#373028</color>
-    <color name="key_pressed">#463D33</color>
-    <color name="accent_hover">#E38A6C</color>
-    <color name="accent_pressed">#C0623F</color>
+    <!-- The window behind everything; the side rail sits straight on it. -->
+    <color name="bg">#D914100C</color>
+    <!-- Raised glass: the terminal card and the key dock. -->
+    <color name="glass">#E60F0C09</color>
+    <color name="dock">#F01C1712</color>
+    <color name="glass_stroke">#1FFFFFFF</color>
+    <color name="panel">#1AFFFFFF</color>
+    <color name="panel_stroke">#26FFFFFF</color>
+    <color name="fg">#F5F0EA</color>
+    <color name="muted">#A89E92</color>
+    <color name="accent">#F2A27E</color>
+    <color name="on_accent">#1A120D</color>
+    <!-- Opaque stand-in for the card, for Ansi's default background (inverse video). -->
+    <color name="term_bg">#110D0A</color>
+    <color name="key">#14FFFFFF</color>
+    <color name="key_hover">#1FFFFFFF</color>
+    <color name="key_pressed">#33FFFFFF</color>
+    <color name="accent_hover">#F7B596</color>
+    <color name="accent_pressed">#D9875F</color>
 </resources>
