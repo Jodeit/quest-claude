@@ -24,6 +24,9 @@ so always pull before starting work.
   foreground service, and talks to it over one `tmux -C` control-mode pipe (`Tmux.kt`). Its UI
   files (`Ansi`, `TapTargets`, `TerminalView`, `Dictation`) started as copies of `app/`'s; fix
   bugs in both until Quest Claude is retired. Whisper's C code is shared from `app/src/main/cpp`.
+- `spatial/` — roomscan: RoomPlan (iPhone LiDAR) scans → IFC4 via IfcOpenShell, served over MCP
+  (stdio or HTTP with a bearer token). Python; `scripts/roomscan` wraps it. Tests run in CI
+  (`.github/workflows/spatial.yml`) and locally with pytest.
 - `spike/` — the exec spike that proved Cwaude's approach; throwaway.
 - `scripts/install.sh` — download the latest CI APK and `adb install` it (`--cwaude` for Cwaude).
 

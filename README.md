@@ -83,6 +83,13 @@ CI signs Qlaude with a private release key kept in the repo's secrets (`QLAUDE_K
 without those secrets (forks, pull requests) use the committed throwaway `debug.keystore` and won't
 install over a release.
 
+## Room scans to IFC (experimental)
+
+`spatial/` has **roomscan**, an MCP server that turns an iPhone Pro room scan (Apple RoomPlan,
+LiDAR) into an IFC4 building model, with any LLM checking and enriching it: walls with thickness,
+doors and windows cut into them, spaces with areas, furniture as IFC classes. It runs on the headset
+(Qlaude keeps its Ubuntu alive) or anywhere else with Python. See [spatial/README.md](spatial/README.md).
+
 ## Support
 
 If Qlaude saves you some time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/jodeit) ☕.

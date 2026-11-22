@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# roomscan — Apple RoomPlan scans -> IFC building models, served to any LLM over MCP.
+# `roomscan setup` once (makes a venv with ifcopenshell + mcp), then `roomscan help`.
+# See spatial/README.md.
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/spatial"
+venv="${ROOMSCAN_VENV:-$here/.venv}"
+
+if [ "${1:-}" = setup ]; then
+  python3 -m venv "$venv" || { echo "roomscan: needs python3-venv (apt install -y python3-venv)" >&2; exit 1; }
+  "$venv/bin/pip" install -q --upgrade pip
+  "$venv/bin/pip" install -r "$here/requirements.txt"
+  echo "roomscan: ready. Claude Code: claude mcp add roomscan -- roomscan serve"
+  exit 0
+fi
+if [ "${1:-}" = help ] || [ $# -eq 0 ]; then set -- --help; fi
+[ -x "$venv/bin/python" ] || { echo "roomscan: run 'roomscan setup' first (makes $venv)" >&2; exit 1; }
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec "$venv/bin/python" -m roomscan "$@"

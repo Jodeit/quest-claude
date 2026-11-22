@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup inside proot Ubuntu on the headset. Safe to re-run.
-#   - puts `quest` on PATH
+#   - puts `quest` and `roomscan` on PATH
 #   - installs the `quest` skill for every Claude session (~/.claude/skills/quest)
 #   - sets the Claude status line (model, context, plan usage) unless you have your own
 #   - sets ANDROID_SERIAL and puts ~/.local/bin (claude) on PATH for login shells
@@ -15,6 +15,10 @@ if [ -x "$repo/scripts/quest" ]; then
 else
   echo "warning: $repo/scripts/quest is missing; commit it from the headset" >&2
 fi
+
+# roomscan: RoomPlan scans -> IFC over MCP. Its Python deps are big, so `roomscan setup` is separate.
+ln -sf "$repo/scripts/roomscan" /usr/local/bin/roomscan
+echo "roomscan -> /usr/local/bin/roomscan (run 'roomscan setup' once to install its deps)"
 
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$repo/skills/quest" "$HOME/.claude/skills/quest"

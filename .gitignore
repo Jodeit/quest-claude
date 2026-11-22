@@ -6,3 +6,6 @@ local.properties
 *.apk
 dist/
 .claude/worktrees/
+spatial/.venv/
+__pycache__/
+.pytest_cache/

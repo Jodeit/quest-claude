@@ -1,0 +1,33 @@
+name: roomscan tests
+
+on:
+  push:
+    branches: [main]
+    paths: ["spatial/**", "scripts/roomscan", ".github/workflows/spatial.yml"]
+  pull_request:
+    paths: ["spatial/**", "scripts/roomscan", ".github/workflows/spatial.yml"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -r spatial/requirements.txt pytest
+      - name: Test
+        run: python -m pytest -q spatial/tests
+      - name: Convert the sample
+        run: |
+          cd spatial
+          python -m roomscan convert samples/living-room.json /tmp/living-room.ifc
+          python -m roomscan plan samples/living-room.json /tmp/living-room-plan.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sample-model
+          path: |
+            /tmp/living-room.ifc
+            /tmp/living-room-plan.png
