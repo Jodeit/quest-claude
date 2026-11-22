@@ -99,3 +99,8 @@ That downloads the artifact with `gh`, then `adb install -r -g` and grants the T
 
 `debug.keystore` is a throwaway debug key committed on purpose, so every CI build installs over the
 previous one. Don't use it for anything you publish.
+
+## Support
+
+If Qlaude saves you some time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/jodeit) ☕.
+There's a link in the app's ⚙ Settings too.

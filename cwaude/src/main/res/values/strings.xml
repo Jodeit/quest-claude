@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Qlaude</string>
+    <string name="kofi_url">https://ko-fi.com/jodeit</string>
     <string name="setup_help">Qlaude runs Claude Code in its own Ubuntu, with no Termux: it starts tmux and Claude itself, keeps them running in the background (see the notification), and shows the session live above the key bar.\n\nOn start it also turns on Wireless debugging and reconnects adb (quest up). quest comes from the quest-claude repo: clone it in a Qlaude tab and run scripts/setup.sh, then pair adb once with \"quest pair\" (see README).\n\nTapping \"· remote\" at the end of Claude\'s mode line runs /remote-control in the current tab, so you can drive that tab\'s Claude from claude.ai/code or the Claude app; tap it again in that tab to disconnect.</string>
     <string name="dictate">🎤 Dictate</string>
 </resources>

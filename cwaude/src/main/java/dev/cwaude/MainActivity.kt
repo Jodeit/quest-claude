@@ -924,6 +924,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         val session = v.findViewById<EditText>(R.id.session).apply { setText(settings.session) }
         val launch = v.findViewById<EditText>(R.id.launch).apply { setText(settings.launchCommand) }
         val reconnect = v.findViewById<EditText>(R.id.reconnect_cmd).apply { setText(settings.reconnectCommand) }
+        v.findViewById<TextView>(R.id.coffee).setOnClickListener { openLink(getString(R.string.kofi_url)) }
         AlertDialog.Builder(this)
             .setTitle("Settings")
             .setView(v)
