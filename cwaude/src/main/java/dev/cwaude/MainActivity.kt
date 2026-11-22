@@ -88,6 +88,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         dictationStatus = findViewById(R.id.dictation_status)
         term = findViewById(R.id.term)
         termScroll = findViewById(R.id.term_scroll)
+        followBottom()
         history = findViewById(R.id.history)
 
         dictation = Dictation(this)
@@ -211,10 +212,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         if (term.hasSelection()) { held = Triple(f, raw, styled); return }
         held = null
         lastPane = raw
-        val atBottom = !termScroll.canScrollVertically(1)
         shownLines = raw.split('\n')
-        term.text = TapTargets.mark(styled)
-        if (atBottom) termScroll.post { termScroll.fullScroll(View.FOCUS_DOWN) }
+        term.text = TapTargets.mark(styled) // followBottom keeps it at the bottom if pinned
     }
 
     // ---- Scrollback -----------------------------------------------------------
@@ -249,18 +248,50 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         if (h.session != histSession || histSession != settings.session) return
         if (h.reset) { resetHistory(); return } // the next frame fetches it again
         if (h.from != histCount || h.lines.isEmpty()) return
-        val atBottom = !termScroll.canScrollVertically(1)
         if (history.textSize != term.textSize) history.setTextSize(TypedValue.COMPLEX_UNIT_PX, term.textSize)
         if (histCount > 0) history.append("\n")
         history.append(ansi.render("\u001B[0m" + h.lines.joinToString("\n"), null))
         history.visibility = View.VISIBLE
         histCount += h.lines.size
-        if (atBottom) scrollToBottom()
         if (histCount < h.size) fetchHistory()
     }
 
-    private fun scrollToBottom() =
-        termScroll.post { termScroll.scrollTo(0, termScroll.getChildAt(0).height) }
+    /**
+     * Whether the terminal follows new output. Only your own scrolling (touch, thumbstick, wheel)
+     * unpins it, and getting back to the bottom pins it again. Deciding this from the scroll
+     * position when output arrives instead lost the bottom whenever a frame landed mid-scroll.
+     */
+    private var pinned = true
+    /** When you last touched or wheeled the terminal. */
+    private var userScrollAt = 0L
+
+    private fun scrollToBottom() { pinned = true; snapToBottom() }
+
+    private fun snapToBottom() = termScroll.scrollTo(0, termScroll.getChildAt(0).height)
+
+    private fun followBottom() {
+        // After every layout (new output, scrollback, keyboard, resize): stay at the bottom if
+        // pinned. This runs before drawing, so the old position never shows.
+        termScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> if (pinned) snapToBottom() }
+        termScroll.setOnScrollChangeListener { _, _, y, _, oldY ->
+            val atBottom = !termScroll.canScrollVertically(1)
+            val byUser = SystemClock.uptimeMillis() - userScrollAt < 1500
+            when {
+                atBottom -> pinned = true
+                byUser && y < oldY -> pinned = false
+                pinned -> termScroll.post { if (pinned) snapToBottom() } // the view moved itself
+            }
+        }
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_MOVE) {
+            val r = android.graphics.Rect()
+            if (termScroll.getGlobalVisibleRect(r) && r.contains(event.rawX.toInt(), event.rawY.toInt()))
+                userScrollAt = SystemClock.uptimeMillis()
+        }
+        return super.dispatchTouchEvent(event)
+    }
 
     /** Raw (ANSI) lines of the pane on screen, for [previewScroll]. */
     private var shownLines: List<String>? = null
@@ -405,6 +436,7 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
         val h = event.getAxisValue(MotionEvent.AXIS_HSCROLL)
         val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
         val now = event.eventTime
+        userScrollAt = SystemClock.uptimeMillis()
         if (now - gestureLastAt > 300) { gestureH = 0f; gestureV = 0f; gestureSwitched = false }
         gestureLastAt = now
         gestureH += h
