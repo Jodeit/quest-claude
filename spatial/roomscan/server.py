@@ -13,7 +13,7 @@ import secrets
 from typing import Any
 
 from mcp.server.mcpserver import Context, Image, MCPServer
-from mcp.server.subscriptions import ResourcesListChanged
+from mcp.server.subscriptions import ResourcesListChanged, ResourceUpdated
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
@@ -28,6 +28,9 @@ Room scans (Apple RoomPlan exports) become IFC4 building models here.
 Typical flow:
 1. list_scans (or import_scan a RoomPlan JSON file) and get_scan to read one: spaces, walls,
    doors, windows and furniture with sizes and positions in metres, plus warnings.
+   A scan whose stage is "live" is still being captured by a phone and updates every few
+   seconds: read it to coach the person scanning ("the north wall is missing"), but edit only
+   once it is "final".
 2. get_plan to look at the floor plan and check the scan makes sense.
 3. Fix and enrich with edit_element (rename, reclassify, wall thickness, remove a false detection),
    set_properties, add_element (things the scan missed: radiators, columns, built-ins),
@@ -88,7 +91,13 @@ def make_server(store: Store, public_url: str | None = None) -> MCPServer:
         thickness, openings), doors/windows (host wall, offset, size, sill), objects (category, IFC class,
         centre, size, rotation), anything added, notes and warnings. Metres; z is above the floor."""
         check(scan_id)
-        return summarise(store.capture(scan_id), store.edits(scan_id))
+        out = summarise(store.capture(scan_id), store.edits(scan_id))
+        meta = next((m for m in store.list() if m["id"] == scan_id), {})
+        out["stage"] = meta.get("stage", "final")
+        if out["stage"] == "live":
+            out["warnings"] = ["The phone is still scanning: this is a live snapshot, and element ids "
+                               "can change until the final upload. Hold edits until then."] + out["warnings"]
+        return out
 
     @mcp.tool()
     def get_plan(scan_id: str, story: int = 0) -> Image | str:
@@ -287,11 +296,18 @@ def make_server(store: Store, public_url: str | None = None) -> MCPServer:
     async def health(_: Request) -> Response:
         return JSONResponse({"ok": True, "scans": len(store.list())})
 
+    def stage_of(request: Request) -> str:
+        return "live" if request.query_params.get("stage") == "live" else "final"
+
+    @mcp.custom_route("/scans", methods=["GET"])
+    async def list_route(_: Request) -> Response:
+        return JSONResponse({"scans": store.list()})
+
     @mcp.custom_route("/scans", methods=["POST"])
     async def upload(request: Request) -> Response:
         try:
             data = await request.json()
-            scan_id = store.add(data, request.query_params.get("name"), source="http")
+            scan_id = store.add(data, request.query_params.get("name"), source="http", stage=stage_of(request))
         except Exception as ex:
             return JSONResponse({"error": f"not a RoomPlan export: {ex}"}, status_code=400)
         try:
@@ -299,6 +315,25 @@ def make_server(store: Store, public_url: str | None = None) -> MCPServer:
         except Exception:
             pass
         return JSONResponse({"scan_id": scan_id}, status_code=201)
+
+    @mcp.custom_route("/scans/{scan_id}", methods=["PUT"])
+    async def update(request: Request) -> Response:
+        """A newer capture of a scan already here: the phone sends one every couple of seconds while
+        scanning (?stage=live) and the processed result at the end (stage final)."""
+        scan_id = request.path_params["scan_id"]
+        try:
+            store.dir(scan_id)
+        except ScanNotFound:
+            return JSONResponse({"error": "no such scan"}, status_code=404)
+        try:
+            meta = store.replace(scan_id, await request.json(), stage_of(request))
+        except Exception as ex:
+            return JSONResponse({"error": f"not a RoomPlan export: {ex}"}, status_code=400)
+        try:
+            await mcp._subscriptions.publish(ResourceUpdated(uri=_summary_uri(scan_id)))
+        except Exception:
+            pass
+        return JSONResponse({"scan_id": scan_id, "stage": meta["stage"], "updates": meta["updates"]})
 
     @mcp.custom_route("/scans/{scan_id}/model.ifc", methods=["GET"])
     async def download(request: Request) -> Response:

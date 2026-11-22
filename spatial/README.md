@@ -9,6 +9,9 @@ iPhone (RoomPlan export) ──POST /scans──▶ roomscan MCP server ◀─�
                                               └─▶ IfcOpenShell ─▶ model.ifc
 ```
 
+The phone side is [RoomScan](../ios/RoomScan/README.md), an iOS app that streams the room to the
+server while you scan and sends the processed result at the end.
+
 The server runs anywhere Python does: the Quest headset's Ubuntu (Qlaude keeps it running), a Mac,
 a PC, a cloud box.
 
@@ -44,7 +47,9 @@ except `GET /health` needs `Authorization: Bearer <token>`.
 | Endpoint | What it does |
 |---|---|
 | `POST /mcp` | MCP over streamable HTTP |
-| `POST /scans?name=Lounge` | Upload a RoomPlan export (JSON body); how a phone app pushes scans |
+| `GET /scans` | The scans stored here |
+| `POST /scans?name=Lounge` | Upload a RoomPlan export (JSON body); add `&stage=live` while still scanning |
+| `PUT /scans/<id>` | A newer capture of the same scan (`?stage=live` while scanning, none for the final one) |
 | `GET /scans/<id>/model.ifc` | Download the last built model |
 | `GET /health` | Liveness, no token |
 
@@ -66,6 +71,10 @@ Tunnel, Tailscale Funnel) and pass `--public-url https://…` so `build_ifc` ret
 
 Resources: `scans://index`, `scan://<id>/summary` (updates are announced to subscribers),
 `scan://<id>/plan.svg`.
+
+While a phone is still scanning, a scan's stage is `live` and its capture is replaced every couple
+of seconds; `get_scan` says so. Read it to coach the person scanning; edit once it's `final`
+(element ids can shift until then).
 
 Edits never touch the scan. They're kept in `edits.json` next to it, so the model is always
 scan + edits, rebuilt from scratch.

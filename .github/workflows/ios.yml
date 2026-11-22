@@ -1,0 +1,37 @@
+name: RoomScan iOS
+
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate the Xcode project
+        working-directory: ios/RoomScan
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build for iPhone (unsigned)
+        working-directory: ios/RoomScan
+        run: |
+          xcodebuild -version
+          xcodebuild -project RoomScan.xcodeproj -target RoomScan -configuration Release \
+            -sdk iphoneos SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package an unsigned .ipa (re-sign with Sideloadly, AltStore or Xcode)
+        working-directory: ios/RoomScan
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/RoomScan.app Payload/
+          zip -qr RoomScan-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RoomScan-unsigned-ipa
+          path: ios/RoomScan/RoomScan-unsigned.ipa

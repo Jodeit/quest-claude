@@ -89,6 +89,7 @@ install over a release.
 LiDAR) into an IFC4 building model, with any LLM checking and enriching it: walls with thickness,
 doors and windows cut into them, spaces with areas, furniture as IFC classes. It runs on the headset
 (Qlaude keeps its Ubuntu alive) or anywhere else with Python. See [spatial/README.md](spatial/README.md).
+The iPhone side, [RoomScan](ios/RoomScan/README.md), streams the room to it live while you scan.
 
 ## Support
 

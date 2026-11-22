@@ -27,6 +27,9 @@ so always pull before starting work.
 - `spatial/` — roomscan: RoomPlan (iPhone LiDAR) scans → IFC4 via IfcOpenShell, served over MCP
   (stdio or HTTP with a bearer token). Python; `scripts/roomscan` wraps it. Tests run in CI
   (`.github/workflows/spatial.yml`) and locally with pytest.
+- `ios/RoomScan/` — the iPhone capture app for roomscan (SwiftUI + RoomPlan). XcodeGen
+  `project.yml`; the .xcodeproj isn't checked in. CI (`.github/workflows/ios.yml`, macOS) is the
+  only compiler we have: check it after Swift changes. It also builds an unsigned .ipa.
 - `spike/` — the exec spike that proved Cwaude's approach; throwaway.
 - `scripts/install.sh` — download the latest CI APK and `adb install` it (`--cwaude` for Cwaude).
 

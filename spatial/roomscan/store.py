@@ -2,7 +2,8 @@
 
     $ROOMSCAN_HOME (default ~/.local/share/roomscan)/scans/<id>/
         capture.json      the RoomPlan export, exactly as received
-        meta.json         name, when it arrived, where from
+        meta.json         name, when it last arrived, where from, stage (live while the phone is
+                          still scanning, final once RoomPlan has processed it)
         edits.json        everything the LLM changed (see edits.py)
         model.ifc         the last model built
 """
@@ -52,7 +53,7 @@ class Store:
 
     # ------------------------------------------------------------ scans
 
-    def add(self, data: dict, name: str | None = None, source: str = "upload") -> str:
+    def add(self, data: dict, name: str | None = None, source: str = "upload", stage: str = "final") -> str:
         read_capture(data)  # refuse anything that won't parse before storing it
         base = f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(name or 'scan')}"
         scan_id = base
@@ -61,8 +62,23 @@ class Store:
         d = self.scans / scan_id
         d.mkdir(parents=True)
         (d / "capture.json").write_text(json.dumps(data))
-        (d / "meta.json").write_text(json.dumps({"name": name or scan_id, "received": time.time(), "source": source}))
+        (d / "meta.json").write_text(json.dumps(
+            {"name": name or scan_id, "received": time.time(), "source": source, "stage": stage, "updates": 1}))
         return scan_id
+
+    def replace(self, scan_id: str, data: dict, stage: str = "final") -> dict:
+        """Swap in a newer capture of the same room (a phone streaming while it scans). Edits stay;
+        they refer to element ids, which can shift while a scan is still live."""
+        d = self.dir(scan_id)
+        read_capture(data)
+        tmp = d / "capture.tmp"
+        tmp.write_text(json.dumps(data))
+        tmp.replace(d / "capture.json")
+        meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
+        meta.update({"received": time.time(), "stage": stage, "updates": int(meta.get("updates", 1)) + 1})
+        (d / "meta.json").write_text(json.dumps(meta))
+        self._cache.pop(scan_id, None)
+        return meta
 
     def import_file(self, path: str | Path, name: str | None = None) -> str:
         p = Path(path).expanduser()
@@ -78,6 +94,7 @@ class Store:
                 "id": d.name,
                 "name": meta.get("name", d.name),
                 "received": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(meta.get("received", 0))),
+                "stage": meta.get("stage", "final"),
                 "has_edits": (d / "edits.json").exists(),
                 "has_model": (d / "model.ifc").exists(),
             })

@@ -1,0 +1,5 @@
+RoomScan.xcodeproj/
+Info.plist
+build/
+*.ipa
+Payload/
