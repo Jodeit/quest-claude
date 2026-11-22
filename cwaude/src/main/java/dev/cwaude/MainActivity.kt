@@ -337,6 +337,9 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
 
     // ---- Sessions (tabs) -------------------------------------------------------
 
+    /** quest-claude-2, quest-claude-2b -> quest-claude: the repo a tab is named after. */
+    private fun repoOf(name: String) = name.replace(Regex("-\\d+[a-z]?$"), "")
+
     private fun renderTabs() {
         tabs.removeAllViews()
         val names = (sessions + settings.session).distinct() // active one shows even before it exists
@@ -345,8 +348,11 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
             val active = name == settings.session
             val info = tabInfo[name]
             tab.setBackgroundResource(if (active) R.drawable.tab_active else R.drawable.tab_inactive)
+            // Named by Claude's topic, with the repo beside it in small print; just the tmux
+            // name until Claude has a topic (or for a tab that isn't running Claude).
+            val topic = info?.topic.orEmpty()
             tab.findViewById<TextView>(R.id.tab_name).apply {
-                text = name
+                text = topic.ifEmpty { name }
                 setTextColor(getColor(if (active) R.color.fg else R.color.muted))
             }
             // State as a colored dot: amber working, green your turn, red waiting on approval.
@@ -360,9 +366,8 @@ class MainActivity : AppCompatActivity(), CwaudeService.Listener {
                 visibility = if (glyph == null) View.GONE else View.VISIBLE
                 if (glyph != null) { text = glyph; setTextColor(color) }
             }
-            val topic = info?.topic.orEmpty()
             tab.findViewById<TextView>(R.id.tab_topic).apply {
-                text = topic
+                text = repoOf(name)
                 visibility = if (topic.isEmpty()) View.GONE else View.VISIBLE
             }
             tab.contentDescription = listOfNotNull(name, info?.state?.label, topic.ifEmpty { null })
