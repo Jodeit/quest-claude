@@ -215,6 +215,7 @@ struct ScanScreen: View {
     @State private var flash = false
     @State private var confirmDone = false
     @State private var askNext = false
+    @State private var gray = true
     @State private var nextName = ""
 
     var body: some View {
@@ -247,6 +248,14 @@ struct ScanScreen: View {
                             close()
                         }
                         .buttonStyle(.bordered)
+                        Button {
+                            gray.toggle()
+                            session.controller.showsGray = gray
+                        } label: {
+                            Image(systemName: gray ? "circle.lefthalf.filled" : "circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel(gray ? "Hide gray for unphotographed walls" : "Show gray for unphotographed walls")
                         Button {
                             Task { await shoot() }
                         } label: {

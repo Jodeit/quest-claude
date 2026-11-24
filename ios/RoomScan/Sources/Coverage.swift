@@ -13,7 +13,14 @@ struct CoverageSnapshot {
         let fraction: Float
     }
 
+    /// A 30 cm patch of wall (its corners in the world) and whether a kept frame has seen it.
+    struct Cell {
+        let corners: [SIMD3<Float>]
+        let covered: Bool
+    }
+
     var walls: [Wall]
+    var cells: [Cell] = []
     var camera: SIMD2<Float>
     var heading: SIMD2<Float>  // where the phone points, top view, unit length
     var overall: Float         // length-weighted
@@ -32,6 +39,7 @@ enum Coverage {
         heading = simd_length(heading) > 1e-4 ? simd_normalize(heading) : SIMD2(0, -1)
 
         var walls: [CoverageSnapshot.Wall] = []
+        var cells: [CoverageSnapshot.Cell] = []
         for (i, w) in room.walls.enumerated() where w.dimensions.x > 0.3 && w.dimensions.y > 0.3 {
             // The room side is where the cameras mostly were (as for the elevations).
             let c = simd_make_float3(w.transform.columns.3)
@@ -42,10 +50,18 @@ enum Coverage {
             let f = WallFrame(w, flipped: side < 0)
             let nu = Swift.max(1, Int(f.width / cell)), nv = Swift.max(1, Int(f.height / cell))
             var covered = 0
+            let du = f.width / Float(nu), dv = f.height / Float(nv)
             for a in 0..<nu {
                 for b in 0..<nv {
-                    let p = f.world(u: (Float(a) + 0.5) * f.width / Float(nu), v: (Float(b) + 0.5) * f.height / Float(nv))
-                    if cams.contains(where: { $0.sees(p, normal: f.normal) }) { covered += 1 }
+                    let p = f.world(u: (Float(a) + 0.5) * du, v: (Float(b) + 0.5) * dv)
+                    let seen = cams.contains(where: { $0.sees(p, normal: f.normal) })
+                    if seen { covered += 1 }
+                    // A hair off the wall, toward the room, so it's drawn in front of it.
+                    let lift = f.normal * 0.01
+                    let u0 = Float(a) * du, u1 = u0 + du, v0 = Float(b) * dv, v1 = v0 + dv
+                    cells.append(.init(corners: [f.world(u: u0, v: v0) + lift, f.world(u: u1, v: v0) + lift,
+                                                 f.world(u: u1, v: v1) + lift, f.world(u: u0, v: v1) + lift],
+                                       covered: seen))
                 }
             }
             let left = f.world(u: 0, v: 0), right = f.world(u: f.width, v: 0)
@@ -64,7 +80,7 @@ enum Coverage {
         } else if !walls.isEmpty {
             hint = "Every wall is well covered."
         }
-        return CoverageSnapshot(walls: walls, camera: flatCam, heading: heading, overall: overall, hint: hint,
+        return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
                                 weakWalls: weak.count)
     }
 

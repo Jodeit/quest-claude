@@ -54,6 +54,10 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   edge band with a fingertip in it (more than 8% skin-coloured), thresholds from the first two real
   scans, where a fingertip crept into the bottom of several frames. The same frames also make a floor image from above (transparent outside the floor,
   neutral under furniture), which the dollhouse lays on its floor.
+- **Coloring in:** while scanning, the parts of the walls no kept frame has photographed yet show in
+  black and white over the live camera, and colour in as frames cover them (about 15 times a second:
+  the uncovered 30 cm cells from the coverage, projected onto the screen as a mask over a grayscale
+  copy of the camera frame). The half-circle button on the scan screen turns it off.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan

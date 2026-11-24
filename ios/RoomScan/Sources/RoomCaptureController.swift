@@ -28,6 +28,12 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private var computingCoverage = false
 
     private var captureView: RoomCaptureView!
+    private var overlay: CoverageOverlay!
+
+    /// Gray where the walls haven't been photographed yet; on by default, a button on the scan screen.
+    var showsGray = true {
+        didSet { overlay?.isHidden = !showsGray }
+    }
     private var running = false
     private let ciContext = CIContext()
 
@@ -38,6 +44,11 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         captureView.delegate = self
         captureView.captureSession.delegate = self
         view.addSubview(captureView)
+        overlay = CoverageOverlay(frame: view.bounds)
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        overlay.session = captureView.captureSession.arSession
+        overlay.isHidden = !showsGray
+        view.addSubview(overlay)
         // Camera Control and the volume buttons as a shutter. iOS may only send these to apps that
         // run their own camera session; RoomPlan runs it for us, so this is best effort.
         if #available(iOS 17.2, *) {
@@ -67,6 +78,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         guard !running else { return }
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
         running = true
+        overlay.start()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 self?.pollKeyframe()
@@ -99,6 +111,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private func stopKeyframes() {
         pollTask?.cancel()
         pollTask = nil
+        overlay?.stop()
     }
 
     // MARK: keyframes
@@ -152,7 +165,10 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                 Coverage.compute(room: room, frames: frames, camera: pose)
             }.value
             computingCoverage = false
-            if running { onCoverage?(snapshot) }
+            if running {
+                overlay.snapshot = snapshot
+                onCoverage?(snapshot)
+            }
         }
     }
 
