@@ -88,10 +88,13 @@ jobs:
           fi
           auth=(-allowProvisioningUpdates -authenticationKeyPath "$key"
                 -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
+          # Archive unsigned: signing it here made Xcode create a new development certificate on
+          # every fresh runner until the account hit Apple's limit. The export below signs it with
+          # the cloud-managed distribution certificate, which is reused.
           xcodebuild -project RoomScan.xcodeproj -scheme RoomScan -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/RoomScan.xcarchive" \
-            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION="$BUILD" \
-            "${auth[@]}" archive
+            DEVELOPMENT_TEAM="$TEAM" CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
