@@ -108,6 +108,37 @@ struct LiDARMesh {
     /// about the vertical and the shift; tried on a real scan, where it took a 3-7 cm misfit to
     /// about 2.5 cm, the rest being baseboards and clutter). Applies it and returns it, so frames
     /// taken with the mesh can be moved the same way.
+    /// How far to move the mesh up to put its floor on RoomPlan's (the ceiling cross-checks). The
+    /// switch into the LiDAR pass can shift the world vertically by tens of centimetres (42 cm on a
+    /// real scan), more than the fit's search band. The floor is the lowest strong peak of
+    /// upward-facing area by height, the ceiling the highest of downward-facing area.
+    func levelOffset(floorY: Float, ceilingY: Float) -> Float {
+        var ups: [(Float, Float)] = [], downs: [(Float, Float)] = []  // (height, area)
+        for k in 0..<triangleCount {
+            let a = positions[Int(faces[3 * k])], b = positions[Int(faces[3 * k + 1])], c = positions[Int(faces[3 * k + 2])]
+            let n = simd_cross(b - a, c - a), len = simd_length(n)
+            guard len > 1e-9 else { continue }
+            let ny = n.y / len, y = (a.y + b.y + c.y) / 3
+            if ny > 0.9 { ups.append((y, len / 2)) } else if ny < -0.9 { downs.append((y, len / 2)) }
+        }
+        func peak(_ items: [(Float, Float)], lowest: Bool) -> Float? {
+            guard items.reduce(0, { $0 + $1.1 }) >= 0.5, let lo = items.map({ $0.0 }).min(), let hi = items.map({ $0.0 }).max() else { return nil }
+            let bins = Int((hi - lo) / 0.02) + 1
+            var h = [Float](repeating: 0, count: bins)
+            for (y, area) in items { h[Swift.min(bins - 1, Int((y - lo) / 0.02))] += area }
+            let top = h.max() ?? 0
+            let strong = h.indices.filter { h[$0] >= Swift.max(0.25 * top, 0.3) }
+            guard let i = lowest ? strong.first : strong.last else { return nil }
+            let centre = lo + (Float(i) + 0.5) * 0.02
+            let near = items.map({ $0.0 }).filter { abs($0 - centre) < 0.03 }.sorted()
+            return near.isEmpty ? centre : near[near.count / 2]
+        }
+        guard let f = peak(ups, lowest: true) else { return 0 }
+        let df = floorY - f
+        if let c = peak(downs, lowest: false), abs(df - (ceilingY - c)) < 0.06 { return (df + ceilingY - c) / 2 }
+        return df
+    }
+
     mutating func fit(to room: CapturedRoom) -> simd_float4x4 {
         guard !positions.isEmpty, !room.walls.isEmpty else { return matrix_identity_float4x4 }
         struct Plane { var c, x, z: SIMD3<Float>; var hw, hh: Float }
@@ -122,7 +153,8 @@ struct LiDARMesh {
         let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
         let stride = Swift.max(1, positions.count / 60000)
         let sample = Swift.stride(from: 0, to: positions.count, by: stride).map { positions[$0] }
-        var yaw: Float = 0, t = SIMD3<Float>(0, 0, 0)
+        let ceilingY = room.walls.map { $0.transform.columns.3.y + $0.dimensions.y / 2 }.max() ?? floorY + 2.4
+        var yaw: Float = 0, t = SIMD3<Float>(0, levelOffset(floorY: floorY, ceilingY: ceilingY), 0)
         for iteration in 0..<10 {
             let band: Float = iteration < 4 ? 0.25 : 0.08
             let m = Self.rotationY(yaw, translation: t)

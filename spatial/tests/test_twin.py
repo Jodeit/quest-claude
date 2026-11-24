@@ -29,3 +29,39 @@ def test_twin_from_roomplan_only_bundle(tmp_path):
     for w in twin["walls"]:
         mid = [(w["a"][0] + w["b"][0]) / 2, (w["a"][1] + w["b"][1]) / 2]
         assert (c[0] - mid[0]) * w["normal"][0] + (c[2] - mid[1]) * w["normal"][1] > 0
+
+
+def _box_room():
+    """A 4 x 3 m room, 2.5 m high, floor at y = 0, with a floor outline."""
+    from roomscan.twin import Room
+    def wall(cx, cz, ang, w):
+        import math
+        c, s = math.cos(ang), math.sin(ang)
+        return {"transform": [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, cx, 1.25, cz, 1], "dimensions": [w, 2.5, 0]}
+    import math
+    walls = [wall(0, -1.5, 0, 4), wall(0, 1.5, 0, 4), wall(-2, 0, math.pi / 2, 3), wall(2, 0, math.pi / 2, 3)]
+    floor = {"transform": [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+             "polygonCorners": [[-2, 1.5, 0], [2, 1.5, 0], [2, -1.5, 0], [-2, -1.5, 0]]}
+    return Room({"walls": walls, "floors": [floor]})
+
+
+def test_level_offset_finds_a_raised_floor():
+    import numpy as np
+    from roomscan.twin import level_offset
+    room = _box_room()
+    # A floor and a ceiling sheet, both 0.42 m too high, plus a table top.
+    P, F = [], []
+    for y, flip in ((0.42, False), (2.92, True), (1.17, False)):
+        n = len(P)
+        size = 0.6 if y == 1.17 else 1.8
+        P += [[-size, y, -size], [size, y, -size], [size, y, size], [-size, y, size]]
+        F += [[n, n + 2, n + 1], [n, n + 3, n + 2]] if not flip else [[n, n + 1, n + 2], [n, n + 2, n + 3]]
+    off = level_offset(np.array(P, float), np.array(F), room)
+    assert abs(off + 0.42) < 0.02
+
+
+def test_room_outline_crops_outside():
+    import numpy as np
+    room = _box_room()
+    inside = room.inside(np.array([[0, 0], [1.9, 1.4], [2.05, 0], [2.5, 0], [0, -3]], float))
+    assert inside.tolist() == [True, True, True, False, False]

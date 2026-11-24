@@ -297,11 +297,15 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         lastCoverage = Date()
         Task {
             let snapshot = await Task.detached(priority: .utility) { () -> CoverageSnapshot in
-                let stride = Swift.max(1, mesh.positions.count / 120_000)
-                let points = Swift.stride(from: 0, to: mesh.positions.count, by: stride).map { i -> SIMD3<Float> in
-                    let p = jump * SIMD4(mesh.positions[i], 1)
-                    return SIMD3(p.x, p.y, p.z)
-                }
+                // Undo the switch's jump, then level the floor onto RoomPlan's: the jump can leave
+                // the mesh tens of centimetres high, which would misplace it against the walls.
+                var m = mesh
+                m.apply(jump)
+                let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
+                let ceilingY = room.walls.map { $0.transform.columns.3.y + $0.dimensions.y / 2 }.max() ?? floorY + 2.4
+                let dy = m.levelOffset(floorY: floorY, ceilingY: ceilingY)
+                let stride = Swift.max(1, m.positions.count / 120_000)
+                let points = Swift.stride(from: 0, to: m.positions.count, by: stride).map { m.positions[$0] + SIMD3<Float>(0, dy, 0) }
                 return Coverage.fromMesh(room: room, points: points, camera: pose)
             }.value
             computingCoverage = false

@@ -317,14 +317,17 @@ function wallGeometry(w) {
   return g;
 }
 for (const w of twin.walls) {
-  const mat = w.elevation ? new THREE.MeshBasicMaterial({ map: tex(R(w.elevation)) }) : new THREE.MeshBasicMaterial({ color: 0xdedfe3 });
+  // Pushed back in depth, so in the photo-real view the mesh wins where it exists and the wall
+  // photo shows only through the mesh's holes.
+  const back = { polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 8 };
+  const mat = w.elevation ? new THREE.MeshBasicMaterial({ map: tex(R(w.elevation)), ...back }) : new THREE.MeshBasicMaterial({ color: 0xdedfe3, ...back });
   const wall = new THREE.Mesh(wallGeometry(w), mat);
   wall.name = "wall"; doll.add(wall);
 }
 if (twin.floor?.image) {
   const [x0, z0, x1, z1] = twin.floor.bounds;
-  const f = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ map: tex(R(twin.floor.image)), transparent: true }));
-  f.rotation.x = -Math.PI / 2; f.position.set((x0 + x1) / 2, twin.floor.y + 0.002, (z0 + z1) / 2); f.name = "floor"; doll.add(f);
+  const f = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ map: tex(R(twin.floor.image)), transparent: true, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 8 }));
+  f.rotation.x = -Math.PI / 2; f.position.set((x0 + x1) / 2, twin.floor.y - 0.004, (z0 + z1) / 2); f.name = "floor"; doll.add(f);
 }
 // Spots as boxes: faint outlines over the mesh, tappable.
 for (const [i, o] of twin.objects.entries()) {
@@ -334,7 +337,7 @@ for (const [i, o] of twin.objects.entries()) {
   box.position.set(...o.center); box.rotation.y = Math.atan2(-o.axis[1], o.axis[0]);
   box.userData.spot = i; boxes.add(box);
 }
-doll.visible = !twin.mesh;
+doll.visible = true;
 
 // HTML tags for spots and photos, placed each frame.
 const tagsEl = $("tags");
@@ -351,7 +354,8 @@ const photoTags = twin.photos.map((p) => {
 let mode = twin.mesh ? "real" : "doll", walking = false, measuring = false;
 function setMode(m) {
   mode = m;
-  real.visible = m === "real" && !!twin.mesh; doll.visible = m === "doll" || !twin.mesh;
+  // The dollhouse's photo walls and floor stay on under the mesh: they fill its holes.
+  real.visible = m === "real" && !!twin.mesh; doll.visible = true;
   $("m-real").setAttribute("aria-pressed", String(m === "real")); $("m-doll").setAttribute("aria-pressed", String(m === "doll"));
 }
 $("m-real").onclick = () => setMode("real");

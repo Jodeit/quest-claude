@@ -90,13 +90,81 @@ class Room:
         self.lo = np.min(ends, 0) if ends else np.zeros(3)
         self.hi = np.max(ends, 0) if ends else np.zeros(3)
         self.centre = np.mean([w["c"] for w in self.walls], 0) if self.walls else np.zeros(3)
+        # RoomPlan's floor outline (iOS 17+), in world x, z: the room's true shape, for cropping.
+        self.outline = None
+        for f in d.get("floors", []):
+            corners = f.get("polygonCorners") or []
+            if len(corners) >= 3:
+                t = _m(f["transform"])
+                c = np.array(corners, dtype=np.float64)[:, :2]
+                world = t[:3, 3] + c[:, :1] * t[:3, 0] + c[:, 1:2] * t[:3, 1]
+                self.outline = world[:, [0, 2]]
+                break
+
+    def inside(self, xz: np.ndarray, margin: float = 0.12) -> np.ndarray:
+        """Which points (x, z) lie inside the floor outline or within `margin` of it. Without an
+        outline, the walls' bounding box grown by `margin`."""
+        if self.outline is None:
+            lo, hi = self.lo - margin, self.hi + margin
+            return (xz[:, 0] > lo[0]) & (xz[:, 0] < hi[0]) & (xz[:, 1] > lo[2]) & (xz[:, 1] < hi[2])
+        poly = self.outline
+        x, z = xz[:, 0:1], xz[:, 1:2]
+        a, b = poly[None, :, :], np.roll(poly, -1, 0)[None, :, :]
+        ax, az, bx, bz = a[..., 0], a[..., 1], b[..., 0], b[..., 1]
+        crosses = ((az > z) != (bz > z)) & (x < (bx - ax) * (z - az) / np.where(bz == az, 1e-12, bz - az) + ax)
+        inside = crosses.sum(1) % 2 == 1
+        ex, ez = bx - ax, bz - az
+        s = np.clip(((x - ax) * ex + (z - az) * ez) / np.maximum(ex * ex + ez * ez, 1e-12), 0, 1)
+        dist = np.hypot(x - (ax + s * ex), z - (az + s * ez)).min(1)
+        return inside | (dist < margin)
 
 
-def fit_mesh(P: np.ndarray, room: Room, iterations: int = 10) -> np.ndarray:
-    """Point-to-plane least squares on yaw and shift, onto the walls and floor. Returns the 4x4."""
+def level_offset(P: np.ndarray, F: np.ndarray, room: Room) -> float:
+    """How far to move the mesh up to put its floor on RoomPlan's (the ceiling cross-checks). The
+    switch into the LiDAR pass can shift the world by tens of centimetres vertically, more than the
+    fit's search band. The floor is the lowest strong peak of upward-facing area by height, the
+    ceiling the highest of downward-facing area. 0 when there's no clear floor."""
+    if len(F) == 0:
+        return 0.0
+    A, B = P[F[:, 1]] - P[F[:, 0]], P[F[:, 2]] - P[F[:, 0]]
+    n = np.cross(A, B)
+    area = np.linalg.norm(n, axis=1) / 2
+    ny = n[:, 1] / (2 * area + 1e-12)
+    y = P[F].mean(1)[:, 1]
+
+    def peak(mask, lowest):
+        if area[mask].sum() < 0.5:
+            return None
+        lo, hi = y[mask].min(), y[mask].max()
+        edges = np.arange(lo, hi + 0.04, 0.02)
+        if len(edges) < 2:
+            return None
+        h, _ = np.histogram(y[mask], bins=edges, weights=area[mask])
+        strong = np.nonzero(h >= max(0.25 * h.max(), 0.3))[0]
+        if not len(strong):
+            return None
+        i = strong[0] if lowest else strong[-1]
+        near = mask & (np.abs(y - (edges[i] + 0.01)) < 0.03)
+        return float(np.median(y[near]))
+
+    f, c = peak(ny > 0.9, True), peak(ny < -0.9, False)
+    df = room.floor_y - f if f is not None else None
+    dc = room.ceiling_y - c if c is not None else None
+    if df is None:
+        return 0.0
+    if dc is not None and abs(df - dc) < 0.06:
+        return (df + dc) / 2
+    return df
+
+
+def fit_mesh(P: np.ndarray, room: Room, iterations: int = 10, F: np.ndarray | None = None) -> np.ndarray:
+    """Point-to-plane least squares on yaw and shift, onto the walls and floor. Returns the 4x4.
+    With the faces, it first levels the mesh's floor onto RoomPlan's."""
     rng = np.random.default_rng(1)
     Q = P[rng.choice(len(P), min(len(P), 80000), replace=False)]
     yaw, t = 0.0, np.zeros(3)
+    if F is not None:
+        t[1] = level_offset(P, F, room)
     for it in range(iterations):
         R = _rot_y(yaw, t)
         X = Q @ R[:3, :3].T + t
@@ -584,7 +652,7 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
                 fix = _yaw_translation(a @ np.linalg.inv(b))
                 report["undid_world_jump_m"] = round(float(np.linalg.norm(fix[:3, 3])), 2)
         P = P @ fix[:3, :3].T + fix[:3, 3]
-        fit = fit_mesh(P, room)
+        fit = fit_mesh(P, room, F=F)
         P = P @ fit[:3, :3].T + fit[:3, 3]
         report["fit"] = {"yaw_deg": round(math.degrees(math.atan2(fit[0, 2], fit[0, 0])), 2),
                          "shift_m": [round(float(v), 3) for v in fit[:3, 3]]}
@@ -599,9 +667,8 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
         frames = [f for f in frames if f.img.mean() >= 40]  # nearly black frames out
         # Trim to the room.
         cen = P[F].mean(1)
-        lo, hi = room.lo - 0.4, room.hi + 0.4
-        keep = (cen[:, 0] > lo[0]) & (cen[:, 0] < hi[0]) & (cen[:, 2] > lo[2]) & (cen[:, 2] < hi[2]) \
-            & (cen[:, 1] > room.floor_y - 0.3) & (cen[:, 1] < room.ceiling_y + 0.3)
+        keep = room.inside(cen[:, [0, 2]]) & (cen[:, 1] > room.floor_y - 0.1) & (cen[:, 1] < room.ceiling_y + 0.15)
+        report["outside_room_dropped"] = int((~keep).sum())
         F = F[keep]
         report["shelf_edges_confirmed_by_depth"] = confirm_shelves(P, F, rd, objects)
         report["snapped_to_walls"] = snap_to_walls(P, room)
