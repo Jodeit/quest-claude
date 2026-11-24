@@ -40,6 +40,8 @@ button.small { padding: 3px 8px; font-size: 12px; }
   box-shadow: 0 1px 3px rgba(0,0,0,0.3); border: 1px solid transparent; }
 .tag.sel { border-color: #8e2c6b; color: #8e2c6b; }
 .tag.photo { background: #8e2c6b; color: #fff; font-size: 11px; padding: 2px 7px; }
+.tag.dim { font: 500 12px var(--mono); background: rgba(224,51,122,0.92); color: #fff; }
+.tag.dim.shelf { background: rgba(255,176,0,0.95); color: #1c1300; }
 .hint { position: absolute; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom, 0px)); text-align: center; pointer-events: none; }
 .hint span { display: inline-block; background: rgba(15,17,21,0.78); color: #f0f1f4; border-radius: 10px; padding: 7px 12px; font-size: 13px; }
 .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #c9ced8; font-size: 13px; }
@@ -219,13 +221,51 @@ if (twin.mesh) {
 // The dollhouse: walls wearing their elevation photos, facing the room, and the floor photo.
 const loader = new THREE.TextureLoader();
 const tex = (url) => { const t = loader.load(url); t.colorSpace = THREE.SRGBColorSpace; return t; };
+// Each wall is a set of rectangles around its doors and open doorways (left open, so you see
+// through), mapped onto the wall's elevation photo. Windows stay: their glass is in the photo.
+function wallHoles(w) {
+  const ax = (w.b[0] - w.a[0]) / w.length, az = (w.b[1] - w.a[1]) / w.length;
+  const holes = [];
+  for (const o of twin.openings) {
+    if (o.kind === "window") continue;
+    const dx = o.center[0] - w.a[0], dz = o.center[2] - w.a[1];
+    const off = dx * w.normal[0] + dz * w.normal[1], u = dx * ax + dz * az;
+    if (Math.abs(off) > 0.3 || u < -0.1 || u > w.length + 0.1) continue;
+    const v = o.center[1] - w.y0;
+    holes.push([Math.max(0, u - o.width / 2), Math.min(w.length, u + o.width / 2), Math.max(0, v - o.height / 2), Math.min(w.height, v + o.height / 2)]);
+  }
+  return holes;
+}
+function wallGeometry(w) {
+  const holes = wallHoles(w), L = w.length, H = w.height;
+  const us = [...new Set([0, L, ...holes.flatMap((h) => [h[0], h[1]])])].sort((a, b) => a - b);
+  const ax = (w.b[0] - w.a[0]) / L, az = (w.b[1] - w.a[1]) / L;
+  const pos = [], uv = [], idx = [];
+  const quad = (u0, u1, v0, v1) => {
+    const n = pos.length / 3;
+    for (const [u, v] of [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]) {
+      pos.push(w.a[0] + ax * u, w.y0 + v, w.a[1] + az * u); uv.push(u / L, v / H);
+    }
+    idx.push(n, n + 1, n + 2, n, n + 2, n + 3);  // counter-clockwise seen from the room
+  };
+  for (let k = 0; k + 1 < us.length; k++) {
+    const u0 = us[k], u1 = us[k + 1];
+    if (u1 - u0 < 1e-4) continue;
+    const cut = holes.filter((h) => h[0] <= u0 + 1e-4 && h[1] >= u1 - 1e-4).map((h) => [h[2], h[3]]).sort((a, b) => a[0] - b[0]);
+    let v = 0;
+    for (const [c0, c1] of cut) { if (c0 > v) quad(u0, u1, v, c0); v = Math.max(v, c1); }
+    if (v < H) quad(u0, u1, v, H);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
 for (const w of twin.walls) {
   const mat = w.elevation ? new THREE.MeshBasicMaterial({ map: tex(w.elevation) }) : new THREE.MeshBasicMaterial({ color: 0xdedfe3 });
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(w.length, w.height), mat);
-  const mx = (w.a[0] + w.b[0]) / 2, mz = (w.a[1] + w.b[1]) / 2;
-  plane.position.set(mx, w.y0 + w.height / 2, mz);
-  plane.rotation.y = Math.atan2(w.normal[0], w.normal[1]);  // plane faces +z; turn it to face the room
-  plane.name = "wall"; doll.add(plane);
+  const wall = new THREE.Mesh(wallGeometry(w), mat);
+  wall.name = "wall"; doll.add(wall);
 }
 if (twin.floor?.image) {
   const [x0, z0, x1, z1] = twin.floor.bounds;
@@ -369,6 +409,12 @@ renderer.setAnimationLoop(() => {
   tags.forEach((t, i) => { place(t.el, t.p); t.el.textContent = spotTitle(twin.objects[i]); t.el.classList.toggle("sel", i === selected); });
   photoTags.forEach((t) => place(t.el, t.p));
   for (const g of measureGroup.children) if (g.userData.tag) place(g.userData.tag, g.userData.mid);
+  for (const t of dimTags) place(t.el, t.p);
+  if (flight) {
+    const k = Math.min(1, (performance.now() - flight.t0) / 700), e = k * k * (3 - 2 * k);
+    camera.position.lerpVectors(flight.from, flight.to, e); controls.target.lerpVectors(flight.tFrom, flight.tTo, e);
+    if (k >= 1) flight = null;
+  }
 });
 $("loading").remove();
 
@@ -382,7 +428,7 @@ let db = null, user = null;
   try { team.me = await user?.id(); } catch {}
   team.canWrite = (await user?.can?.("data.write")) !== false;
   const sub = (path, fn) => db.collection(path).onSnapshot(fn, () => { team.error = "Shared notes can't be reached right now."; render(); });
-  sub("spots", (s) => { team.spots = Object.fromEntries(s.docs.map((d) => [d.id, d.data()])); render(); });
+  sub("spots", (s) => { team.spots = Object.fromEntries(s.docs.map((d) => [d.id, d.data()])); if (selected != null) drawDims(selected); render(); });
   sub("products", (s) => { team.products = s.docs.map((d) => ({ id: d.id, ...d.data() })); render(); });
   sub("notes", (s) => { team.notes = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.at || "").localeCompare(b.at || "")); render(); });
   sub("measures", (s) => {
@@ -403,7 +449,53 @@ const stamp = () => ({ by: team.me || null, at: new Date().toISOString() });
 // ---------- the panel ----------
 for (const t of ["spots", "plan", "measures", "about"]) $("t-" + t).onclick = () => selectTab(t);
 function selectTab(t) { tab = t; for (const x of ["spots", "plan", "measures", "about"]) $("t-" + x).setAttribute("aria-selected", String(x === t)); render(); }
-function openSpot(i) { selected = i; selectTab("spots"); const o = twin.objects[i]; controls.target.set(...o.center); controls.update(); }
+function openSpot(i) { selected = i; selectTab("spots"); focusSpot(i); }
+
+// Fly to a spot's front and draw its sizes on it: width, height and depth along its edges, each
+// shelf line across the front and each opening's clear height. Estimates read ≈, tape ✓.
+const dims = new THREE.Group(); scene.add(dims);
+let dimTags = [], flight = null;
+function frameOf(o) {
+  const x = new THREE.Vector3(o.axis[0], 0, o.axis[1]).normalize(), z = new THREE.Vector3(-o.axis[1], 0, o.axis[0]).normalize();
+  const c = new THREE.Vector3(...o.center);
+  const toRoom = new THREE.Vector3(twin.centre[0] - c.x, 0, twin.centre[2] - c.z);
+  const front = toRoom.dot(z) >= 0 ? z : z.clone().negate();
+  const right = front.equals(z) ? x : x.clone().negate();  // keeps width reading left to right from the front
+  return { c, front, right, w: o.size[0], h: o.size[1], d: o.size[2] };
+}
+function focusSpot(i) {
+  const o = twin.objects[i], f = frameOf(o);
+  if (walking) $("m-walk").click();
+  const fit = Math.max(f.w, f.h * camera.aspect) / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / camera.aspect;
+  const eye = f.c.clone().addScaledVector(f.front, f.d / 2 + Math.max(0.9, fit * 1.35)).add(new THREE.Vector3(0, 0.15, 0));
+  flight = { from: camera.position.clone(), to: eye, tFrom: controls.target.clone(), tTo: f.c.clone(), t0: performance.now() };
+  drawDims(i);
+}
+function clearDims() { for (const t of dimTags) t.el.remove(); dimTags = []; dims.clear(); }
+function drawDims(i) {
+  clearDims();
+  const o = twin.objects[i], f = frameOf(o), key = o.key, conf = (team.spots[slug(key)] || {}).confirmed || {};
+  const mat = new THREE.LineBasicMaterial({ color: 0xe0337a, depthTest: false, transparent: true });
+  const shelfMat = new THREE.LineBasicMaterial({ color: 0xffb000, depthTest: false, transparent: true });
+  const P = (u, v, w) => f.c.clone().addScaledVector(f.right, u).add(new THREE.Vector3(0, v, 0)).addScaledVector(f.front, w);
+  const line = (a, b, m = mat) => { const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), m); l.renderOrder = 10; dims.add(l); };
+  const label = (p, text, cls = "") => { const t = el("span", { class: "tag dim " + cls, text }); t.style.pointerEvents = "none"; tagsEl.append(t); dimTags.push({ el: t, p }); };
+  const show = (field, est) => conf[field] ? "✓ " + fine(conf[field]) : "≈ " + fine(est);
+  const hw = f.w / 2, hh = f.h / 2, hd = f.d / 2, gap = 0.06;
+  // Width under the front, height up the left front edge, depth along the top right edge.
+  line(P(-hw, -hh - gap, hd), P(hw, -hh - gap, hd)); label(P(0, -hh - gap - 0.05, hd), "W " + show("width", f.w));
+  line(P(-hw - gap, -hh, hd), P(-hw - gap, hh, hd)); label(P(-hw - gap - 0.12, 0, hd), "H " + show("height", f.h));
+  line(P(hw + gap, hh, -hd), P(hw + gap, hh, hd)); label(P(hw + gap + 0.1, hh, 0), "D " + show("depth", f.d));
+  // Shelves across the front, openings labelled between them (top first, as on the spot page).
+  const fr = o.front;
+  if (fr && fr.shelves.length) {
+    for (const s of fr.shelves) line(P(-hw, -hh + s, hd + 0.005), P(hw, -hh + s, hd + 0.005), shelfMat);
+    const edges = [0, ...fr.shelves, fr.height];
+    const opens = [];
+    for (let k = 1; k < edges.length; k++) if (edges[k] - edges[k - 1] > 0.05) opens.push([edges[k - 1], edges[k]]);
+    opens.reverse().forEach(([b, t], k) => label(P(hw * 0.55, -hh + (b + t) / 2, hd + 0.01), `${k + 1}: ${show(`opening ${k + 1}`, t - b)}`, "shelf"));
+  }
+}
 
 function render() {
   const p = $("panel"); p.replaceChildren();
@@ -431,7 +523,7 @@ function spotList(p) {
 
 function spotPage(p, i) {
   const o = twin.objects[i], key = o.key, doc = team.spots[slug(key)] || {}, confirmed = doc.confirmed || {};
-  p.append(el("button", { class: "small", text: "← All spots", onclick: () => { selected = null; render(); } }));
+  p.append(el("button", { class: "small", text: "← All spots", onclick: () => { selected = null; clearDims(); render(); } }));
   p.append(el("h2", { text: spotTitle(o) }));
   // Name it.
   const nameIn = el("input", { id: "spot-name", placeholder: "Give it a name, e.g. Coffee station", value: spotName(o) || "" });
