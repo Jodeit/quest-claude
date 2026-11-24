@@ -16,6 +16,7 @@ struct ProductsView: View {
     @State private var importing = false
     @State private var notice: String?
     @State private var csvURL: URL?
+    @State private var names: [String: String] = [:]
 
     var body: some View {
         NavigationStack {
@@ -39,7 +40,7 @@ struct ProductsView: View {
                     }
                 }
                 ForEach(groupedLocations, id: \.self) { loc in
-                    Section(loc) {
+                    Section(FloorPlanPDF.shown(loc, names)) {
                         ForEach(lines.filter { $0.location == loc }) { line in
                             HStack {
                                 Text(line.product).font(.subheadline)
@@ -66,7 +67,7 @@ struct ProductsView: View {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Menu {
                         Button {
-                            UIPasteboard.general.string = ProductExport.calculatorRows(lines, room: scan.name)
+                            UIPasteboard.general.string = ProductExport.calculatorRows(lines, room: scan.name, names: names)
                             notice = "Copied \(lines.count) row\(lines.count == 1 ? "" : "s"). In the calculator's "
                                 + "Client Product List, click the first empty cell in the Location column and paste: "
                                 + "Location, Product and Qty in Home fill in, and the sheet looks up the price."
@@ -101,7 +102,7 @@ struct ProductsView: View {
                 }
             }
             .sheet(isPresented: $adding) {
-                AddProductView(locations: locations) { line in
+                AddProductView(locations: locations, names: names) { line in
                     lines.append(line)
                     save()
                 }
@@ -119,6 +120,7 @@ struct ProductsView: View {
             .onAppear {
                 lines = library.products(for: scan)
                 locations = library.locations(for: scan)
+                names = library.names(for: scan)
             }
         }
     }
@@ -145,7 +147,7 @@ struct ProductsView: View {
 
     private func writeCSV() -> URL? {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(scan.id)-products.csv")
-        guard (try? ProductExport.csv(lines, room: scan.name).write(to: url, atomically: true, encoding: .utf8)) != nil
+        guard (try? ProductExport.csv(lines, room: scan.name, names: names).write(to: url, atomically: true, encoding: .utf8)) != nil
         else { return nil }
         return url
     }
@@ -156,6 +158,7 @@ struct AddProductView: View {
     @EnvironmentObject private var catalog: Catalog
     @Environment(\.dismiss) private var dismiss
     let locations: [String]
+    let names: [String: String]
     let add: (ProductLine) -> Void
 
     @State private var location = ProductLine.wholeRoom
@@ -173,7 +176,7 @@ struct AddProductView: View {
             Form {
                 Section("Where") {
                     Picker("Location", selection: $location) {
-                        ForEach(locations, id: \.self) { Text($0).tag($0) }
+                        ForEach(locations, id: \.self) { Text(FloorPlanPDF.shown($0, names)).tag($0) }
                     }
                 }
                 if let picked {

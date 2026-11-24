@@ -78,6 +78,7 @@ struct ScanRow: View {
     @State private var planPreview: URL?
     @State private var planError: String?
     @State private var showProducts = false
+    @State private var showNames = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -112,11 +113,14 @@ struct ScanRow: View {
                     showProducts = true
                 } label: { Label("Products", systemImage: "shippingbox") }
                 Menu {
+                    Button {
+                        showNames = true
+                    } label: { Label("Name spots…", systemImage: "tag") }
                     ShareLink(item: library.jsonURL(scan)) { Label("Scan (RoomPlan JSON)", systemImage: "doc") }
                     if library.hasUSDZ(scan) {
                         ShareLink(item: library.usdzURL(scan)) { Label("3D model (USDZ)", systemImage: "cube") }
                     }
-                } label: { Label("Files", systemImage: "square.and.arrow.up") }
+                } label: { Label("More", systemImage: "ellipsis.circle") }
             }
             .buttonStyle(.borderless)
             .font(.caption)
@@ -127,6 +131,7 @@ struct ScanRow: View {
         .padding(.vertical, 4)
         .quickLookPreview($planPreview)  // its share button sends the PDF on (Mail, AirDrop, Files)
         .sheet(isPresented: $showProducts) { ProductsView(scan: scan) }
+        .sheet(isPresented: $showNames) { SpotNamesView(scan: scan) }
     }
 
     private func upload() async {

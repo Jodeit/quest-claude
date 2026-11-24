@@ -9,17 +9,29 @@ import simd
 /// the phone's region uses them.
 enum FloorPlanPDF {
     static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
-                      elevations: [(Elevation, URL)] = [], products: [ProductLine] = [], to url: URL) throws {
-        try render(room, name: name, date: date, photos: photos, elevations: elevations, products: products)
-            .write(to: url, options: .atomic)
+                      elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
+                      names: [String: String] = [:], to url: URL) throws {
+        try render(room, name: name, date: date, photos: photos, elevations: elevations, products: products,
+                   names: names).write(to: url, options: .atomic)
+    }
+
+    /// A spot's label with the name the organizer gave it: "3 Storage" named "Coffee station" shows
+    /// as "3 Coffee station", "Wall W2" named "Coffee bar" as "W2 Coffee bar". Unnamed: as is.
+    static func shown(_ key: String, _ names: [String: String]) -> String {
+        guard let n = names[key]?.trimmingCharacters(in: .whitespaces), !n.isEmpty else { return key }
+        if key.hasPrefix("Wall ") { return "\(key.dropFirst(5)) \(n)" }
+        if key == ProductLine.wholeRoom { return n }
+        return "\(key.split(separator: " ").first ?? "") \(n)"
     }
 
     /// "washerDryer" -> "Washer dryer": how objects are named on the plan and in product locations.
     static func objectLabel(_ c: CapturedRoom.Object.Category) -> String { Plan.label(c) }
 
     static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
-                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = []) -> Data {
-        let plan = Plan(room, photos: photos.map { $0.0 })
+                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
+                       names: [String: String] = [:]) -> Data {
+        var plan = Plan(room, photos: photos.map { $0.0 })
+        plan.names = names
         let units = Units(imperial: Locale.current.measurementSystem == .us)
         let page = plan.size.x > plan.size.y * 1.1
             ? CGRect(x: 0, y: 0, width: 792, height: 612)   // US Letter, landscape
@@ -31,10 +43,10 @@ enum FloorPlanPDF {
             pdf.beginPage()
             drawPlan(plan, units: units, name: name, date: date, page: page, ctx: pdf.cgContext)
             for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
-                drawElevation(e, image: url, room: room, units: units, name: name, pdf: pdf)
+                drawElevation(e, image: url, room: room, units: units, name: name, names: names, pdf: pdf)
             }
             drawList(plan, units: units, name: name, page: page, pdf: pdf)
-            drawProducts(products, name: name, page: page, pdf: pdf)
+            drawProducts(products, name: name, names: names, page: page, pdf: pdf)
             drawPhotos(plan, files: photos.map { $0.1 }, name: name, pdf: pdf)
         }
     }
@@ -89,7 +101,8 @@ enum FloorPlanPDF {
             ctx.drawPath(using: .fillStroke)
             let c = pt(item.center)
             let fits = CGFloat(Swift.min(item.width, item.depth)) * scale > 26
-            text(fits ? "\(i + 1) \(item.name)" : "\(i + 1)", at: c, size: fits ? 7 : 6.5, color: faint)
+            text(fits ? shown("\(i + 1) \(item.name)", plan.names) : "\(i + 1)", at: c, size: fits ? 7 : 6.5,
+                 color: faint)
         }
 
         // Walls.
@@ -181,7 +194,7 @@ enum FloorPlanPDF {
         }
         var rows: [(String, String, String)] = []
         for (i, w) in plan.walls.enumerated() {
-            rows.append(("W\(i + 1)", "Wall", "\(units.length(w.length)) long, \(units.length(w.height)) high"
+            rows.append(("W\(i + 1)", plan.names["Wall W\(i + 1)"] ?? "Wall", "\(units.length(w.length)) long, \(units.length(w.height)) high"
                          + seenIn(.wall(i))))
         }
         for (i, d) in plan.doors.enumerated() {
@@ -195,7 +208,7 @@ enum FloorPlanPDF {
             rows.append(("", "Opening", "\(units.length(o.width)) wide, \(units.length(o.height)) high"))
         }
         for (i, item) in plan.items.enumerated() {
-            rows.append(("\(i + 1)", item.name, "\(units.length(item.width)) wide × "
+            rows.append(("\(i + 1)", plan.names["\(i + 1) \(item.name)"].map { "\($0) (\(item.name))" } ?? item.name, "\(units.length(item.width)) wide × "
                          + "\(units.length(item.depth)) deep × \(units.length(item.height)) high"
                          + seenIn(.item(i))))
         }
@@ -227,14 +240,14 @@ enum FloorPlanPDF {
     /// One wall per landscape page: the projected photo to scale, its width and height, and the
     /// doors, windows and objects on or against it, labelled as on the plan.
     private static func drawElevation(_ e: Elevation, image url: URL, room: CapturedRoom, units: Units,
-                                      name: String, pdf: UIGraphicsPDFRendererContext) {
+                                      name: String, names: [String: String], pdf: UIGraphicsPDFRendererContext) {
         guard let image = UIImage(contentsOfFile: url.path) else { return }
         let wall = room.walls[e.wall]
         let f = WallFrame(wall, flipped: e.flipped)
         let page = CGRect(x: 0, y: 0, width: 792, height: 612)
         pdf.beginPage(withBounds: page, pageInfo: [:])
         let ctx = pdf.cgContext
-        text("\(name): wall W\(e.wall + 1)", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
+        text("\(name): wall \(shown("Wall W\(e.wall + 1)", names))", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
              anchor: .topLeft)
         text("\(units.length(f.width)) wide × \(units.length(f.height)) high, seen from inside the room",
              at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
@@ -296,7 +309,7 @@ enum FloorPlanPDF {
                   let u0 = us.min(), let u1 = us.max(), u1 > 0, u0 < f.width else { continue }
             let v0 = c.y - o.dimensions.y / 2 - f.bottom
             outline(box(u0: u0, u1: u1, v0: v0, v1: v0 + o.dimensions.y), faint,
-                    "\(i + 1) \(Plan.label(o.category))", dashed: true)
+                    shown("\(i + 1) \(Plan.label(o.category))", names), dashed: true)
         }
 
         // Width under, height to the left.
@@ -317,14 +330,14 @@ enum FloorPlanPDF {
     // MARK: products page
 
     /// What went where: each location as on the plan, its products and quantities.
-    private static func drawProducts(_ lines: [ProductLine], name: String, page: CGRect,
+    private static func drawProducts(_ lines: [ProductLine], name: String, names: [String: String], page: CGRect,
                                      pdf: UIGraphicsPDFRendererContext) {
         guard !lines.isEmpty else { return }
         var order: [String] = []
         for l in lines where !order.contains(l.location) { order.append(l.location) }
         var rows: [(String, Bool)] = []  // text, is a heading
         for loc in order {
-            rows.append((loc, true))
+            rows.append((shown(loc, names), true))
             for l in lines where l.location == loc { rows.append(("\(l.qty) × \(l.product)", false)) }
         }
         let rowH: CGFloat = 16
@@ -371,7 +384,7 @@ enum FloorPlanPDF {
                 image.draw(in: CGRect(x: cell.midX - sz.width / 2, y: cell.minY, width: sz.width, height: sz.height))
             }
             var words = ["P\(i + 1)"]
-            if i < plan.pins.count, let subject = plan.pins[i].subject { words.append(plan.describe(subject)) }
+            if i < plan.pins.count, let subject = plan.pins[i].subject { words.append(shown(plan.describe(subject), plan.names)) }
             if i < plan.pins.count { words.append(plan.pins[i].date.formatted(date: .omitted, time: .shortened)) }
             text(words.joined(separator: "  ·  "), at: CGPoint(x: cell.minX, y: cell.maxY + caption / 2),
                  size: 9, color: photoColor, anchor: .left)
@@ -485,6 +498,7 @@ private struct Plan {
     var items: [Item] = []
     var floors: [[SIMD2<Float>]] = []
     var pins: [Pin] = []
+    var names: [String: String] = [:]  // spot label ("3 Storage", "Wall W2") -> the organizer's name for it
     var area: Float?
     var ceiling: Float?
     var lo = SIMD2<Float>(0, 0)

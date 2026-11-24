@@ -30,6 +30,11 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   scale; anything standing out from it (cabinet fronts, furniture) is smeared a little, and parts no
   frame saw are gray. Frames are kept in the scan's `frames/` folder (10–20 MB a scan), so the
   elevations can be redrawn.
+- **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan
+  (*3 Storage*, *Wall W2*); give the ones that matter a name (*Coffee station*). Names show on the
+  plan, elevations, photo captions and products page (*3 Coffee station*), and in the calculator's
+  Location column (*Pantry · Coffee station*). Products keep the plan label underneath, so renaming
+  a spot later carries through.
 - **Products:** each scan's **Products** button lists the organizing products used in the room by
   location, using the plan's own labels (*3 Storage*, *Wall W2*, or the whole room), picked from a
   catalog imported once from a CSV export of the product calculator's product tab (a column headed

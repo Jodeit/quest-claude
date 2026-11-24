@@ -25,9 +25,11 @@ struct ProductLine: Codable, Hashable, Identifiable {
 
     static let wholeRoom = "Whole room"
 
-    /// The calculator's Location column: the room, then the spot in it.
-    func calculatorLocation(room: String) -> String {
-        location == Self.wholeRoom ? room : "\(room) · \(location)"
+    /// The calculator's Location column: the room, then the spot in it, by the organizer's name for
+    /// it when there is one ("Pantry · Coffee station"), else its plan label ("Pantry · 3 Storage").
+    func calculatorLocation(room: String, names: [String: String] = [:]) -> String {
+        if let n = names[location]?.trimmingCharacters(in: .whitespaces), !n.isEmpty { return "\(room) · \(n)" }
+        return location == Self.wholeRoom ? room : "\(room) · \(location)"
     }
 }
 
@@ -170,15 +172,15 @@ final class Catalog: ObservableObject {
 enum ProductExport {
     /// Rows for the calculator's Client Product List, to paste at column A: Location, Product, an
     /// empty Price (the sheet's formula fills it), Qty in Home. Tab-separated, as spreadsheets paste.
-    static func calculatorRows(_ lines: [ProductLine], room: String) -> String {
-        lines.map { [$0.calculatorLocation(room: room), $0.product, "", String($0.qty)].joined(separator: "\t") }
+    static func calculatorRows(_ lines: [ProductLine], room: String, names: [String: String] = [:]) -> String {
+        lines.map { [$0.calculatorLocation(room: room, names: names), $0.product, "", String($0.qty)].joined(separator: "\t") }
             .joined(separator: "\n")
     }
 
-    static func csv(_ lines: [ProductLine], room: String) -> String {
+    static func csv(_ lines: [ProductLine], room: String, names: [String: String] = [:]) -> String {
         func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
         let rows = lines.map { l in
-            [q(l.calculatorLocation(room: room)), q(l.product), l.price.map { String(format: "%.2f", $0) } ?? "",
+            [q(l.calculatorLocation(room: room, names: names)), q(l.product), l.price.map { String(format: "%.2f", $0) } ?? "",
              String(l.qty), q(l.store ?? "")].joined(separator: ",")
         }
         return (["Location,Product,Unit Price,Qty in Home,Store"] + rows).joined(separator: "\n") + "\n"

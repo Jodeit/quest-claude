@@ -71,6 +71,19 @@ final class ScanLibrary: ObservableObject {
         objectWillChange.send()
     }
 
+    /// The organizer's names for spots: plan label ("3 Storage", "Wall W2") -> name ("Coffee station").
+    func names(for s: SavedScan) -> [String: String] {
+        guard let data = try? Data(contentsOf: folder(s).appendingPathComponent("names.json")) else { return [:] }
+        return (try? decoder.decode([String: String].self, from: data)) ?? [:]
+    }
+
+    func setNames(_ names: [String: String], for s: SavedScan) {
+        let kept = names.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
+        try? encoder.encode(kept).write(to: folder(s).appendingPathComponent("names.json"), options: .atomic)
+        try? FileManager.default.removeItem(at: planURL(s))
+        objectWillChange.send()
+    }
+
     /// The places products can go, labelled as on the plan: the whole room, each wall, each object.
     func locations(for s: SavedScan) -> [String] {
         var out = [ProductLine.wholeRoom]
@@ -93,7 +106,8 @@ final class ScanLibrary: ObservableObject {
         }.value
         guard !made.isEmpty else { return }
         try? FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
-                                elevations: elevations(for: s), products: products(for: s), to: planURL(s))
+                                elevations: elevations(for: s), products: products(for: s), names: names(for: s),
+                                to: planURL(s))
     }
 
     /// The scan's photos with their files, in the order they were taken.
@@ -111,7 +125,8 @@ final class ScanLibrary: ObservableObject {
         if !FileManager.default.fileExists(atPath: url.path) {
             let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
             try FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
-                                   elevations: elevations(for: s), products: products(for: s), to: url)
+                                   elevations: elevations(for: s), products: products(for: s), names: names(for: s),
+                                   to: url)
         }
         return url
     }
