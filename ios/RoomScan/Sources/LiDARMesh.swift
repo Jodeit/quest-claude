@@ -329,6 +329,86 @@ struct LiDARMesh {
         return choice
     }
 
+    /// A frame's depth buffer from the mesh's vertices, a quarter of the frame's size.
+    private static func depthBuffer(_ positions: [SIMD3<Float>], _ cam: Cam, ds: Float = 4) -> (z: [Float], w: Int) {
+        let bw = Int(cam.w / ds), bh = Int(cam.h / ds)
+        var z = [Float](repeating: .infinity, count: bw * bh)
+        for p in positions {
+            let c = cam.inverse * SIMD4(p, 1)
+            let d = -c.z
+            guard d > 0.1 else { continue }
+            let x = Int((cam.cx + cam.fx * c.x / d) / ds), y = Int((cam.cy - cam.fy * c.y / d) / ds)
+            guard x >= 0, y >= 0, x < bw - 1, y < bh - 1 else { continue }
+            for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let i = (y + oy) * bw + x + ox
+                if d < z[i] { z[i] = d }
+            }
+        }
+        return (z, bw)
+    }
+
+    /// Per-frame RGB corrections so frames that saw the same surface agree on its colour (exposure and
+    /// white balance drift as the phone moves): for a sample of triangles, each frame's log colour where
+    /// it's the nearest surface; per pair of frames the median difference; then corrections c with
+    /// c_b - c_a matching those, solved by Gauss-Seidel and centred on zero. As in roomscan, where the
+    /// office scan's corrections ran from 0.5x to 1.7x. Returns multipliers.
+    private static func exposureCorrections(positions: [SIMD3<Float>], cams: [Cam], frames: [(Keyframe, URL)],
+                                            centre: [SIMD3<Float>], normal: [SIMD3<Float>], keep: [Bool]) -> [SIMD3<Float>] {
+        let n = cams.count
+        guard n > 1 else { return [SIMD3<Float>](repeating: SIMD3(1, 1, 1), count: n) }
+        let candidates = keep.indices.filter { keep[$0] }
+        guard !candidates.isEmpty else { return [SIMD3<Float>](repeating: SIMD3(1, 1, 1), count: n) }
+        let step = Swift.max(1, candidates.count / 4000)
+        let sample = Swift.stride(from: 0, to: candidates.count, by: step).map { candidates[$0] }
+        var seen = [[(Int, SIMD3<Float>)]](repeating: [], count: sample.count)  // per sample: (frame, log colour)
+        for (k, cam) in cams.enumerated() {
+            let (z, bw) = depthBuffer(positions, cam)
+            var hits: [(Int, SIMD2<Float>)] = []
+            for (si, t) in sample.enumerated() {
+                let c = cam.inverse * SIMD4(centre[t], 1)
+                let d = -c.z
+                guard d > 0.2, d < 6 else { continue }
+                let x = cam.cx + cam.fx * c.x / d, y = cam.cy - cam.fy * c.y / d
+                guard x > 8, y > 8, x < cam.w - 8, y < cam.h - 8, d <= z[Int(y / 4) * bw + Int(x / 4)] + 0.04 + 0.02 * d else { continue }
+                let toCam = cam.position - centre[t]
+                guard abs(simd_dot(toCam / simd_length(toCam), normal[t])) > 0.3 else { continue }
+                hits.append((si, SIMD2(x, y)))
+            }
+            guard !hits.isEmpty, let img = RGBImage(url: frames[k].1) else { continue }
+            for (si, px) in hits {
+                let col = img.sample(px.x * Float(img.width) / cam.w, px.y * Float(img.height) / cam.h)
+                seen[si].append((k, SIMD3(log(Swift.max(col.x, 4)), log(Swift.max(col.y, 4)), log(Swift.max(col.z, 4)))))
+            }
+        }
+        var pairs = [Int: [SIMD3<Float>]]()  // a * n + b (a < b) -> log(a) - log(b) samples
+        for obs in seen where obs.count > 1 {
+            for i in 0..<obs.count { for j in (i + 1)..<obs.count {
+                let (a, la) = obs[i], (b, lb) = obs[j]
+                if a < b { pairs[a * n + b, default: []].append(la - lb) } else { pairs[b * n + a, default: []].append(lb - la) }
+            } }
+        }
+        var edges: [(a: Int, b: Int, d: SIMD3<Float>, w: Float)] = []
+        for (key, diffs) in pairs where diffs.count >= 20 {
+            func median(_ v: [Float]) -> Float { let s = v.sorted(); return s[s.count / 2] }
+            edges.append((key / n, key % n, SIMD3(median(diffs.map { $0.x }), median(diffs.map { $0.y }), median(diffs.map { $0.z })),
+                          Float(diffs.count).squareRoot()))
+        }
+        guard !edges.isEmpty else { return [SIMD3<Float>](repeating: SIMD3(1, 1, 1), count: n) }
+        var c = [SIMD3<Float>](repeating: .zero, count: n)
+        for _ in 0..<60 {
+            var num = [SIMD3<Float>](repeating: .zero, count: n), den = [Float](repeating: 0.01, count: n)
+            for e in edges {  // c_b - c_a = d
+                num[e.a] += (c[e.b] - e.d) * e.w; den[e.a] += e.w
+                num[e.b] += (c[e.a] + e.d) * e.w; den[e.b] += e.w
+            }
+            for k in 0..<n { c[k] = num[k] / den[k] }
+            let mean = c.reduce(.zero, +) / Float(n)
+            for k in 0..<n { c[k] -= mean }
+        }
+        return c.map { v in SIMD3(exp(Swift.min(0.7, Swift.max(-0.7, v.x))), exp(Swift.min(0.7, Swift.max(-0.7, v.y))),
+                                  exp(Swift.min(0.7, Swift.max(-0.7, v.z)))) }
+    }
+
     /// The mesh for the team twin page: trimmed to `bounds`, each vertex coloured from the frames
     /// that painted its triangles, triangles wound to face their frame, then shrunk by vertex
     /// clustering (`cell` metres). Ceiling triangles flagged so the page can hide them.
@@ -352,6 +432,8 @@ struct LiDARMesh {
         let weight = frames.map { f -> Float in f.0.sharpness.map { Swift.min(1.5, Swift.max(0.3, $0 / medianSharp)) } ?? 1 }
         let choice = cams.isEmpty ? [Int](repeating: -1, count: tri)
             : Self.frameChoices(positions: positions, cams: cams, weight: weight, centre: centre, normal: normal, keep: keep)
+        let gains = Self.exposureCorrections(positions: positions, cams: cams, frames: frames, centre: centre, normal: normal,
+                                             keep: keep)
 
         // Vertex colours: each kept triangle's corners sampled in its frame, averaged per vertex.
         var acc = [SIMD3<Float>](repeating: .zero, count: positions.count)
@@ -365,7 +447,7 @@ struct LiDARMesh {
                 for j in 0..<3 {
                     let v = Int(faces[t * 3 + j])
                     guard let px = cam.pixelUnclamped(positions[v]) else { continue }
-                    acc[v] += img.sample(px.x * Float(img.width) / cam.w, px.y * Float(img.height) / cam.h)
+                    acc[v] += img.sample(px.x * Float(img.width) / cam.w, px.y * Float(img.height) / cam.h) * gains[k]
                     cnt[v] += 1
                 }
             }
