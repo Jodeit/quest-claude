@@ -13,6 +13,8 @@ struct StorageFront: Codable, Hashable {
     var width, height, depth: Float
     var flipped: Bool        // the front is the box's -z face
     var shelves: [Float]     // edges found, metres up from the unit's bottom, lowest first
+    /// Per shelf edge: did the LiDAR mesh find a flat, upward-facing surface there? Nil without a mesh.
+    var confirmed: [Bool]? = nil
 
     /// The clear openings between shelf edges (and the unit's top and bottom), lowest first.
     var openings: [Float] {

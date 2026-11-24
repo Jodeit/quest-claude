@@ -392,9 +392,17 @@ enum FloorPlanPDF {
             ctx.setStrokeColor(ink.cgColor)
             ctx.setLineWidth(1)
             ctx.stroke(r)
-            for h in f.shelves {
+            for (k, h) in f.shelves.enumerated() {
                 let y = r.maxY - CGFloat(h) * s
-                line(ctx, CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y), width: 1.6, color: accent, cap: .butt)
+                if let sure = f.confirmed, k < sure.count, !sure[k] {
+                    // Not backed by the depth scan: maybe a bin or box edge. Dashed, to check.
+                    ctx.saveGState()
+                    ctx.setLineDash(phase: 0, lengths: [6, 4])
+                    line(ctx, CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y), width: 1.4, color: accent, cap: .butt)
+                    ctx.restoreGState()
+                } else {
+                    line(ctx, CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y), width: 1.6, color: accent, cap: .butt)
+                }
             }
             let edges = [Float(0)] + f.shelves + [f.height]
             for k in 1..<edges.count where edges[k] - edges[k - 1] > 0.05 { openings.append((edges[k], edges[k - 1])) }

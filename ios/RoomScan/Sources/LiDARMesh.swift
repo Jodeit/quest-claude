@@ -196,6 +196,43 @@ struct LiDARMesh {
         return moved
     }
 
+    /// Checks shelf edges found in each unit's front photo against the mesh: a shelf is a flat,
+    /// upward-facing surface inside the unit's box, so peaks in the area-weighted height histogram of
+    /// those triangles confirm an edge within 4 cm. The mesh misses shelves under bins (it sees their
+    /// tops), and the photo can take a box edge for a shelf, so edges are flagged, not replaced (on a
+    /// real closet they agreed within an inch where both found one). Returns the fronts with flags.
+    func confirmShelves(_ fronts: [StorageFront], room: CapturedRoom) -> [StorageFront] {
+        var out = fronts
+        for fi in out.indices where out[fi].object < room.objects.count && !out[fi].shelves.isEmpty {
+            let o = room.objects[out[fi].object]
+            let c = simd_make_float3(o.transform.columns.3)
+            let x = simd_normalize(simd_make_float3(o.transform.columns.0)), z = simd_normalize(simd_make_float3(o.transform.columns.2))
+            let w = o.dimensions.x, h = o.dimensions.y, d = o.dimensions.z
+            let bins = Int((h + 0.06) / 0.01) + 1
+            var hist = [Float](repeating: 0, count: bins)
+            for t in 0..<triangleCount {
+                let a = positions[Int(faces[t * 3])], b = positions[Int(faces[t * 3 + 1])], cc = positions[Int(faces[t * 3 + 2])]
+                let n = simd_cross(b - a, cc - a), l = simd_length(n)
+                guard l > 1e-9, n.y / l > 0.9 else { continue }
+                let ctr = (a + b + cc) / 3, r = ctr - c
+                guard abs(simd_dot(r, x)) < w / 2 - 0.03, abs(simd_dot(r, z)) < d / 2 + 0.03, abs(r.y) < h / 2 + 0.02 else { continue }
+                let k = Int(((r.y + h / 2) + 0.02) / 0.01)
+                if k >= 0, k < bins { hist[k] += l / 2 }
+            }
+            var smooth = hist
+            for k in 1..<(bins - 1) { smooth[k] = 0.25 * hist[k - 1] + 0.5 * hist[k] + 0.25 * hist[k + 1] }
+            let total = smooth.reduce(0, +) + 1e-9
+            var peaks: [Int] = []
+            for k in smooth.indices.sorted(by: { smooth[$0] > smooth[$1] }) {
+                guard smooth[k] >= 0.04 * total else { break }
+                if peaks.allSatisfy({ abs($0 - k) > 6 }) { peaks.append(k) }
+            }
+            let tops = peaks.map { Float($0) * 0.01 - 0.02 + 0.005 }
+            out[fi].confirmed = out[fi].shelves.map { s in tops.contains { abs($0 - s) < 0.04 } }
+        }
+        return out
+    }
+
     // MARK: texturing
 
     /// The painted model. Each triangle takes the frame that sees it most head-on and closest,

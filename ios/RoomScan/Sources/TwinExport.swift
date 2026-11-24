@@ -96,7 +96,8 @@ enum TwinExport {
                 let fr = pair.0, url = pair.1
                 d["front"] = ["image": copy(url) as Any, "shelves": fr.shelves.map { Double($0) },
                               "openings_top_first": fr.openings.reversed().map { Double($0) },
-                              "width": Double(fr.width), "height": Double(fr.height), "depth": Double(fr.depth)]
+                              "width": Double(fr.width), "height": Double(fr.height), "depth": Double(fr.depth),
+                              "confirmed": fr.confirmed as Any]
             }
             objects.append(d)
         }

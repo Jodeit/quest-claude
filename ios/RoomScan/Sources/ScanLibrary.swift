@@ -126,6 +126,11 @@ final class ScanLibrary: ObservableObject {
         var frames = frames
         if let data = try? json(for: s), let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) {
             let fix = mesh.fit(to: room)
+            // Shelf edges found in the photos, checked against the mesh before walls are flattened.
+            let fronts = storageFronts(for: s).map { $0.0 }
+            if !fronts.isEmpty, let data = try? encoder.encode(mesh.confirmShelves(fronts, room: room)) {
+                try? data.write(to: elevationsFolder(s).appendingPathComponent("storage.json"))
+            }
             mesh.snapToWalls(room)
             for i in frames.indices { frames[i].0.transform = simd_mul(fix, frames[i].0.pose).packed }
         }
