@@ -24,6 +24,8 @@ struct Keyframe: Codable, Hashable {
     var transform: [Float] // camera pose, 4x4 column-major
     var fx, fy, cx, cy: Float
     var width, height: Int
+    /// Variance of the Laplacian of a small grayscale copy: higher is sharper (blur flattens it).
+    var sharpness: Float? = nil
 
     var pose: simd_float4x4 { simd_float4x4(packed: transform) }
 }

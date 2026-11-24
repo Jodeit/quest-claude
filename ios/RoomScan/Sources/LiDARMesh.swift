@@ -161,6 +161,41 @@ struct LiDARMesh {
         return fix
     }
 
+    /// Vertices within `within` of a RoomPlan wall (inside its extent, away from doors, windows and
+    /// openings) move onto it, so walls read flat instead of LiDAR-wavy. Returns how many moved.
+    @discardableResult
+    mutating func snapToWalls(_ room: CapturedRoom, within: Float = 0.04) -> Int {
+        struct Panel { var c, x, z: SIMD3<Float>; var hw, hh: Float }
+        func flat(_ v: simd_float4) -> SIMD3<Float> {
+            let h = SIMD3<Float>(v.x, 0, v.z), l = simd_length(h)
+            return l > 1e-6 ? h / l : SIMD3(1, 0, 0)
+        }
+        func panel(_ s: CapturedRoom.Surface) -> Panel {
+            Panel(c: simd_make_float3(s.transform.columns.3), x: flat(s.transform.columns.0), z: flat(s.transform.columns.2),
+                  hw: s.dimensions.x / 2, hh: s.dimensions.y / 2)
+        }
+        let walls = room.walls.map(panel)
+        let holes = (room.doors + room.windows + room.openings).map(panel)
+        var moved = 0
+        for i in positions.indices {
+            let p = positions[i]
+            for w in walls {
+                let d = p - w.c
+                let off = simd_dot(d, w.z)
+                guard abs(off) < within, abs(simd_dot(d, w.x)) < w.hw, abs(d.y) < w.hh else { continue }
+                let inHole = holes.contains { h in
+                    abs(simd_dot(h.c - w.c, w.z)) < 0.3 && abs(simd_dot(p - h.c, h.x)) < h.hw + 0.05 && abs(p.y - h.c.y) < h.hh + 0.05
+                }
+                if !inHole {
+                    positions[i] = p - w.z * off
+                    moved += 1
+                }
+                break
+            }
+        }
+        return moved
+    }
+
     // MARK: texturing
 
     /// The painted model. Each triangle takes the frame that sees it most head-on and closest,
@@ -176,6 +211,13 @@ struct LiDARMesh {
         let cams = frames.map { Cam($0.0) }
         let tri = triangleCount
         guard tri > 0, !cams.isEmpty else { return (SCNNode(), SCNNode()) }
+        // Blurrier frames count for less (as in roomscan): sharpness relative to the median.
+        let sharp = frames.compactMap { $0.0.sharpness }.sorted()
+        let medianSharp = sharp.isEmpty ? 1 : Swift.max(1e-3, sharp[sharp.count / 2])
+        let weight = frames.map { f -> Float in
+            guard let s = f.0.sharpness else { return 1 }
+            return Swift.min(1.5, Swift.max(0.3, s / medianSharp))
+        }
         var centre = [SIMD3<Float>](repeating: .zero, count: tri)
         var normal = [SIMD3<Float>](repeating: .zero, count: tri)
         var keep = [Bool](repeating: true, count: tri)
@@ -220,7 +262,7 @@ struct LiDARMesh {
                 let dist = simd_length(toCam)
                 let facing = abs(simd_dot(toCam / dist, normal[t]))
                 guard facing > 0.2 else { continue }
-                let score = facing * facing / dist
+                let score = facing * facing / dist * weight[k]
                 if score > best[t] {
                     best[t] = score
                     choice[t] = k

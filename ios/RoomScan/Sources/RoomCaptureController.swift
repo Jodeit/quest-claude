@@ -19,6 +19,11 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private(set) var keyframes: [(Keyframe, Data)] = []
     private static let maxKeyframes = 150
     private static let keyframeWidth: CGFloat = 960
+    /// The photo-real pass keeps bigger frames: they paint the mesh, close up.
+    private static let meshFrameWidth: CGFloat = 1440
+    /// Recent frames' sharpness, to judge a new one against.
+    private var recentSharpness: [Float] = []
+    private(set) var blurryFramesSkipped = 0
     private var pollTask: Task<Void, Never>?
     private var lastPoll: simd_float4x4?
     private var lastKey: simd_float4x4?
@@ -196,7 +201,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
 
         let buffer = frame.capturedImage
         let fullW = CGFloat(CVPixelBufferGetWidth(buffer)), fullH = CGFloat(CVPixelBufferGetHeight(buffer))
-        let scale = Self.keyframeWidth / fullW
+        let scale = (meshPass ? Self.meshFrameWidth : Self.keyframeWidth) / fullW
         let k = frame.camera.intrinsics
         let key = Keyframe(file: String(format: meshPass ? "M%03d.jpg" : "F%03d.jpg", keyframes.count + 1), transform: pose.packed,
                            fx: k.columns.0.x * Float(scale), fy: k.columns.1.y * Float(scale),
@@ -204,14 +209,30 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                            width: Int((fullW * scale).rounded()), height: Int((fullH * scale).rounded()))
         let context = ciContext
         encoding = true
+        let previousKey = lastKey
         Task {
-            let jpeg: Data? = await Task.detached(priority: .utility) {
-                let image = CIImage(cvPixelBuffer: buffer).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let result: (Data?, Float) = await Task.detached(priority: .utility) {
+                let source = CIImage(cvPixelBuffer: buffer)
+                let sharp = Self.sharpness(source, context: context)
+                let image = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
                 let quality = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
-                return context.jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                                  options: [quality: 0.75])
+                return (context.jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                   options: [quality: 0.8]), sharp)
             }.value
-            if let jpeg { keyframes.append((key, jpeg)) }
+            // Skip a frame much blurrier than the ones just before it (motion blur, focus hunting);
+            // the next steady moment from about here gets another chance.
+            let sorted = recentSharpness.sorted()
+            let median = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+            recentSharpness.append(result.1)
+            if recentSharpness.count > 30 { recentSharpness.removeFirst() }
+            if sorted.count >= 5, result.1 < 0.45 * median {
+                blurryFramesSkipped += 1
+                lastKey = previousKey
+            } else if let jpeg = result.0 {
+                var k = key
+                k.sharpness = result.1
+                keyframes.append((k, jpeg))
+            }
             encoding = false
         }
     }
@@ -233,6 +254,29 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                 onCoverage?(snapshot)
             }
         }
+    }
+
+    /// Variance of the Laplacian on a 160-pixel-wide grayscale copy: a cheap measure of how much fine
+    /// detail survived (the same measure roomscan uses to prefer sharp frames).
+    nonisolated private static func sharpness(_ image: CIImage, context: CIContext) -> Float {
+        let s = 160 / image.extent.width
+        let small = image.transformed(by: CGAffineTransform(scaleX: s, y: s))
+        let w = Int(small.extent.width), h = Int(small.extent.height)
+        guard w > 4, h > 4 else { return 0 }
+        var gray = [UInt8](repeating: 0, count: w * h)
+        context.render(small, toBitmap: &gray, rowBytes: w, bounds: CGRect(x: 0, y: 0, width: w, height: h),
+                       format: .L8, colorSpace: nil)
+        var sum: Float = 0, sumSq: Float = 0, n: Float = 0
+        for y in 1..<(h - 1) {
+            for x in 1..<(w - 1) {
+                let c = Float(gray[y * w + x]) * 4
+                let lap = c - Float(gray[y * w + x - 1]) - Float(gray[y * w + x + 1]) - Float(gray[(y - 1) * w + x])
+                    - Float(gray[(y + 1) * w + x])
+                sum += lap; sumSq += lap * lap; n += 1
+            }
+        }
+        let mean = sum / n
+        return sumSq / n - mean * mean
     }
 
     /// The angle between where two poses look, in radians.

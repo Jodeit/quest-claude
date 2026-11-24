@@ -84,7 +84,9 @@ enum Dollhouse {
             let c = simd_make_float3(w.transform.columns.3)
             let z = simd_make_float3(w.transform.columns.2)
             let flipped = elevation?.0.flipped ?? (simd_dot(centroid - c, z) < 0)
-            let plane = SCNPlane(width: CGFloat(w.dimensions.x), height: CGFloat(w.dimensions.y))
+            let transform = flipped ? w.transform * simd_float4x4(simd_quatf(angle: .pi, axis: SIMD3(0, 1, 0))) : w.transform
+            let plane = wallGeometry(width: w.dimensions.x, height: w.dimensions.y, transform: transform,
+                                     holes: room.doors + room.openings)
             let m = SCNMaterial()
             if let url = elevation?.1, let image = UIImage(contentsOfFile: url.path) {
                 m.diffuse.contents = image
@@ -97,8 +99,7 @@ enum Dollhouse {
             plane.materials = [m]
             let node = SCNNode(geometry: plane)
             node.name = "wall:\(r):\(i)"
-            node.simdTransform = flipped ? w.transform * simd_float4x4(simd_quatf(angle: .pi, axis: SIMD3(0, 1, 0)))
-                : w.transform
+            node.simdTransform = transform
             root.addChildNode(node)
         }
 
@@ -190,6 +191,46 @@ enum Dollhouse {
             node.simdPosition = simd_make_float3(photo.pose.columns.3)
             root.addChildNode(node)
         }
+    }
+
+    /// A wall as rectangles around its doors and open doorways, so they stay open to look through;
+    /// texture coordinates place each piece on its part of the wall's photo. Windows aren't cut:
+    /// their glass is in the photo. In the wall's own frame (x across, y up, facing +z).
+    static func wallGeometry(width: Float, height: Float, transform: simd_float4x4,
+                             holes: [CapturedRoom.Surface]) -> SCNGeometry {
+        let inv = transform.inverse
+        var cuts: [(u0: Float, u1: Float, v0: Float, v1: Float)] = []
+        for h in holes {
+            let p = inv * h.transform.columns.3
+            guard abs(p.z) < 0.3, abs(p.x) < width / 2 + 0.1 else { continue }
+            cuts.append((Swift.max(-width / 2, p.x - h.dimensions.x / 2), Swift.min(width / 2, p.x + h.dimensions.x / 2),
+                         Swift.max(-height / 2, p.y - h.dimensions.y / 2), Swift.min(height / 2, p.y + h.dimensions.y / 2)))
+        }
+        var us = Set<Float>([-width / 2, width / 2])
+        for c in cuts { us.insert(c.u0); us.insert(c.u1) }
+        let edges = us.sorted()
+        var verts: [SCNVector3] = [], coords: [CGPoint] = [], idx: [UInt32] = []
+        func quad(_ u0: Float, _ u1: Float, _ v0: Float, _ v1: Float) {
+            let n = UInt32(verts.count)
+            for (u, v) in [(u0, v0), (u1, v0), (u1, v1), (u0, v1)] {
+                verts.append(SCNVector3(u, v, 0))
+                coords.append(CGPoint(x: CGFloat((u + width / 2) / width), y: CGFloat(1 - (v + height / 2) / height)))
+            }
+            idx += [n, n + 1, n + 2, n, n + 2, n + 3]
+        }
+        for k in 0..<(edges.count - 1) {
+            let u0 = edges[k], u1 = edges[k + 1]
+            guard u1 - u0 > 1e-4 else { continue }
+            let over = cuts.filter { $0.u0 <= u0 + 1e-4 && $0.u1 >= u1 - 1e-4 }.sorted { $0.v0 < $1.v0 }
+            var v = -height / 2
+            for c in over {
+                if c.v0 > v { quad(u0, u1, v, c.v0) }
+                v = Swift.max(v, c.v1)
+            }
+            if v < height / 2 { quad(u0, u1, v, height / 2) }
+        }
+        return SCNGeometry(sources: [SCNGeometrySource(vertices: verts), SCNGeometrySource(textureCoordinates: coords)],
+                           elements: [SCNGeometryElement(indices: idx, primitiveType: .triangles)])
     }
 
     /// A measured distance: a line between two points, a dot at each end and its length on a tag.
