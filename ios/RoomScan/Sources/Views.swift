@@ -110,6 +110,7 @@ struct ScanRow: View {
     @State private var showNames = false
     @State private var bundleURL: URL?
     @State private var showDollhouse = false
+    @State private var showMeasurements = false
     @State private var rebuilding = false
 
     var body: some View {
@@ -152,6 +153,9 @@ struct ScanRow: View {
                         showNames = true
                     } label: { Label("Name spots…", systemImage: "tag") }
                     Button {
+                        showMeasurements = true
+                    } label: { Label("Measurements…", systemImage: "ruler") }
+                    Button {
                         do { bundleURL = try library.bundle(scan) } catch {
                             planError = "Couldn't zip the scan: \(error.localizedDescription)"
                         }
@@ -187,6 +191,7 @@ struct ScanRow: View {
         .sheet(isPresented: $showNames) { SpotNamesView(scan: scan) }
         .sheet(item: $bundleURL) { url in ShareSheet(items: [url]) }
         .fullScreenCover(isPresented: $showDollhouse) { DollhouseView(scans: [scan]) }
+        .sheet(isPresented: $showMeasurements) { MeasurementsView(scan: scan) }
     }
 
     private func upload() async {

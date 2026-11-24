@@ -65,6 +65,13 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   each opening's clear height to the nearest half inch, each with a blank to write the tape
   measurement in. They're estimates (about ±1"), and say so. Tapping the unit in the dollhouse shows
   the openings too. Tried on a real closet scan's frames first.
+- **Your own measurements:** in the dollhouse, **Measure** then tap two points on a wall, the floor or a
+  unit: the distance is drawn and can be saved with a name (walls carry to-scale photos, so this
+  works on things in them, like trim or a gap). **Measurements** (in the dollhouse, or **More →
+  Measurements…**) lists every estimate (walls, each unit's width, depth and height, every shelf
+  opening) and every 3D measurement, each with a field for the tape measurement (15¼, 15 1/4,
+  1' 3¼"). Tape measurements replace the estimates in the PDF, marked ✓, and fill the shelf pages'
+  Measured column.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan

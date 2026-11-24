@@ -110,6 +110,7 @@ enum Dollhouse {
             // The path is drawn in x and -z; turn it to lie flat at the floor.
             node.eulerAngles.x = -.pi / 2
             node.position.y = floorY - 0.02
+            node.name = "floor:\(r)"
             root.addChildNode(node)
         }
         // The floor photo, laid on top: a plane over the floor's bounds, transparent outside it.
@@ -125,6 +126,7 @@ enum Dollhouse {
             // Flat, facing up; the image's top edge lies toward -z, as it was drawn.
             node.eulerAngles.x = -.pi / 2
             node.simdPosition = SIMD3((f.minX + f.maxX) / 2, f.y + 0.002, (f.minZ + f.maxZ) / 2)
+            node.name = "floor:\(r)"
             root.addChildNode(node)
         }
 
@@ -159,6 +161,39 @@ enum Dollhouse {
             node.simdPosition = simd_make_float3(photo.pose.columns.3)
             root.addChildNode(node)
         }
+    }
+
+    /// A measured distance: a line between two points, a dot at each end and its length on a tag.
+    static func measureNode(_ a: SIMD3<Float>, _ b: SIMD3<Float>, text: String) -> SCNNode {
+        let group = SCNNode()
+        group.name = "measure"
+        let red = UIColor(red: 0.85, green: 0.1, blue: 0.35, alpha: 1)
+        for p in [a, b] {
+            let dot = SCNNode(geometry: SCNSphere(radius: 0.015))
+            dot.geometry?.firstMaterial?.diffuse.contents = red
+            dot.geometry?.firstMaterial?.readsFromDepthBuffer = false
+            dot.renderingOrder = 10
+            dot.simdPosition = p
+            group.addChildNode(dot)
+        }
+        let length = simd_distance(a, b)
+        if length > 0.005 {
+            let bar = SCNNode(geometry: SCNCylinder(radius: 0.005, height: CGFloat(length)))
+            bar.geometry?.firstMaterial?.diffuse.contents = red
+            bar.geometry?.firstMaterial?.readsFromDepthBuffer = false
+            bar.renderingOrder = 10
+            bar.simdPosition = (a + b) / 2
+            let dir = simd_normalize(b - a)
+            let up: SIMD3<Float> = abs(dir.y) > 0.95 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
+            bar.simdLook(at: b, up: up, localFront: SIMD3(0, 1, 0))
+            group.addChildNode(bar)
+        }
+        if !text.isEmpty, let tag = label(text) {
+            tag.simdPosition = (a + b) / 2 + SIMD3(0, 0.08, 0)
+            tag.renderingOrder = 11
+            group.addChildNode(tag)
+        }
+        return group
     }
 
     /// A name tag that always faces the viewer.
@@ -206,18 +241,28 @@ struct DollhouseView: View {
     @State private var photoURL: URL?
     @State private var usdzURL: URL?
     @State private var spots: [[String]] = []  // per room: each object's plan label
+    @State private var measuring = false
+    @State private var firstPoint: (point: SIMD3<Float>, room: Int)?
+    @State private var pending: (a: SIMD3<Float>, b: SIMD3<Float>, room: Int)?
+    @State private var measureName = ""
+    @State private var askName = false
+    @State private var showMeasurements: SavedScan?
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 if let model {
-                    SceneViewer(model: model) { tapped($0) }.ignoresSafeArea(edges: .bottom)
+                    SceneViewer(model: model) { name, point in
+                        if measuring { measureTap(name, point) } else if let name { tapped(name) }
+                    }
+                    .ignoresSafeArea(edges: .bottom)
                 } else if let failure {
                     Text(failure).foregroundStyle(.secondary).padding()
                 } else {
                     ProgressView("Building the dollhouse…")
                 }
-                Text(info ?? "Drag to turn, pinch to zoom. Tap a box or a photo pin.")
+                Text(measuring ? (firstPoint == nil ? "Measuring: tap the first point." : "Now tap the second point.")
+                     : info ?? "Drag to turn, pinch to zoom. Tap a box or a photo pin.")
                     .font(.callout)
                     .padding(10)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -227,6 +272,18 @@ struct DollhouseView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        measuring.toggle()
+                        firstPoint = nil
+                    } label: { Label(measuring ? "Stop measuring" : "Measure", systemImage: "ruler") }
+                    .disabled(model == nil)
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        showMeasurements = scans.first
+                    } label: { Label("Measurements", systemImage: "list.number") }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         if let model { usdzURL = Dollhouse.exportUSDZ(model, name: title) }
@@ -236,6 +293,14 @@ struct DollhouseView: View {
             }
             .sheet(item: $usdzURL) { url in ShareSheet(items: [url]) }
             .quickLookPreview($photoURL)
+            .sheet(item: $showMeasurements) { scan in MeasurementsView(scan: scan) }
+            .alert("Save this measurement?", isPresented: $askName) {
+                TextField("What it is (e.g. Pantry shelf width)", text: $measureName)
+                Button("Save") { saveMeasure() }
+                Button("Discard", role: .cancel) { clearPending() }
+            } message: {
+                if let p = pending { Text("≈ \(FloorPlanPDF.fine(simd_distance(p.a, p.b))) in the model. Add the tape measurement later under Measurements.") }
+            }
             .task { load() }
         }
     }
@@ -254,10 +319,59 @@ struct DollhouseView: View {
                                             photos: library.photos(for: scan).map { $0.0 },
                                             names: library.names(for: scan), floor: library.floorImage(for: scan)))
             }
-            model = Dollhouse.build(parts)
+            let built = Dollhouse.build(parts)
+            for scan in scans {
+                for m in library.measurements(for: scan).custom where m.a.count == 3 && m.b.count == 3 {
+                    let text = m.confirmed.map { "✓ " + FloorPlanPDF.fine($0) } ?? FloorPlanPDF.fine(m.length)
+                    built.scene.rootNode.addChildNode(Dollhouse.measureNode(SIMD3(m.a[0], m.a[1], m.a[2]),
+                                                                           SIMD3(m.b[0], m.b[1], m.b[2]), text: text))
+                }
+            }
+            model = built
         } catch {
             failure = "Couldn't read the scan: \(error.localizedDescription)"
         }
+    }
+
+    /// Measuring: the first tap marks a point, the second draws the distance and asks to save it.
+    private func measureTap(_ name: String?, _ point: SIMD3<Float>?) {
+        guard let point, let model else { return }
+        let room = name.flatMap { n -> Int? in
+            let parts = n.split(separator: ":")
+            return parts.count >= 2 ? Int(parts[1]) : nil
+        } ?? 0
+        if let first = firstPoint {
+            let node = Dollhouse.measureNode(first.point, point, text: FloorPlanPDF.fine(simd_distance(first.point, point)))
+            node.name = "measure:pending"
+            model.scene.rootNode.addChildNode(node)
+            pending = (first.point, point, first.room)
+            firstPoint = nil
+            measureName = ""
+            askName = true
+        } else {
+            firstPoint = (point, min(room, scans.count - 1))
+            let dot = Dollhouse.measureNode(point, point, text: "")
+            dot.name = "measure:first"
+            model.scene.rootNode.addChildNode(dot)
+        }
+    }
+
+    private func saveMeasure() {
+        guard let p = pending, p.room < scans.count else { return }
+        let scan = scans[p.room]
+        var m = library.measurements(for: scan)
+        let label = measureName.trimmingCharacters(in: .whitespaces)
+        m.custom.append(.init(label: label.isEmpty ? "Measurement \(m.custom.count + 1)" : label,
+                              a: [p.a.x, p.a.y, p.a.z], b: [p.b.x, p.b.y, p.b.z], length: simd_distance(p.a, p.b)))
+        library.setMeasurements(m, for: scan)
+        model?.scene.rootNode.childNodes.filter { $0.name == "measure:pending" }.forEach { $0.name = "measure" }
+        model?.scene.rootNode.childNodes.filter { $0.name == "measure:first" }.forEach { $0.removeFromParentNode() }
+        pending = nil
+    }
+
+    private func clearPending() {
+        model?.scene.rootNode.childNodes.filter { $0.name?.hasPrefix("measure:") == true }.forEach { $0.removeFromParentNode() }
+        pending = nil
     }
 
     private func tapped(_ name: String) {
@@ -285,7 +399,8 @@ struct DollhouseView: View {
 /// SceneKit's view with orbit controls, reporting the name of what's tapped.
 private struct SceneViewer: UIViewRepresentable {
     let model: Dollhouse.Model
-    let onTap: (String) -> Void
+    /// The name of what was tapped (photo, object, wall, floor; nil for unnamed) and where on it.
+    let onTap: (String?, SIMD3<Float>?) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onTap: onTap) }
 
@@ -307,21 +422,27 @@ private struct SceneViewer: UIViewRepresentable {
     func updateUIView(_ view: SCNView, context: Context) {}
 
     final class Coordinator: NSObject {
-        let onTap: (String) -> Void
-        init(onTap: @escaping (String) -> Void) { self.onTap = onTap }
+        let onTap: (String?, SIMD3<Float>?) -> Void
+        init(onTap: @escaping (String?, SIMD3<Float>?) -> Void) { self.onTap = onTap }
 
+        /// Reports the first named thing hit (skipping tags and measurement marks), with the point
+        /// on its surface.
         @objc func tap(_ g: UITapGestureRecognizer) {
             guard let view = g.view as? SCNView else { return }
             for hit in view.hitTest(g.location(in: view), options: nil) {
                 var node: SCNNode? = hit.node
                 while let n = node {
-                    if let name = n.name, name.hasPrefix("photo:") || name.hasPrefix("object:") {
-                        onTap(name)
-                        return
+                    if let name = n.name {
+                        if name.hasPrefix("measure") { break }
+                        if ["photo:", "object:", "wall:", "floor:"].contains(where: { name.hasPrefix($0) }) {
+                            onTap(name, hit.simdWorldCoordinates)
+                            return
+                        }
                     }
                     node = n.parent
                 }
             }
+            onTap(nil, nil)
         }
     }
 }

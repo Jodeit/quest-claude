@@ -10,10 +10,14 @@ import simd
 enum FloorPlanPDF {
     static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
-                      names: [String: String] = [:], fronts: [(StorageFront, URL)] = [], to url: URL) throws {
+                      names: [String: String] = [:], fronts: [(StorageFront, URL)] = [],
+                      measured: ScanMeasurements = ScanMeasurements(), to url: URL) throws {
         try render(room, name: name, date: date, photos: photos, elevations: elevations, products: products,
-                   names: names, fronts: fronts).write(to: url, options: .atomic)
+                   names: names, fronts: fronts, measured: measured).write(to: url, options: .atomic)
     }
+
+    /// To the nearest half inch (or centimetre), as estimates and tape measurements are shown.
+    static func fine(_ m: Float) -> String { Units(imperial: ScanMeasurements.imperial).fine(m) }
 
     /// Shelf openings, top first, for a line of text: "≈ 15½", 14½", 24"".
     static func openingsText(_ f: StorageFront) -> String {
@@ -35,7 +39,8 @@ enum FloorPlanPDF {
 
     static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
                        elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
-                       names: [String: String] = [:], fronts: [(StorageFront, URL)] = []) -> Data {
+                       names: [String: String] = [:], fronts: [(StorageFront, URL)] = [],
+                       measured: ScanMeasurements = ScanMeasurements()) -> Data {
         var plan = Plan(room, photos: photos.map { $0.0 })
         plan.names = names
         let units = Units(imperial: Locale.current.measurementSystem == .us)
@@ -53,9 +58,11 @@ enum FloorPlanPDF {
             }
             for (f, url) in fronts.sorted(by: { $0.0.object < $1.0.object }) where f.object < room.objects.count {
                 let key = "\(f.object + 1) \(Plan.label(room.objects[f.object].category))"
-                drawShelves(f, image: url, label: shown(key, names), units: units, name: name, page: page, pdf: pdf)
+                drawShelves(f, image: url, key: key, label: shown(key, names), units: units, name: name,
+                            measured: measured, page: page, pdf: pdf)
             }
-            drawList(plan, units: units, name: name, page: page, pdf: pdf, fronts: fronts.map { $0.0 })
+            drawList(plan, units: units, name: name, page: page, pdf: pdf, fronts: fronts.map { $0.0 },
+                     measured: measured)
             drawProducts(products, name: name, names: names, page: page, pdf: pdf)
             drawPhotos(plan, files: photos.map { $0.1 }, name: name, page: page, pdf: pdf)
         }
@@ -205,7 +212,17 @@ enum FloorPlanPDF {
     // MARK: page 2+, the measurements
 
     private static func drawList(_ plan: Plan, units: Units, name: String, page: CGRect,
-                                 pdf: UIGraphicsPDFRendererContext, fronts: [StorageFront] = []) {
+                                 pdf: UIGraphicsPDFRendererContext, fronts: [StorageFront] = [],
+                                 measured: ScanMeasurements = ScanMeasurements()) {
+        func tape(_ key: String) -> String {
+            measured.confirmed[key].map { "; ✓ measured \(units.fine($0))" } ?? ""
+        }
+        func tapeDims(_ spot: String) -> String {
+            let parts = [("w", "width"), ("d", "depth"), ("h", "height")].compactMap { short, field in
+                measured.confirmed["\(spot)|\(field)"].map { "\(units.fine($0)) \(short)" }
+            }
+            return parts.isEmpty ? "" : "; ✓ measured " + parts.joined(separator: " × ")
+        }
         func shelvesIn(_ i: Int) -> String {
             guard let f = fronts.first(where: { $0.object == i }), !f.shelves.isEmpty else { return "" }
             return "; \(f.shelves.count) shel\(f.shelves.count == 1 ? "f" : "ves"), openings \(openingsText(f))"
@@ -217,7 +234,7 @@ enum FloorPlanPDF {
         var rows: [(String, String, String)] = []
         for (i, w) in plan.walls.enumerated() {
             rows.append(("W\(i + 1)", plan.names["Wall W\(i + 1)"] ?? "Wall", "\(units.length(w.length)) long, \(units.length(w.height)) high"
-                         + seenIn(.wall(i))))
+                         + tape("Wall W\(i + 1)") + seenIn(.wall(i))))
         }
         for (i, d) in plan.doors.enumerated() {
             rows.append(("D\(i + 1)", "Door", "\(units.length(d.width)) wide, \(units.length(d.height)) high"))
@@ -232,7 +249,11 @@ enum FloorPlanPDF {
         for (i, item) in plan.items.enumerated() {
             rows.append(("\(i + 1)", plan.names["\(i + 1) \(item.name)"].map { "\($0) (\(item.name))" } ?? item.name, "\(units.length(item.width)) wide × "
                          + "\(units.length(item.depth)) deep × \(units.length(item.height)) high"
-                         + shelvesIn(i) + seenIn(.item(i))))
+                         + tapeDims("\(i + 1) \(item.name)") + shelvesIn(i) + seenIn(.item(i))))
+        }
+        for (k, m) in measured.custom.enumerated() {
+            rows.append(("M\(k + 1)", m.label, "measured in 3D ≈ \(units.fine(m.length))"
+                         + (m.confirmed.map { "; ✓ tape \(units.fine($0))" } ?? "")))
         }
         guard !rows.isEmpty else { return }
 
@@ -332,8 +353,9 @@ enum FloorPlanPDF {
 
     /// A storage unit's front to scale with its shelves, every size an estimate with a blank beside it
     /// for the tape measurement.
-    private static func drawShelves(_ f: StorageFront, image url: URL, label: String, units: Units, name: String,
-                                    page: CGRect, pdf: UIGraphicsPDFRendererContext) {
+    private static func drawShelves(_ f: StorageFront, image url: URL, key: String, label: String, units: Units,
+                                    name: String, measured: ScanMeasurements, page: CGRect,
+                                    pdf: UIGraphicsPDFRendererContext) {
         guard let image = UIImage(contentsOfFile: url.path) else { return }
         pdf.beginPage()
         let ctx = pdf.cgContext
@@ -385,19 +407,25 @@ enum FloorPlanPDF {
         text("Estimate", at: CGPoint(x: tx + 110, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
         text("Measured", at: CGPoint(x: tx + 175, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
         y += 18
-        func row(_ what: String, _ estimate: String, color: UIColor = ink) {
+        func row(_ what: String, _ estimate: String, field: String, color: UIColor = ink) {
             text(what, at: CGPoint(x: tx, y: y), size: 10, color: color, anchor: .left)
             text(estimate, at: CGPoint(x: tx + 110, y: y), size: 10, weight: .medium, color: color, anchor: .left)
-            line(ctx, CGPoint(x: tx + 175, y: y + 6), CGPoint(x: tx + tableW, y: y + 6), width: 0.6, color: faint)
+            if let tape = measured.confirmed["\(key)|\(field)"] {
+                text("✓ \(units.fine(tape))", at: CGPoint(x: tx + 175, y: y), size: 10, weight: .semibold,
+                     color: UIColor(red: 0.1, green: 0.5, blue: 0.25, alpha: 1), anchor: .left)
+            } else {
+                line(ctx, CGPoint(x: tx + 175, y: y + 6), CGPoint(x: tx + tableW, y: y + 6), width: 0.6, color: faint)
+            }
             y += 22
         }
-        row("Width", units.fine(f.width))
-        row("Depth", units.fine(f.depth))
-        row("Height", units.fine(f.height))
+        row("Width", units.fine(f.width), field: "width")
+        row("Depth", units.fine(f.depth), field: "depth")
+        row("Height", units.fine(f.height), field: "height")
         y += 6
         if openings.count > 1 {
             for (k, o) in openings.enumerated() {
-                row("Opening \(k + 1)\(k == 0 ? " (top)" : "")", units.fine(o.top - o.bottom), color: accent)
+                row("Opening \(k + 1)\(k == 0 ? " (top)" : "")", units.fine(o.top - o.bottom),
+                    field: "opening \(k + 1)", color: accent)
             }
         } else {
             text("No shelves found in the photos: measure inside.", at: CGPoint(x: tx, y: y), size: 9,
