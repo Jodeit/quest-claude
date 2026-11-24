@@ -257,8 +257,10 @@ struct ScanScreen: View {
                 Text("\(session.counts.walls) walls · \(session.counts.doors) doors · "
                      + "\(session.counts.windows) windows · \(session.counts.objects) objects")
                     .font(.subheadline)
-                if session.phase == .scanning, let hint = session.coverage?.hint {
+                if session.phase == .scanning || session.meshPassRunning,
+                   let hint = session.hint ?? (session.phase == .scanning ? session.coverage?.hint : nil) {
                     Text(hint).font(.callout.weight(.medium)).multilineTextAlignment(.center)
+                        .animation(.default, value: hint)
                 }
                 Text(session.serverStatus).font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

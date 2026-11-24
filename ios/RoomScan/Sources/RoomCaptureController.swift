@@ -14,6 +14,12 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     var onFinished: ((Result<CapturedRoom, Error>) -> Void)?
     var onShutter: (() -> Void)?
     var onCoverage: ((CoverageSnapshot) -> Void)?
+    var onHint: ((String?) -> Void)?
+    private var hints = CaptureHints()
+    private var look: CaptureHints.Look?
+    private var lookTime = Date.distantPast
+    private var lookBusy = false
+    private var blurrySkipTimes: [Date] = []
 
     /// The frames kept so far: what's described, and the JPEG.
     private(set) var keyframes: [(Keyframe, Data)] = []
@@ -102,6 +108,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             while !Task.isCancelled {
                 self?.pollKeyframe()
                 self?.updateCoverage()
+                self?.updateHint()
                 if let self { self.meshTrianglesSeen = Swift.max(self.meshTrianglesSeen, LiDARMesh.triangles(in: self.arSession)) }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
@@ -153,6 +160,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 self?.pollKeyframe()
+                self?.updateHint()
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
@@ -227,6 +235,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             if recentSharpness.count > 30 { recentSharpness.removeFirst() }
             if sorted.count >= 5, result.1 < 0.45 * median {
                 blurryFramesSkipped += 1
+                blurrySkipTimes.append(Date())
                 lastKey = previousKey
             } else if let jpeg = result.0 {
                 var k = key
@@ -235,6 +244,25 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             }
             encoding = false
         }
+    }
+
+    /// Four times a second: the most useful thing to tell the person scanning (see CaptureHints).
+    private func updateHint() {
+        guard running || meshPass, let frame = arSession.currentFrame else { return }
+        if !lookBusy, Date().timeIntervalSince(lookTime) > 1 {
+            lookBusy = true
+            lookTime = Date()
+            let buffer = frame.capturedImage, context = ciContext
+            Task {
+                let l = await Task.detached(priority: .utility) { CaptureHints.look(buffer, context: context) }.value
+                look = l
+                lookBusy = false
+            }
+        }
+        blurrySkipTimes.removeAll { Date().timeIntervalSince($0) > 4 }
+        let text = hints.hint(frame: frame, look: look, blurrySkipsRecently: blurrySkipTimes.count,
+                              room: meshPass ? nil : latestRoom, keyframes: keyframes.map { $0.0 }, meshPass: meshPass)
+        onHint?(text)
     }
 
     /// About once a second: how well the kept frames cover each wall RoomPlan has found so far.

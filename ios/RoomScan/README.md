@@ -72,6 +72,12 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   edge band with a fingertip in it (more than 8% skin-coloured), thresholds from the first two real
   scans, where a fingertip crept into the bottom of several frames. The same frames also make a floor image from above (transparent outside the floor,
   neutral under furniture), which the dollhouse lays on its floor.
+- **Capture hints:** under the counts, the most urgent of: tracking trouble (too fast, nothing to
+  hold on to, finding its place again), a fingertip over the lens (a skin-coloured edge on a small
+  copy of the camera image, checked each second), a dark room, moving too fast for sharp photos
+  (speed, turn rate, or frames being skipped as blurry), and storage units not yet seen straight on
+  from within 1.8 m (where shelf sizes come from), with their direction; then the wall-coverage hint.
+  The photo-real pass, which has no RoomPlan coaching, gets them too.
 - **Coloring in:** while scanning, the parts of the walls no kept frame has photographed yet show in
   black and white over the live camera, and colour in as frames cover them (about 15 times a second:
   the uncovered 30 cm cells from the coverage, projected onto the screen as a mask over a grayscale
