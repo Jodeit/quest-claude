@@ -34,6 +34,7 @@ final class ScanSession: ObservableObject, Identifiable {
     @Published private(set) var counts = Counts()
     @Published private(set) var serverStatus: String
     @Published private(set) var photoCount = 0
+    @Published private(set) var coverage: CoverageSnapshot?
 
     /// Photos taken during this scan, kept in memory until the scan is saved with them.
     private var photos: [(ScanPhoto, Data)] = []
@@ -59,6 +60,9 @@ final class ScanSession: ObservableObject, Identifiable {
         }
         controller.onFinished = { [weak self] result in
             Task { @MainActor in self?.finished(result) }
+        }
+        controller.onCoverage = { [weak self] snapshot in
+            Task { @MainActor in self?.coverage = snapshot }
         }
         controller.onShutter = { [weak self] in
             Task { @MainActor in _ = await self?.takePhoto() }

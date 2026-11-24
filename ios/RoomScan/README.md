@@ -34,6 +34,11 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   stands against the wall, its front face is used instead of the wall behind it. Tuned against a
   real two-space scan with a numpy copy of the method; with closet shelving that removed most of the
   smearing.
+- **Coverage while scanning:** a map in the corner, turned so the way the phone points is up, colours
+  each wall red to green by how much of it the kept frames have seen (30 cm cells, seen from the
+  room side, fairly head-on, within 5 m: what the elevations need), with an overall percentage and a
+  hint like *Point at the red wall to your left (62%)*. **Done** asks first if a wall is under 70%:
+  on the first real scan, walls around 70% already had clear gray gaps.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan

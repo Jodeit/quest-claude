@@ -13,6 +13,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     var onLiveUpdate: ((CapturedRoom) -> Void)?
     var onFinished: ((Result<CapturedRoom, Error>) -> Void)?
     var onShutter: (() -> Void)?
+    var onCoverage: ((CoverageSnapshot) -> Void)?
 
     /// The frames kept so far: what's described, and the JPEG.
     private(set) var keyframes: [(Keyframe, Data)] = []
@@ -22,6 +23,9 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private var lastPoll: simd_float4x4?
     private var lastKey: simd_float4x4?
     private var encoding = false
+    private var latestRoom: CapturedRoom?
+    private var lastCoverage = Date.distantPast
+    private var computingCoverage = false
 
     private var captureView: RoomCaptureView!
     private var running = false
@@ -65,6 +69,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 self?.pollKeyframe()
+                self?.updateCoverage()
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
@@ -122,6 +127,22 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         }
     }
 
+    /// About once a second: how well the kept frames cover each wall RoomPlan has found so far.
+    private func updateCoverage() {
+        guard running, !computingCoverage, Date().timeIntervalSince(lastCoverage) > 1,
+              let room = latestRoom, let pose = lastPoll else { return }
+        computingCoverage = true
+        lastCoverage = Date()
+        let frames = keyframes.map { $0.0 }
+        Task {
+            let snapshot = await Task.detached(priority: .utility) {
+                Coverage.compute(room: room, frames: frames, camera: pose)
+            }.value
+            computingCoverage = false
+            if running { onCoverage?(snapshot) }
+        }
+    }
+
     /// The angle between where two poses look, in radians.
     private static func turn(_ a: simd_float4x4, _ b: simd_float4x4) -> Float {
         let fa = -simd_make_float3(a.columns.2), fb = -simd_make_float3(b.columns.2)
@@ -159,7 +180,10 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     // MARK: RoomCaptureSessionDelegate
 
     func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
-        DispatchQueue.main.async { self.onLiveUpdate?(room) }
+        DispatchQueue.main.async {
+            self.latestRoom = room
+            self.onLiveUpdate?(room)
+        }
     }
 
     // MARK: RoomCaptureViewDelegate

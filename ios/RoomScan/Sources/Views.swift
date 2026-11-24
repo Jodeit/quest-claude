@@ -179,6 +179,7 @@ struct ScanScreen: View {
     @ObservedObject var session: ScanSession
     let close: () -> Void
     @State private var flash = false
+    @State private var confirmDone = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -186,11 +187,20 @@ struct ScanScreen: View {
                 .ignoresSafeArea()
             Color.white.opacity(flash ? 0.6 : 0).ignoresSafeArea().allowsHitTesting(false)
                 .onChange(of: session.photoCount) { flashOnce() }
+            if session.phase == .scanning, let coverage = session.coverage {
+                CoverageMap(snapshot: coverage)
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .allowsHitTesting(false)
+            }
             VStack(spacing: 10) {
                 Text(title).font(.headline)
                 Text("\(session.counts.walls) walls · \(session.counts.doors) doors · "
                      + "\(session.counts.windows) windows · \(session.counts.objects) objects")
                     .font(.subheadline)
+                if session.phase == .scanning, let hint = session.coverage?.hint {
+                    Text(hint).font(.callout.weight(.medium)).multilineTextAlignment(.center)
+                }
                 Text(session.serverStatus).font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 HStack(spacing: 12) {
@@ -208,8 +218,14 @@ struct ScanScreen: View {
                                   systemImage: "camera.fill")
                         }
                         .buttonStyle(.bordered)
-                        Button("Done") { session.finish() }
-                            .buttonStyle(.borderedProminent)
+                        Button("Done") {
+                            if (session.coverage?.weakWalls ?? 0) > 0 { confirmDone = true } else { session.finish() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .confirmationDialog(doneQuestion, isPresented: $confirmDone, titleVisibility: .visible) {
+                            Button("Keep scanning", role: .cancel) {}
+                            Button("Finish anyway") { session.finish() }
+                        }
                     case .processing:
                         ProgressView()
                     default:
@@ -230,6 +246,12 @@ struct ScanScreen: View {
     private func flashOnce() {
         flash = true
         withAnimation(.easeOut(duration: 0.3)) { flash = false }
+    }
+
+    private var doneQuestion: String {
+        let n = session.coverage?.weakWalls ?? 0
+        return "\(n) wall\(n == 1 ? " is" : "s are") under 70% photographed (red or orange on the map), so "
+            + "\(n == 1 ? "its" : "their") elevation\(n == 1 ? "" : "s") will have gray gaps."
     }
 
     private var title: String {
