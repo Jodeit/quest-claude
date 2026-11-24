@@ -1,5 +1,6 @@
 import Foundation
 import RoomPlan
+import simd
 
 /// A finished scan kept on the phone: Documents/Scans/<id>/{room.json, room.usdz, <id>-plan.pdf, info.json}.
 /// The Files app can see Documents, so the JSON and USDZ can be pulled off without the server.
@@ -125,7 +126,7 @@ final class ScanLibrary: ObservableObject {
         var frames = frames
         if let data = try? json(for: s), let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) {
             let fix = mesh.fit(to: room)
-            for i in frames.indices { frames[i].0.transform = (fix * frames[i].0.pose).packed }
+            for i in frames.indices { frames[i].0.transform = simd_mul(fix, frames[i].0.pose).packed }
         }
         try? mesh.write(to: meshURL(s))
         if !frames.isEmpty {
