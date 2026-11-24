@@ -243,6 +243,77 @@ enum FloorPlanPDF {
         }
     }
 
+    // MARK: home plan
+
+    /// Every room of a home on one page, where they are relative to each other (they were scanned in
+    /// one camera session, so they share coordinates): walls, doors and windows, each room's name
+    /// and floor area. Each room's own PDF has the dimensions.
+    static func renderHome(_ rooms: [(name: String, room: CapturedRoom)], title: String, date: Date) -> Data {
+        guard let first = rooms.first else { return Data() }
+        let angle = Plan(first.room).angle
+        let plans = rooms.map { (name: $0.name, plan: Plan($0.room, angle: angle)) }
+        let points = plans.flatMap { [$0.plan.lo, $0.plan.hi] }
+        let lo = points.dropFirst().reduce(points[0]) { simd_min($0, $1) }
+        let hi = points.dropFirst().reduce(points[0]) { simd_max($0, $1) }
+        let size = SIMD2<Float>(Swift.max(hi.x - lo.x, 0.5), Swift.max(hi.y - lo.y, 0.5))
+        let page = size.x > size.y * 1.1 ? CGRect(x: 0, y: 0, width: 792, height: 612)
+            : CGRect(x: 0, y: 0, width: 612, height: 792)
+        let units = Units(imperial: Locale.current.measurementSystem == .us)
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle as String: "\(title) plan", kCGPDFContextCreator as String: "RoomScan"]
+        return UIGraphicsPDFRenderer(bounds: page, format: format).pdfData { pdf in
+            pdf.beginPage()
+            let ctx = pdf.cgContext
+            let total = plans.compactMap { $0.plan.area }.reduce(0, +)
+            text(title, at: CGPoint(x: margin, y: margin), size: 18, weight: .semibold, anchor: .topLeft)
+            text("\(date.formatted(date: .long, time: .omitted))  ·  \(rooms.count) rooms  ·  "
+                 + "\(units.area(total)) scanned", at: CGPoint(x: margin, y: margin + 24), size: 10,
+                 color: faint, anchor: .topLeft)
+            let box = CGRect(x: margin, y: margin + 56, width: page.width - 2 * margin,
+                             height: page.height - 2 * margin - 56 - 30).insetBy(dx: 10, dy: 10)
+            let scale = CGFloat(Swift.min(Float(box.width) / size.x, Float(box.height) / size.y))
+            let mid = (lo + hi) / 2
+            func pt(_ p: SIMD2<Float>) -> CGPoint {
+                CGPoint(x: box.midX + CGFloat(p.x - mid.x) * scale, y: box.midY + CGFloat(p.y - mid.y) * scale)
+            }
+            let tints: [UIColor] = [UIColor(red: 0.93, green: 0.95, blue: 0.97, alpha: 1),
+                                    UIColor(red: 0.96, green: 0.94, blue: 0.91, alpha: 1),
+                                    UIColor(red: 0.93, green: 0.96, blue: 0.93, alpha: 1),
+                                    UIColor(red: 0.96, green: 0.93, blue: 0.95, alpha: 1)]
+            for (k, entry) in plans.enumerated() {
+                for poly in entry.plan.floors where poly.count > 2 {
+                    ctx.beginPath()
+                    ctx.addLines(between: poly.map(pt))
+                    ctx.closePath()
+                    ctx.setFillColor(tints[k % tints.count].cgColor)
+                    ctx.fillPath()
+                }
+            }
+            for entry in plans {
+                let plan = entry.plan
+                for wall in plan.walls { line(ctx, pt(wall.a), pt(wall.b), width: 3, color: ink, cap: .square) }
+                for o in plan.openings + plan.doors { line(ctx, pt(o.a), pt(o.b), width: 5, color: .white, cap: .butt) }
+                for o in plan.doors {
+                    let n = cg(o.out) * 2.5
+                    line(ctx, pt(o.a) - n, pt(o.a) + n, width: 1, color: doorColor)
+                    line(ctx, pt(o.b) - n, pt(o.b) + n, width: 1, color: doorColor)
+                }
+                for o in plan.windows { line(ctx, pt(o.a), pt(o.b), width: 2, color: windowColor, cap: .butt) }
+            }
+            for entry in plans {
+                let plan = entry.plan
+                let pts = plan.floors.first ?? plan.walls.flatMap { [$0.a, $0.b] }
+                guard !pts.isEmpty else { continue }
+                let c = pts.reduce(SIMD2<Float>(0, 0), +) / Float(pts.count)
+                text(entry.name, at: pt(c) - CGPoint(x: 0, y: 6), size: 10, weight: .semibold)
+                if let a = plan.area { text(units.area(a), at: pt(c) + CGPoint(x: 0, y: 7), size: 8, color: faint) }
+            }
+            text("Rooms scanned one after another in one session, so they sit where they are in the home. "
+                 + "Each room's own plan has its dimensions.",
+                 at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
+        }
+    }
+
     // MARK: elevation pages
 
     /// One wall per page: the projected photo to scale, its width and height, and the
@@ -514,16 +585,22 @@ private struct Plan {
     var names: [String: String] = [:]  // spot label ("3 Storage", "Wall W2") -> the organizer's name for it
     var area: Float?
     var ceiling: Float?
+    var angle: Float = 0
     var lo = SIMD2<Float>(0, 0)
     var hi = SIMD2<Float>(0, 0)
     var size: SIMD2<Float> { hi - lo }
 
-    init(_ room: CapturedRoom, photos: [ScanPhoto] = []) {
+    /// `angle`: how far to turn the room (radians); by default so its longest wall runs across.
+    /// Rooms of one home share the first room's, so they fit together.
+    init(_ room: CapturedRoom, photos: [ScanPhoto] = [], angle fixed: Float? = nil) {
         var angle: Float = 0
-        if let longest = room.walls.max(by: { $0.dimensions.x < $1.dimensions.x }) {
+        if let fixed {
+            angle = fixed
+        } else if let longest = room.walls.max(by: { $0.dimensions.x < $1.dimensions.x }) {
             let d = Self.dir(longest.transform.columns.0)
             angle = atan2(d.y, d.x)
         }
+        self.angle = angle
         let c = cos(-angle), s = sin(-angle)
         func turn(_ p: SIMD2<Float>) -> SIMD2<Float> { SIMD2(c * p.x - s * p.y, s * p.x + c * p.y) }
         func ends(_ t: simd_float4x4, _ length: Float) -> (SIMD2<Float>, SIMD2<Float>) {

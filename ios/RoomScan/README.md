@@ -34,6 +34,12 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   stands against the wall, its front face is used instead of the wall behind it. Tuned against a
   real two-space scan with a numpy copy of the method; with closet shelving that removed most of the
   smearing.
+- **Whole homes:** after a room is saved, **Scan next room** names the next one and carries on without
+  stopping the camera (RoomPlan's multi-room support, iOS 17), so every room of the session comes out
+  in one coordinate system. Each is an ordinary scan with its own plan, elevations, photos and
+  products; the home list gets a **Home plan**: every room in place on one page, with names and
+  floor areas. Walk between rooms with the phone up; covering the camera or a long pause can lose
+  tracking.
 - **Dollhouse:** a scan's **3D** button shows it as a model to turn and zoom: walls wearing their
   elevation photos, the floor, furniture as see-through boxes tagged with their spot names, and photo
   pins. Walls are one-sided, facing the room, so whichever walls stand between you and the room are

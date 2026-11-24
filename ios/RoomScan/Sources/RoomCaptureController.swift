@@ -59,6 +59,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             captureView.captureSession.stop()
             running = false
         }
+        captureView.captureSession.arSession.pause()  // it's kept running between rooms
         stopKeyframes()
     }
 
@@ -76,11 +77,23 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     }
 
     /// Stop scanning; RoomPlan then processes the room and calls captureView(didPresent:error:).
+    /// The camera session keeps running, so a next room continues in the same coordinates.
     func finish() {
         guard running else { return }
-        captureView.captureSession.stop()
+        captureView.captureSession.stop(pauseARSession: false)
         running = false
         stopKeyframes()
+    }
+
+    /// Scan another room in the same camera session: the rooms come out in one coordinate system,
+    /// so they can be drawn together.
+    func startNextRoom() {
+        guard !running else { return }
+        keyframes = []
+        latestRoom = nil
+        lastKey = nil
+        lastPoll = nil
+        start()
     }
 
     private func stopKeyframes() {

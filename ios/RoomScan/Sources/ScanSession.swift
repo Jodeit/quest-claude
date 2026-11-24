@@ -27,7 +27,10 @@ final class ScanSession: ObservableObject, Identifiable {
     }
 
     nonisolated let id = UUID()
-    let name: String
+    private(set) var name: String
+    /// Every room scanned in this session belongs to one home.
+    let homeID = UUID().uuidString
+    @Published private(set) var roomsSaved = 0
     let controller = RoomCaptureController()
 
     @Published private(set) var phase: Phase = .scanning
@@ -78,6 +81,24 @@ final class ScanSession: ObservableObject, Identifiable {
     func cancel() {
         phase = .cancelled
         controller.finish()
+    }
+
+    /// After a room is saved: scan the next one without stopping the camera, so it lands in the
+    /// same coordinates and the home can be drawn as a whole.
+    func nextRoom(named next: String) {
+        guard case .done = phase else { return }
+        name = next
+        photos = []
+        photoCount = 0
+        coverage = nil
+        counts = Counts()
+        serverScanID = nil
+        latest = nil
+        lastSent = .distantPast
+        serverStatus = client == nil ? "No server set: the scan stays on this phone."
+            : live ? "Live: waiting for the first walls…" : "Will send to the server when done."
+        phase = .scanning
+        controller.startNextRoom()
     }
 
     /// Take a photo from the scanning camera; it's pinned on the plan where it was taken.
@@ -154,7 +175,7 @@ final class ScanSession: ObservableObject, Identifiable {
         var saved: SavedScan
         do {
             body = try JSONEncoder().encode(room)
-            saved = try library.save(room: room, json: body, name: name, photos: photos,
+            saved = try library.save(room: room, json: body, name: name, homeID: homeID, photos: photos,
                                      frames: controller.keyframes)
         } catch {
             phase = .failed("Couldn't save the scan: \(error.localizedDescription)")
@@ -180,6 +201,7 @@ final class ScanSession: ObservableObject, Identifiable {
             }
             library.update(saved)
         }
+        roomsSaved += 1
         phase = .done(saved)
     }
 }

@@ -12,6 +12,7 @@ struct SavedScan: Identifiable, Codable, Hashable {
     var windows: Int
     var objects: Int
     var photos: Int?  // nil for scans saved before the app took photos
+    var homeID: String?  // rooms scanned one after another in one session share it
     var serverScanID: String?
     var uploadError: String?
 
@@ -90,6 +91,24 @@ final class ScanLibrary: ObservableObject {
         if let failure { throw failure }
         guard let made else { throw CocoaError(.fileWriteUnknown) }
         return made
+    }
+
+    /// Homes: rooms that share a homeID, two or more, oldest room first.
+    var homes: [[SavedScan]] {
+        Dictionary(grouping: scans.filter { $0.homeID != nil }, by: { $0.homeID! })
+            .values.filter { $0.count > 1 }
+            .map { $0.sorted { $0.date < $1.date } }
+            .sorted { ($0.first?.date ?? .distantPast) > ($1.first?.date ?? .distantPast) }
+    }
+
+    /// One page with every room of a home in place.
+    func homePlan(_ rooms: [SavedScan]) throws -> URL {
+        let decoded = try rooms.map { (name: $0.name, room: try JSONDecoder().decode(CapturedRoom.self, from: json(for: $0))) }
+        let first = rooms.first!
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(first.id)-home-plan.pdf")
+        let title = "Home: " + rooms.map(\.name).joined(separator: ", ")
+        try FloorPlanPDF.renderHome(decoded, title: title, date: first.date).write(to: url, options: .atomic)
+        return url
     }
 
     func products(for s: SavedScan) -> [ProductLine] {
@@ -176,7 +195,7 @@ final class ScanLibrary: ObservableObject {
     /// Keep a processed room: its RoomPlan JSON, a USDZ model of it, the photos and keyframes
     /// taken while scanning, a floor plan PDF, and the bookkeeping. Elevations come after
     /// (addElevations), since they take a while.
-    func save(room: CapturedRoom, json: Data, name: String, photos: [(ScanPhoto, Data)] = [],
+    func save(room: CapturedRoom, json: Data, name: String, homeID: String? = nil, photos: [(ScanPhoto, Data)] = [],
               frames: [(Keyframe, Data)] = []) throws -> SavedScan {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -187,7 +206,7 @@ final class ScanLibrary: ObservableObject {
         var scan = SavedScan(id: "\(stamp)-\(slug.isEmpty ? "scan" : slug)", name: name, date: Date(),
                              walls: room.walls.count, doors: room.doors.count,
                              windows: room.windows.count, objects: room.objects.count,
-                             photos: photos.isEmpty ? nil : photos.count)
+                             photos: photos.isEmpty ? nil : photos.count, homeID: homeID)
         while FileManager.default.fileExists(atPath: folder(scan).path) { scan.id += "-1" }
         try FileManager.default.createDirectory(at: folder(scan), withIntermediateDirectories: true)
         try json.write(to: jsonURL(scan))

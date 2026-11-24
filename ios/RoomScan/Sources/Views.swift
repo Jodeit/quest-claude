@@ -9,6 +9,8 @@ struct HomeView: View {
     @State private var askName = false
     @State private var newName = ""
     @State private var session: ScanSession?
+    @State private var homePlan: URL?
+    @State private var homeError: String?
 
     var body: some View {
         NavigationStack {
@@ -34,6 +36,24 @@ struct HomeView: View {
                               systemImage: settings.client == nil ? "server.rack" : "checkmark.circle")
                     }
                 }
+                if !library.homes.isEmpty {
+                    Section("Homes") {
+                        ForEach(library.homes, id: \.first!.id) { rooms in
+                            Button {
+                                do { homePlan = try library.homePlan(rooms) } catch {
+                                    homeError = "Couldn't draw the home plan: \(error.localizedDescription)"
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Label("Home plan", systemImage: "house")
+                                    Text(rooms.map(\.name).joined(separator: " · "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        if let homeError { Text(homeError).font(.caption).foregroundStyle(.red) }
+                    }
+                }
                 Section("Scans") {
                     if library.scans.isEmpty {
                         Text("Nothing scanned yet.").foregroundStyle(.secondary)
@@ -47,6 +67,7 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("RoomScan")
+            .quickLookPreview($homePlan)
             .sheet(isPresented: $showSettings) { SettingsView() }
             .alert("Name this room", isPresented: $askName) {
                 TextField("Living room", text: $newName)
@@ -185,6 +206,8 @@ struct ScanScreen: View {
     let close: () -> Void
     @State private var flash = false
     @State private var confirmDone = false
+    @State private var askNext = false
+    @State private var nextName = ""
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -233,6 +256,13 @@ struct ScanScreen: View {
                         }
                     case .processing:
                         ProgressView()
+                    case .done:
+                        Button("Close", action: close).buttonStyle(.bordered)
+                        Button("Scan next room") {
+                            nextName = ""
+                            askNext = true
+                        }
+                        .buttonStyle(.borderedProminent)
                     default:
                         Button("Close", action: close).buttonStyle(.borderedProminent)
                     }
@@ -240,6 +270,17 @@ struct ScanScreen: View {
             }
             .padding()
             .frame(maxWidth: 420)
+            .alert("Name the next room", isPresented: $askNext) {
+                TextField("Kitchen", text: $nextName)
+                Button("Scan") {
+                    let n = nextName.trimmingCharacters(in: .whitespaces)
+                    session.nextRoom(named: n.isEmpty ? "Room \(session.roomsSaved + 1)" : n)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Walk straight there with the phone up: keeping the camera going is what lets the rooms "
+                     + "line up on the home plan.")
+            }
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
             .padding()
         }
