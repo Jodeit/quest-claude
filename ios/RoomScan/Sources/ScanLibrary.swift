@@ -59,6 +59,7 @@ final class ScanLibrary: ObservableObject {
     }
 
     func elevations(for s: SavedScan) -> [(Elevation, URL)] { WallElevations.load(from: elevationsFolder(s)) }
+    func floorImage(for s: SavedScan) -> (WallElevations.FloorImage, URL)? { WallElevations.loadFloor(from: elevationsFolder(s)) }
 
     func hasFrames(_ s: SavedScan) -> Bool {
         FileManager.default.fileExists(atPath: framesFolder(s).appendingPathComponent("frames.json").path)

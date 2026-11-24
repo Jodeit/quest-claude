@@ -22,6 +22,7 @@ enum Dollhouse {
         let elevations: [(Elevation, URL)]
         let photos: [ScanPhoto]
         let names: [String: String]
+        var floor: (WallElevations.FloorImage, URL)? = nil
     }
 
     /// One room, or every room of a home (they share coordinates, so they fit together). Tappable
@@ -108,7 +109,21 @@ enum Dollhouse {
             let node = SCNNode(geometry: shape)
             // The path is drawn in x and -z; turn it to lie flat at the floor.
             node.eulerAngles.x = -.pi / 2
-            node.position.y = floorY - 0.01
+            node.position.y = floorY - 0.02
+            root.addChildNode(node)
+        }
+        // The floor photo, laid on top: a plane over the floor's bounds, transparent outside it.
+        if let (f, url) = part.floor, let image = UIImage(contentsOfFile: url.path) {
+            let plane = SCNPlane(width: CGFloat(f.maxX - f.minX), height: CGFloat(f.maxZ - f.minZ))
+            let m = SCNMaterial()
+            m.diffuse.contents = image
+            m.lightingModel = .constant
+            m.transparencyMode = .aOne
+            plane.materials = [m]
+            let node = SCNNode(geometry: plane)
+            // Flat, facing up; the image's top edge lies toward -z, as it was drawn.
+            node.eulerAngles.x = -.pi / 2
+            node.simdPosition = SIMD3((f.minX + f.maxX) / 2, f.y + 0.002, (f.minZ + f.maxZ) / 2)
             root.addChildNode(node)
         }
 
@@ -236,7 +251,7 @@ struct DollhouseView: View {
                 })
                 parts.append(Dollhouse.Part(room: room, elevations: library.elevations(for: scan),
                                             photos: library.photos(for: scan).map { $0.0 },
-                                            names: library.names(for: scan)))
+                                            names: library.names(for: scan), floor: library.floorImage(for: scan)))
             }
             model = Dollhouse.build(parts)
         } catch {

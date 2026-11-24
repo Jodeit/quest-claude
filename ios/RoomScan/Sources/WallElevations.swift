@@ -132,7 +132,108 @@ enum WallElevations {
         if let data = try? JSONEncoder().encode(made) {
             try? data.write(to: dir.appendingPathComponent("elevations.json"))
         }
+        autoreleasepool {
+            if let floor = renderFloor(room, occluders: occluders, views: views, to: dir),
+               let data = try? JSONEncoder().encode(floor) {
+                try? data.write(to: dir.appendingPathComponent("floor.json"))
+            }
+        }
         return made
+    }
+
+    /// The floor from above: where it lies (ARKit x and z) and the image of it.
+    struct FloorImage: Codable, Hashable {
+        var file: String
+        var minX, minZ, maxX, maxZ, y: Float
+    }
+
+    static func loadFloor(from dir: URL) -> (FloorImage, URL)? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("floor.json")),
+              let f = try? JSONDecoder().decode(FloorImage.self, from: data) else { return nil }
+        return (f, dir.appendingPathComponent(f.file))
+    }
+
+    /// The frames projected onto the floor, seen from above: a PNG, transparent outside RoomPlan's
+    /// floor outline, neutral under furniture (the dollhouse puts boxes there, and furniture smears).
+    private static func renderFloor(_ room: CapturedRoom, occluders: Occluders, views: [View], to dir: URL) -> FloorImage? {
+        guard let f = room.floors.first, f.polygonCorners.count > 2 else { return nil }
+        let outline = f.polygonCorners.map { p -> SIMD2<Float> in
+            let w = f.transform * SIMD4<Float>(p.x, p.y, p.z, 1)
+            return SIMD2(w.x, w.z)
+        }
+        let y = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? f.transform.columns.3.y
+        let lo = outline.dropFirst().reduce(outline[0]) { simd_min($0, $1) } - 0.05
+        let hi = outline.dropFirst().reduce(outline[0]) { simd_max($0, $1) } + 0.05
+        // Frames looking down, most downward first.
+        let chosen = views.filter { $0.forward.y < -0.2 }.sorted { $0.forward.y < $1.forward.y }
+            .prefix(framesPerWall).compactMap { Bitmap($0) }
+        guard !chosen.isEmpty else { return nil }
+        struct Footprint { var c, ax, az: SIMD2<Float>; var hx, hz: Float }
+        let footprints = room.objects.map { o -> Footprint in
+            let t = o.transform
+            func flat(_ v: simd_float4) -> SIMD2<Float> {
+                let h = SIMD2(v.x, v.z), l = simd_length(h)
+                return l > 1e-6 ? h / l : SIMD2(1, 0)
+            }
+            return Footprint(c: SIMD2(t.columns.3.x, t.columns.3.z), ax: flat(t.columns.0), az: flat(t.columns.2),
+                             hx: o.dimensions.x / 2, hz: o.dimensions.z / 2)
+        }
+        func inside(_ q: SIMD2<Float>) -> Bool {
+            var yes = false
+            var j = outline.count - 1
+            for i in outline.indices {
+                let a = outline[i], b = outline[j]
+                if (a.y > q.y) != (b.y > q.y), q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x { yes.toggle() }
+                j = i
+            }
+            return yes
+        }
+        let ppm = Swift.min(100, 1600 / Swift.max(hi.x - lo.x, hi.y - lo.y))
+        let w = Swift.max(1, Int((hi.x - lo.x) * ppm)), h = Swift.max(1, Int((hi.y - lo.y) * ppm))
+        var out = [UInt8](repeating: 0, count: w * h * 4)
+        let up = SIMD3<Float>(0, 1, 0)
+        for j in 0..<h {
+            for i in 0..<w {
+                let q = SIMD2(lo.x + (Float(i) + 0.5) / ppm, lo.y + (Float(j) + 0.5) / ppm)
+                guard inside(q) else { continue }  // stays transparent
+                let o = (j * w + i) * 4
+                out[o + 3] = 255
+                if footprints.contains(where: { fp in
+                    let d = q - fp.c
+                    return abs(simd_dot(d, fp.ax)) < fp.hx && abs(simd_dot(d, fp.az)) < fp.hz
+                }) {
+                    out[o] = 214; out[o + 1] = 208; out[o + 2] = 200
+                    continue
+                }
+                let p = SIMD3(q.x, y, q.y)
+                var rgb = SIMD3<Float>(0, 0, 0), total: Float = 0
+                for bm in chosen {
+                    guard let px = bm.view.project(p), bm.usable(px.0, px.1) else { continue }
+                    let toCam = bm.view.position - p
+                    let dist = simd_length(toCam)
+                    let facing = simd_dot(toCam / dist, up)
+                    guard facing > 0.15, !occluders.blocked(bm.view.position, p, skip: -1) else { continue }
+                    let edge = Swift.min(1, Swift.min(Swift.min(px.0, bm.w - px.0), Swift.min(px.1, bm.h - px.1)) / (0.12 * bm.w))
+                    var weight = facing * edge
+                    weight = weight * weight
+                    weight = weight * weight
+                    weight = weight * weight / (dist * dist)
+                    guard weight > 0 else { continue }
+                    rgb += bm.sample(px.0, px.1) * weight
+                    total += weight
+                }
+                let c = total > 0 ? rgb / total : SIMD3<Float>(236, 236, 236)
+                out[o] = UInt8(Swift.min(255, c.x)); out[o + 1] = UInt8(Swift.min(255, c.y)); out[o + 2] = UInt8(Swift.min(255, c.z))
+            }
+        }
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let image: CGImage? = out.withUnsafeMutableBytes { buf in
+            CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                      space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+        }
+        guard let image, let png = UIImage(cgImage: image).pngData(),
+              (try? png.write(to: dir.appendingPathComponent("floor.png"))) != nil else { return nil }
+        return FloorImage(file: "floor.png", minX: lo.x, minZ: lo.y, maxX: hi.x, maxZ: hi.y, y: y)
     }
 
     /// Reads what render made, with the files' locations.
@@ -197,7 +298,7 @@ enum WallElevations {
                 }
                 var rgb = SIMD3<Float>(0, 0, 0), total: Float = 0
                 for bm in chosen {
-                    guard let px = bm.view.project(p) else { continue }
+                    guard let px = bm.view.project(p), bm.usable(px.0, px.1) else { continue }
                     let x = px.0, y = px.1
                     let toCam = bm.view.position - p
                     let dist = simd_length(toCam)
@@ -288,11 +389,54 @@ enum WallElevations {
                 return true
             }
             guard ok else { return nil }
+            let width = img.width, height = img.height, rowBytes = width * 4
+            // Dark or hazy frames (lens covered, smudged, pointing at the dark) spoil whatever they
+            // touch. On the first real scan the only two below 26 were exactly those; the rest were 31+.
+            var sum: Float = 0, sumSq: Float = 0, n: Float = 0
+            for y in Swift.stride(from: 0, to: height, by: 4) {
+                for x in Swift.stride(from: 0, to: width, by: 4) {
+                    let o = y * rowBytes + x * 4
+                    let l = 0.299 * Float(px[o]) + 0.587 * Float(px[o + 1]) + 0.114 * Float(px[o + 2])
+                    sum += l; sumSq += l * l; n += 1
+                }
+            }
+            let mean = sum / n
+            guard (sumSq / n - mean * mean).squareRoot() >= 26 else { return nil }
+            // A fingertip over the lens shows as a pink blur along one edge. Skip any edge band (a fifth
+            // of the frame) that's more than 8% skin-coloured; frames without one stayed under 5%.
+            func skin(_ x0: Int, _ x1: Int, _ y0: Int, _ y1: Int) -> Bool {
+                var hits = 0, count = 0
+                for y in Swift.stride(from: y0, to: y1, by: 3) {
+                    for x in Swift.stride(from: x0, to: x1, by: 3) {
+                        let o = y * rowBytes + x * 4
+                        let r = Int(px[o]), g = Int(px[o + 1]), b = Int(px[o + 2])
+                        if r > 120, r - g > 35, abs(g - b) < 30, r - b > 35 { hits += 1 }
+                        count += 1
+                    }
+                }
+                return count > 0 && Float(hits) / Float(count) > 0.08
+            }
+            let bw = width / 5, bh = height / 5
+            cutRight = skin(width - bw, width, 0, height) ? Float(width - bw) : nil
+            cutLeft = skin(0, bw, 0, height) ? Float(bw) : nil
+            cutTop = skin(0, width, 0, bh) ? Float(bh) : nil
+            cutBottom = skin(0, width, height - bh, height) ? Float(height - bh) : nil
             self.view = view
             pixels = px
             w = view.width
             h = view.height
-            stride = img.width * 4
+            stride = rowBytes
+        }
+
+        private let cutRight, cutLeft, cutTop, cutBottom: Float?
+
+        /// False where a fingertip was found along that edge.
+        func usable(_ x: Float, _ y: Float) -> Bool {
+            if let c = cutRight, x > c { return false }
+            if let c = cutLeft, x < c { return false }
+            if let c = cutTop, y < c { return false }
+            if let c = cutBottom, y > c { return false }
+            return true
         }
 
         /// Bilinear, 0-255 per channel.
