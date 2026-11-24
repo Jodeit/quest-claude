@@ -1,7 +1,7 @@
 import Foundation
 import RoomPlan
 
-/// A finished scan kept on the phone: Documents/Scans/<id>/{room.json, room.usdz, info.json}.
+/// A finished scan kept on the phone: Documents/Scans/<id>/{room.json, room.usdz, <id>-plan.pdf, info.json}.
 /// The Files app can see Documents, so the JSON and USDZ can be pulled off without the server.
 struct SavedScan: Identifiable, Codable, Hashable {
     var id: String
@@ -44,6 +44,18 @@ final class ScanLibrary: ObservableObject {
     func jsonURL(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("room.json") }
     func usdzURL(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("room.usdz") }
     func hasUSDZ(_ s: SavedScan) -> Bool { FileManager.default.fileExists(atPath: usdzURL(s).path) }
+    func planURL(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("\(s.id)-plan.pdf") }
+
+    /// The dimensioned floor plan PDF, drawn from the saved scan if it isn't there yet
+    /// (scans saved before the app made plans).
+    func plan(for s: SavedScan) throws -> URL {
+        let url = planURL(s)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
+            try FloorPlanPDF.write(room, name: s.name, date: s.date, to: url)
+        }
+        return url
+    }
 
     func reload() {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
@@ -69,6 +81,7 @@ final class ScanLibrary: ObservableObject {
         try FileManager.default.createDirectory(at: folder(scan), withIntermediateDirectories: true)
         try json.write(to: jsonURL(scan))
         try? room.export(to: usdzURL(scan))  // a nice-to-have; the JSON is what the server needs
+        try? FloorPlanPDF.write(room, name: name, date: scan.date, to: planURL(scan))
         try write(scan)
         return scan
     }

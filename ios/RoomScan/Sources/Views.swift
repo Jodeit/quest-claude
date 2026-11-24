@@ -1,3 +1,4 @@
+import QuickLook
 import RoomPlan
 import SwiftUI
 
@@ -74,6 +75,8 @@ struct ScanRow: View {
     @EnvironmentObject private var library: ScanLibrary
     let scan: SavedScan
     @State private var sending = false
+    @State private var planPreview: URL?
+    @State private var planError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -98,6 +101,11 @@ struct ScanRow: View {
                     .disabled(sending)
                 }
                 Spacer()
+                Button {
+                    do { planPreview = try library.plan(for: scan) } catch {
+                        planError = "Couldn't draw the plan: \(error.localizedDescription)"
+                    }
+                } label: { Label("Plan", systemImage: "ruler") }
                 ShareLink(item: library.jsonURL(scan)) { Label("JSON", systemImage: "square.and.arrow.up") }
                 if library.hasUSDZ(scan) {
                     ShareLink(item: library.usdzURL(scan)) { Label("3D", systemImage: "cube") }
@@ -105,11 +113,12 @@ struct ScanRow: View {
             }
             .buttonStyle(.borderless)
             .font(.caption)
-            if let err = scan.uploadError {
+            if let err = scan.uploadError ?? planError {
                 Text(err).font(.caption).foregroundStyle(.red)
             }
         }
         .padding(.vertical, 4)
+        .quickLookPreview($planPreview)  // its share button sends the PDF on (Mail, AirDrop, Files)
     }
 
     private func upload() async {
