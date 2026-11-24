@@ -12,7 +12,7 @@ final class CoverageOverlay: UIView {
     weak var session: ARSession?
 
     private let gray = CALayer()
-    private let mask = CAShapeLayer()
+    private let shape = CAShapeLayer()
     private var link: CADisplayLink?
     private let context = CIContext(options: [.cacheIntermediates: false])
     private var busy = false
@@ -21,7 +21,7 @@ final class CoverageOverlay: UIView {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         gray.contentsGravity = .resize
-        gray.mask = mask
+        gray.mask = shape
         layer.addSublayer(gray)
     }
 
@@ -30,7 +30,7 @@ final class CoverageOverlay: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         gray.frame = bounds
-        mask.frame = bounds
+        shape.frame = bounds
     }
 
     func start() {
@@ -45,7 +45,7 @@ final class CoverageOverlay: UIView {
         link?.invalidate()
         link = nil
         gray.contents = nil
-        mask.path = nil
+        shape.path = nil
         snapshot = nil
     }
 
@@ -70,7 +70,7 @@ final class CoverageOverlay: UIView {
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        mask.path = path.cgPath
+        shape.path = path.cgPath
         CATransaction.commit()
         if path.isEmpty {
             gray.contents = nil
