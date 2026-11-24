@@ -390,18 +390,18 @@ enum WallElevations {
             }
             guard ok else { return nil }
             let width = img.width, height = img.height, rowBytes = width * 4
-            // Dark or hazy frames (lens covered, smudged, pointing at the dark) spoil whatever they
-            // touch. On the first real scan the only two below 26 were exactly those; the rest were 31+.
-            var sum: Float = 0, sumSq: Float = 0, n: Float = 0
+            // Nearly black frames (lens covered, the first moment of a scan) spoil whatever they touch:
+            // the one in the first real scan averaged 15 where the rest were 100+. (Low contrast is no
+            // test: plain walls and ceilings are low-contrast and good.)
+            var sum: Float = 0, n: Float = 0
             for y in Swift.stride(from: 0, to: height, by: 4) {
                 for x in Swift.stride(from: 0, to: width, by: 4) {
                     let o = y * rowBytes + x * 4
-                    let l = 0.299 * Float(px[o]) + 0.587 * Float(px[o + 1]) + 0.114 * Float(px[o + 2])
-                    sum += l; sumSq += l * l; n += 1
+                    sum += 0.299 * Float(px[o]) + 0.587 * Float(px[o + 1]) + 0.114 * Float(px[o + 2])
+                    n += 1
                 }
             }
-            let mean = sum / n
-            guard (sumSq / n - mean * mean).squareRoot() >= 26 else { return nil }
+            guard sum / n >= 40 else { return nil }
             // A fingertip over the lens shows as a pink blur along one edge. Skip any edge band (a fifth
             // of the frame) that's more than 8% skin-coloured; frames without one stayed under 5%.
             func skin(_ x0: Int, _ x1: Int, _ y0: Int, _ y1: Int) -> Bool {

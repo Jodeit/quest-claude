@@ -50,10 +50,9 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   room side, fairly head-on, within 5 m: what the elevations need), with an overall percentage and a
   hint like *Point at the red wall to your left (62%)*. **Done** asks first if a wall is under 70%:
   on the first real scan, walls around 70% already had clear gray gaps.
-- **Frame checks and the floor:** frames that are dark or hazy (contrast below 26: a covered or
-  smudged lens) are left out, and so is any edge band with a fingertip in it (more than 8%
-  skin-coloured), thresholds from the first real scan, where a fingertip crept into the bottom of
-  several frames. The same frames also make a floor image from above (transparent outside the floor,
+- **Frame checks and the floor:** nearly black frames (a covered lens) are left out, and so is any
+  edge band with a fingertip in it (more than 8% skin-coloured), thresholds from the first two real
+  scans, where a fingertip crept into the bottom of several frames. The same frames also make a floor image from above (transparent outside the floor,
   neutral under furniture), which the dollhouse lays on its floor.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.

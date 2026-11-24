@@ -328,7 +328,7 @@ enum FloorPlanPDF {
         // page of another size gets cut off.
         pdf.beginPage()
         let ctx = pdf.cgContext
-        text("\(name): wall \(shown("Wall W\(e.wall + 1)", names))", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
+        text("\(name): \(shown("Wall W\(e.wall + 1)", names).replacingOccurrences(of: "W\(e.wall + 1) ", with: "Wall W\(e.wall + 1) · "))", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
              anchor: .topLeft)
         text("\(units.length(f.width)) wide × \(units.length(f.height)) high, seen from inside the room",
              at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
