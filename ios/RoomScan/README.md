@@ -38,7 +38,7 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   stopping the camera (RoomPlan's multi-room support, iOS 17), so every room of the session comes out
   in one coordinate system. Each is an ordinary scan with its own plan, elevations, photos and
   products; the home list gets a **Home plan**: every room in place on one page, with names and
-  floor areas. Walk between rooms with the phone up; covering the camera or a long pause can lose
+  floor areas, and **Home 3D**: the dollhouse of every room together. Walk between rooms with the phone up; covering the camera or a long pause can lose
   tracking.
 - **Dollhouse:** a scan's **3D** button shows it as a model to turn and zoom: walls wearing their
   elevation photos, the floor, furniture as see-through boxes tagged with their spot names, and photo

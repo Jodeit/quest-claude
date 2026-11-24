@@ -16,10 +16,37 @@ enum Dollhouse {
         let center: SIMD3<Float>
     }
 
-    static func build(room: CapturedRoom, elevations: [(Elevation, URL)], photos: [ScanPhoto],
-                      names: [String: String]) -> Model {
+    /// One room's worth: the scan and what the app made from it.
+    struct Part {
+        let room: CapturedRoom
+        let elevations: [(Elevation, URL)]
+        let photos: [ScanPhoto]
+        let names: [String: String]
+    }
+
+    /// One room, or every room of a home (they share coordinates, so they fit together). Tappable
+    /// nodes are named "object:<room>:<index>" and "photo:<room>:<index>".
+    static func build(_ parts: [Part]) -> Model {
         let scene = SCNScene()
-        let root = scene.rootNode
+        let all = parts.flatMap { $0.room.walls.map { simd_make_float3($0.transform.columns.3) } }
+        let centre = all.isEmpty ? .zero : all.reduce(.zero, +) / Float(all.count)
+        for (r, part) in parts.enumerated() { add(part, index: r, to: scene.rootNode) }
+
+        // Look in from above one corner.
+        let reach = all.map { simd_distance($0, centre) }.max() ?? 3
+        let camera = SCNNode()
+        camera.camera = SCNCamera()
+        camera.camera?.zNear = 0.05
+        camera.camera?.zFar = 300
+        let r = Swift.max(3, reach * 2.4)
+        camera.simdPosition = centre + SIMD3(r * 0.55, r * 0.9, r * 0.75)
+        camera.simdLook(at: centre)
+        scene.rootNode.addChildNode(camera)
+        return Model(scene: scene, camera: camera, center: centre)
+    }
+
+    private static func add(_ part: Part, index r: Int, to root: SCNNode) {
+        let room = part.room, elevations = part.elevations, photos = part.photos, names = part.names
         let wallCentres = room.walls.map { simd_make_float3($0.transform.columns.3) }
         let centroid = wallCentres.isEmpty ? .zero : wallCentres.reduce(.zero, +) / Float(wallCentres.count)
         let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
@@ -42,7 +69,7 @@ enum Dollhouse {
             m.isDoubleSided = false
             plane.materials = [m]
             let node = SCNNode(geometry: plane)
-            node.name = "wall:\(i)"
+            node.name = "wall:\(r):\(i)"
             node.simdTransform = flipped ? w.transform * simd_float4x4(simd_quatf(angle: .pi, axis: SIMD3(0, 1, 0)))
                 : w.transform
             root.addChildNode(node)
@@ -95,7 +122,7 @@ enum Dollhouse {
             m.lightingModel = .lambert
             box.materials = [m]
             let node = SCNNode(geometry: box)
-            node.name = "object:\(i)"
+            node.name = "object:\(r):\(i)"
             node.simdTransform = o.transform
             root.addChildNode(node)
             let key = "\(i + 1) \(FloorPlanPDF.objectLabel(o.category))"
@@ -112,22 +139,10 @@ enum Dollhouse {
             m.diffuse.contents = UIColor(red: 0.6, green: 0.2, blue: 0.45, alpha: 1)
             sphere.materials = [m]
             let node = SCNNode(geometry: sphere)
-            node.name = "photo:\(i)"
+            node.name = "photo:\(r):\(i)"
             node.simdPosition = simd_make_float3(photo.pose.columns.3)
             root.addChildNode(node)
         }
-
-        // Look in from above one corner.
-        let reach = wallCentres.map { simd_distance($0, centroid) }.max() ?? 3
-        let camera = SCNNode()
-        camera.camera = SCNCamera()
-        camera.camera?.zNear = 0.05
-        camera.camera?.zFar = 200
-        let r = Swift.max(3, reach * 2.4)
-        camera.simdPosition = centroid + SIMD3(r * 0.55, r * 0.9, r * 0.75)
-        camera.simdLook(at: centroid)
-        root.addChildNode(camera)
-        return Model(scene: scene, camera: camera, center: centroid)
     }
 
     /// A name tag that always faces the viewer.
@@ -165,14 +180,16 @@ enum Dollhouse {
 struct DollhouseView: View {
     @EnvironmentObject private var library: ScanLibrary
     @Environment(\.dismiss) private var dismiss
-    let scan: SavedScan
+    /// One room, or a home's rooms (scanned in one session).
+    let scans: [SavedScan]
+    var title: String { scans.count == 1 ? scans[0].name : "Home" }
 
     @State private var model: Dollhouse.Model?
     @State private var failure: String?
     @State private var info: String?
     @State private var photoURL: URL?
     @State private var usdzURL: URL?
-    @State private var spots: [String] = []
+    @State private var spots: [[String]] = []  // per room: each object's plan label
 
     var body: some View {
         NavigationStack {
@@ -190,13 +207,13 @@ struct DollhouseView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                     .padding()
             }
-            .navigationTitle(scan.name)
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        if let model { usdzURL = Dollhouse.exportUSDZ(model, name: scan.name) }
+                        if let model { usdzURL = Dollhouse.exportUSDZ(model, name: title) }
                     } label: { Label("Share 3D", systemImage: "square.and.arrow.up") }
                     .disabled(model == nil)
                 }
@@ -210,10 +227,18 @@ struct DollhouseView: View {
     private func load() {
         guard model == nil else { return }
         do {
-            let room = try JSONDecoder().decode(CapturedRoom.self, from: library.json(for: scan))
-            spots = room.objects.enumerated().map { "\($0.offset + 1) \(FloorPlanPDF.objectLabel($0.element.category))" }
-            model = Dollhouse.build(room: room, elevations: library.elevations(for: scan),
-                                    photos: library.photos(for: scan).map { $0.0 }, names: library.names(for: scan))
+            var parts: [Dollhouse.Part] = []
+            spots = []
+            for scan in scans {
+                let room = try JSONDecoder().decode(CapturedRoom.self, from: library.json(for: scan))
+                spots.append(room.objects.enumerated().map {
+                    "\($0.offset + 1) \(FloorPlanPDF.objectLabel($0.element.category))"
+                })
+                parts.append(Dollhouse.Part(room: room, elevations: library.elevations(for: scan),
+                                            photos: library.photos(for: scan).map { $0.0 },
+                                            names: library.names(for: scan)))
+            }
+            model = Dollhouse.build(parts)
         } catch {
             failure = "Couldn't read the scan: \(error.localizedDescription)"
         }
@@ -221,16 +246,18 @@ struct DollhouseView: View {
 
     private func tapped(_ name: String) {
         let parts = name.split(separator: ":")
-        guard parts.count == 2, let i = Int(parts[1]) else { return }
+        guard parts.count == 3, let r = Int(parts[1]), let i = Int(parts[2]), r < scans.count else { return }
+        let scan = scans[r]
         if parts[0] == "photo" {
             let photos = library.photos(for: scan)
             if i < photos.count { photoURL = photos[i].1 }
-        } else if parts[0] == "object", i < spots.count {
-            let key = spots[i]
+        } else if parts[0] == "object", r < spots.count, i < spots[r].count {
+            let key = spots[r][i]
             let here = library.products(for: scan).filter { $0.location == key }
             let what = here.isEmpty ? "No products here yet."
                 : here.map { "\($0.qty) × \($0.product)" }.joined(separator: "\n")
-            info = "\(FloorPlanPDF.shown(key, library.names(for: scan)))\n\(what)"
+            let place = FloorPlanPDF.shown(key, library.names(for: scan))
+            info = (scans.count > 1 ? "\(scan.name) · " : "") + "\(place)\n\(what)"
         }
     }
 }

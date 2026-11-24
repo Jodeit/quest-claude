@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var newName = ""
     @State private var session: ScanSession?
     @State private var homePlan: URL?
+    @State private var homeDollhouse: [SavedScan]?
     @State private var homeError: String?
 
     var body: some View {
@@ -39,16 +40,20 @@ struct HomeView: View {
                 if !library.homes.isEmpty {
                     Section("Homes") {
                         ForEach(library.homes, id: \.first!.id) { rooms in
-                            Button {
-                                do { homePlan = try library.homePlan(rooms) } catch {
-                                    homeError = "Couldn't draw the home plan: \(error.localizedDescription)"
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(rooms.map(\.name).joined(separator: " · ")).font(.subheadline)
+                                HStack(spacing: 20) {
+                                    Button {
+                                        do { homePlan = try library.homePlan(rooms) } catch {
+                                            homeError = "Couldn't draw the home plan: \(error.localizedDescription)"
+                                        }
+                                    } label: { Label("Home plan", systemImage: "house") }
+                                    Button {
+                                        homeDollhouse = rooms
+                                    } label: { Label("Home 3D", systemImage: "cube.transparent") }
                                 }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Label("Home plan", systemImage: "house")
-                                    Text(rooms.map(\.name).joined(separator: " · "))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
                             }
                         }
                         if let homeError { Text(homeError).font(.caption).foregroundStyle(.red) }
@@ -68,6 +73,9 @@ struct HomeView: View {
             }
             .navigationTitle("RoomScan")
             .quickLookPreview($homePlan)
+            .fullScreenCover(isPresented: Binding(get: { homeDollhouse != nil }, set: { if !$0 { homeDollhouse = nil } })) {
+                if let rooms = homeDollhouse { DollhouseView(scans: rooms) }
+            }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .alert("Name this room", isPresented: $askName) {
                 TextField("Living room", text: $newName)
@@ -178,7 +186,7 @@ struct ScanRow: View {
         .sheet(isPresented: $showProducts) { ProductsView(scan: scan) }
         .sheet(isPresented: $showNames) { SpotNamesView(scan: scan) }
         .sheet(item: $bundleURL) { url in ShareSheet(items: [url]) }
-        .fullScreenCover(isPresented: $showDollhouse) { DollhouseView(scan: scan) }
+        .fullScreenCover(isPresented: $showDollhouse) { DollhouseView(scans: [scan]) }
     }
 
     private func upload() async {
