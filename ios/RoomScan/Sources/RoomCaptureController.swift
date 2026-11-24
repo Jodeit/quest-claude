@@ -1,3 +1,5 @@
+import ARKit
+import CoreImage
 import RoomPlan
 import SwiftUI
 import UIKit
@@ -10,6 +12,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
 
     private var captureView: RoomCaptureView!
     private var running = false
+    private let ciContext = CIContext()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -44,6 +47,34 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         guard running else { return }
         captureView.captureSession.stop()
         running = false
+    }
+
+    /// The camera's current frame as a JPEG, upright for how the phone is held, with the camera's
+    /// pose in the scan's world frame. Nil when not scanning or before the first frame.
+    func capturePhoto() async -> (jpeg: Data, pose: simd_float4x4)? {
+        guard running, let frame = captureView.captureSession.arSession.currentFrame else { return nil }
+        let pose = frame.camera.transform
+        let buffer = frame.capturedImage
+        let orientation = Self.imageOrientation(view.window?.windowScene?.interfaceOrientation ?? .portrait)
+        let context = ciContext
+        let jpeg: Data? = await Task.detached(priority: .userInitiated) {
+            let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+            let quality = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
+            return context.jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              options: [quality: 0.8])
+        }.value
+        guard let jpeg else { return nil }
+        return (jpeg, pose)
+    }
+
+    /// The camera sensor is landscape (home side right); turn its frames to match the screen.
+    private static func imageOrientation(_ o: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+        switch o {
+        case .landscapeRight: return .up
+        case .landscapeLeft: return .down
+        case .portraitUpsideDown: return .left
+        default: return .right
+        }
     }
 
     // MARK: RoomCaptureSessionDelegate

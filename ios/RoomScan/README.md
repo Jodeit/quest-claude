@@ -13,6 +13,12 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   the room to scale with each wall's length, doors and windows, furniture footprints, floor area and
   ceiling height, then a list of every measurement (window sill heights included). Feet and inches
   when the phone's region is the US. Tap **Plan** to preview it; its share button mails or AirDrops it.
+- **Photos:** the **Photo** button on the scan screen takes a picture from the scanning camera without
+  stopping the scan. Each one keeps where the phone stood and which way it faced, so the plan shows it
+  as a numbered pin with a wedge in that direction, names what it faced (the nearest object straight
+  ahead, else the wall), and adds photo pages. Photos stay on the phone (`photos/` in the scan's
+  folder) and in the PDF; they aren't sent to the server. Pause for a moment when you take one: the
+  frame is the scanning camera's (about 1920×1440), so movement blurs it.
 - **Offline:** with no server set, or if sending fails, scans stay on the phone; a row's **Send**
   button retries. **JSON** and **3D** share either file anywhere.
 

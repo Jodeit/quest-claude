@@ -86,7 +86,8 @@ struct ScanRow: View {
                 Text(scan.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text("\(scan.walls) walls · \(scan.doors) doors · \(scan.windows) windows · \(scan.objects) objects")
+            Text("\(scan.walls) walls · \(scan.doors) doors · \(scan.windows) windows · \(scan.objects) objects"
+                 + (scan.photos.map { " · \($0) photo\($0 == 1 ? "" : "s")" } ?? ""))
                 .font(.subheadline).foregroundStyle(.secondary)
             HStack(spacing: 16) {
                 if scan.uploaded {
@@ -144,11 +145,13 @@ struct ScanRow: View {
 struct ScanScreen: View {
     @ObservedObject var session: ScanSession
     let close: () -> Void
+    @State private var flash = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             RoomCaptureRepresentable(controller: session.controller)
                 .ignoresSafeArea()
+            Color.white.opacity(flash ? 0.6 : 0).ignoresSafeArea().allowsHitTesting(false)
             VStack(spacing: 10) {
                 Text(title).font(.headline)
                 Text("\(session.counts.walls) walls · \(session.counts.doors) doors · "
@@ -162,6 +165,13 @@ struct ScanScreen: View {
                         Button("Cancel", role: .cancel) {
                             session.cancel()
                             close()
+                        }
+                        .buttonStyle(.bordered)
+                        Button {
+                            Task { await shoot() }
+                        } label: {
+                            Label(session.photoCount == 0 ? "Photo" : "Photo (\(session.photoCount))",
+                                  systemImage: "camera.fill")
                         }
                         .buttonStyle(.bordered)
                         Button("Done") { session.finish() }
@@ -178,6 +188,14 @@ struct ScanScreen: View {
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
             .padding()
         }
+    }
+
+    /// Take a photo from the scanning camera: a flash and a tap so it's clear it worked.
+    private func shoot() async {
+        guard await session.takePhoto() else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        flash = true
+        withAnimation(.easeOut(duration: 0.3)) { flash = false }
     }
 
     private var title: String {

@@ -4,14 +4,16 @@ import simd
 
 /// A dimensioned floor plan of a scan, drawn on the phone (no server): page 1 is the plan to scale
 /// (walls with their lengths, doors, windows, furniture footprints, floor area, ceiling height),
-/// then a list of every measurement. Feet and inches where the phone's region uses them.
+/// then a list of every measurement, then the photos taken while scanning, each pinned on the plan
+/// where it was taken. Feet and inches where the phone's region uses them.
 enum FloorPlanPDF {
-    static func write(_ room: CapturedRoom, name: String, date: Date, to url: URL) throws {
-        try render(room, name: name, date: date).write(to: url, options: .atomic)
+    static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
+                      to url: URL) throws {
+        try render(room, name: name, date: date, photos: photos).write(to: url, options: .atomic)
     }
 
-    static func render(_ room: CapturedRoom, name: String, date: Date) -> Data {
-        let plan = Plan(room)
+    static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = []) -> Data {
+        let plan = Plan(room, photos: photos.map { $0.0 })
         let units = Units(imperial: Locale.current.measurementSystem == .us)
         let page = plan.size.x > plan.size.y * 1.1
             ? CGRect(x: 0, y: 0, width: 792, height: 612)   // US Letter, landscape
@@ -23,6 +25,7 @@ enum FloorPlanPDF {
             pdf.beginPage()
             drawPlan(plan, units: units, name: name, date: date, page: page, ctx: pdf.cgContext)
             drawList(plan, units: units, name: name, page: page, pdf: pdf)
+            drawPhotos(plan, files: photos.map { $0.1 }, name: name, pdf: pdf)
         }
     }
 
@@ -33,6 +36,7 @@ enum FloorPlanPDF {
     private static let faint = UIColor(white: 0.45, alpha: 1)
     private static let doorColor = UIColor(red: 0.55, green: 0.33, blue: 0.15, alpha: 1)
     private static let windowColor = UIColor(red: 0.15, green: 0.4, blue: 0.75, alpha: 1)
+    private static let photoColor = UIColor(red: 0.6, green: 0.2, blue: 0.45, alpha: 1)
 
     private static func drawPlan(_ plan: Plan, units: Units, name: String, date: Date,
                                  page: CGRect, ctx: CGContext) {
@@ -123,6 +127,25 @@ enum FloorPlanPDF {
             text("W\(i + 1)", at: (a + b) * 0.5 - n * 9, size: 6, color: faint, angle: angle)
         }
 
+        // Photo pins: where each photo was taken, with a wedge the way it faced.
+        for (i, pin) in plan.pins.enumerated() {
+            let at = pt(pin.at), f = cg(pin.facing)
+            let spread: CGFloat = 0.45, reach: CGFloat = 20
+            func turned(_ a: CGFloat) -> CGPoint {
+                CGPoint(x: f.x * cos(a) - f.y * sin(a), y: f.x * sin(a) + f.y * cos(a))
+            }
+            ctx.beginPath()
+            ctx.move(to: at)
+            ctx.addLine(to: at + turned(-spread) * reach)
+            ctx.addLine(to: at + turned(spread) * reach)
+            ctx.closePath()
+            ctx.setFillColor(photoColor.withAlphaComponent(0.22).cgColor)
+            ctx.fillPath()
+            ctx.setFillColor(photoColor.cgColor)
+            ctx.fillEllipse(in: CGRect(x: at.x - 7.5, y: at.y - 7.5, width: 15, height: 15))
+            text("P\(i + 1)", at: at, size: 6, weight: .bold, color: .white)
+        }
+
         // Scale bar and a note on where the numbers come from.
         let barY = page.height - margin - 26
         let step = units.scaleStep(maxMetres: Float(box.width / 4 / scale))
@@ -142,9 +165,14 @@ enum FloorPlanPDF {
 
     private static func drawList(_ plan: Plan, units: Units, name: String, page: CGRect,
                                  pdf: UIGraphicsPDFRendererContext) {
+        func seenIn(_ subject: Plan.Subject) -> String {
+            let shots = plan.pins.indices.filter { plan.pins[$0].subject == subject }.map { "P\($0 + 1)" }
+            return shots.isEmpty ? "" : "; photos \(shots.joined(separator: ", "))"
+        }
         var rows: [(String, String, String)] = []
         for (i, w) in plan.walls.enumerated() {
-            rows.append(("W\(i + 1)", "Wall", "\(units.length(w.length)) long, \(units.length(w.height)) high"))
+            rows.append(("W\(i + 1)", "Wall", "\(units.length(w.length)) long, \(units.length(w.height)) high"
+                         + seenIn(.wall(i))))
         }
         for (i, d) in plan.doors.enumerated() {
             rows.append(("D\(i + 1)", "Door", "\(units.length(d.width)) wide, \(units.length(d.height)) high"))
@@ -158,7 +186,8 @@ enum FloorPlanPDF {
         }
         for (i, item) in plan.items.enumerated() {
             rows.append(("\(i + 1)", item.name, "\(units.length(item.width)) wide × "
-                         + "\(units.length(item.depth)) deep × \(units.length(item.height)) high"))
+                         + "\(units.length(item.depth)) deep × \(units.length(item.height)) high"
+                         + seenIn(.item(i))))
         }
         guard !rows.isEmpty else { return }
 
@@ -180,6 +209,37 @@ enum FloorPlanPDF {
             text(row.1, at: CGPoint(x: margin + 36, y: cy), size: 9, anchor: .left)
             text(row.2, at: CGPoint(x: margin + 150, y: cy), size: 9, anchor: .left)
             y += rowH
+        }
+    }
+
+    // MARK: photo pages
+
+    /// Two by two on portrait pages, each captioned with its pin number and what it faces.
+    private static func drawPhotos(_ plan: Plan, files: [URL], name: String, pdf: UIGraphicsPDFRendererContext) {
+        guard !files.isEmpty else { return }
+        let page = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let top = margin + 30, gutter: CGFloat = 16, caption: CGFloat = 18
+        let cellW = (page.width - 2 * margin - gutter) / 2
+        let cellH = (page.height - top - margin - gutter) / 2
+        for (i, url) in files.enumerated() {
+            if i % 4 == 0 {
+                pdf.beginPage(withBounds: page, pageInfo: [:])
+                text("\(name): photos", at: CGPoint(x: margin, y: margin), size: 14, weight: .semibold,
+                     anchor: .topLeft)
+            }
+            let col = CGFloat(i % 2), row = CGFloat((i % 4) / 2)
+            let cell = CGRect(x: margin + col * (cellW + gutter), y: top + row * (cellH + gutter),
+                              width: cellW, height: cellH - caption)
+            if let image = UIImage(contentsOfFile: url.path), image.size.width > 0, image.size.height > 0 {
+                let k = min(cell.width / image.size.width, cell.height / image.size.height)
+                let sz = CGSize(width: image.size.width * k, height: image.size.height * k)
+                image.draw(in: CGRect(x: cell.midX - sz.width / 2, y: cell.minY, width: sz.width, height: sz.height))
+            }
+            var words = ["P\(i + 1)"]
+            if i < plan.pins.count, let subject = plan.pins[i].subject { words.append(plan.describe(subject)) }
+            if i < plan.pins.count { words.append(plan.pins[i].date.formatted(date: .omitted, time: .shortened)) }
+            text(words.joined(separator: "  ·  "), at: CGPoint(x: cell.minX, y: cell.maxY + caption / 2),
+                 size: 9, color: photoColor, anchor: .left)
         }
     }
 
@@ -280,6 +340,8 @@ private struct Plan {
     struct Opening { var a, b, out: SIMD2<Float>; var width, height, sill: Float }
     struct Item { var corners: [SIMD2<Float>]; var center: SIMD2<Float>; var name: String
                   var width, depth, height: Float }
+    enum Subject: Equatable { case item(Int), wall(Int) }
+    struct Pin { var at, facing: SIMD2<Float>; var date: Date; var subject: Subject? }
 
     var walls: [Wall] = []
     var doors: [Opening] = []
@@ -287,13 +349,14 @@ private struct Plan {
     var openings: [Opening] = []
     var items: [Item] = []
     var floors: [[SIMD2<Float>]] = []
+    var pins: [Pin] = []
     var area: Float?
     var ceiling: Float?
     var lo = SIMD2<Float>(0, 0)
     var hi = SIMD2<Float>(0, 0)
     var size: SIMD2<Float> { hi - lo }
 
-    init(_ room: CapturedRoom) {
+    init(_ room: CapturedRoom, photos: [ScanPhoto] = []) {
         var angle: Float = 0
         if let longest = room.walls.max(by: { $0.dimensions.x < $1.dimensions.x }) {
             let d = Self.dir(longest.transform.columns.0)
@@ -361,10 +424,41 @@ private struct Plan {
                               height: o.dimensions.y))
         }
 
+        // Photos: where the camera stood and which way it looked (the camera looks down its -z).
+        for photo in photos {
+            let t = photo.pose
+            let at = turn(Self.flat(t.columns.3)), facing = turn(Self.dir(-t.columns.2))
+            let seen = subject(from: at, facing: facing)
+            pins.append(Pin(at: at, facing: facing, date: photo.date, subject: seen))
+        }
+
         let points = walls.flatMap { [$0.a, $0.b] } + floors.flatMap { $0 } + items.flatMap(\.corners)
+            + pins.map(\.at)
         if let first = points.first {
             lo = points.reduce(first) { simd_min($0, $1) }
             hi = points.reduce(first) { simd_max($0, $1) }
+        }
+    }
+
+    /// What a photo shows: the nearest object roughly straight ahead, else the nearest wall.
+    func subject(from at: SIMD2<Float>, facing: SIMD2<Float>) -> Subject? {
+        func ahead(_ p: SIMD2<Float>, within degrees: Float) -> Float? {
+            let d = p - at, l = simd_length(d)
+            guard l > 0.05, simd_dot(d / l, facing) > cos(degrees * .pi / 180) else { return nil }
+            return l
+        }
+        let item = items.indices.compactMap { i in ahead(items[i].center, within: 30).map { (i, $0) } }
+            .min { $0.1 < $1.1 }
+        if let item { return .item(item.0) }
+        let wall = walls.indices.compactMap { i in ahead((walls[i].a + walls[i].b) / 2, within: 40).map { (i, $0) } }
+            .min { $0.1 < $1.1 }
+        return wall.map { .wall($0.0) }
+    }
+
+    func describe(_ s: Subject) -> String {
+        switch s {
+        case let .item(i): return "\(i + 1) \(items[i].name)"
+        case let .wall(i): return "Wall W\(i + 1)"
         }
     }
 

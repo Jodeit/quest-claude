@@ -32,6 +32,10 @@ final class ScanSession: ObservableObject, Identifiable {
     @Published private(set) var phase: Phase = .scanning
     @Published private(set) var counts = Counts()
     @Published private(set) var serverStatus: String
+    @Published private(set) var photoCount = 0
+
+    /// Photos taken during this scan, kept in memory until the scan is saved with them.
+    private var photos: [(ScanPhoto, Data)] = []
 
     private let client: ServerClient?
     private let live: Bool
@@ -66,6 +70,15 @@ final class ScanSession: ObservableObject, Identifiable {
     func cancel() {
         phase = .cancelled
         controller.finish()
+    }
+
+    /// Take a photo from the scanning camera; it's pinned on the plan where it was taken.
+    func takePhoto() async -> Bool {
+        guard phase == .scanning, let shot = await controller.capturePhoto() else { return false }
+        let photo = ScanPhoto(file: String(format: "P%02d.jpg", photos.count + 1), date: Date(), pose: shot.pose)
+        photos.append((photo, shot.jpeg))
+        photoCount = photos.count
+        return true
     }
 
     // MARK: live
@@ -132,7 +145,7 @@ final class ScanSession: ObservableObject, Identifiable {
         var saved: SavedScan
         do {
             body = try JSONEncoder().encode(room)
-            saved = try library.save(room: room, json: body, name: name)
+            saved = try library.save(room: room, json: body, name: name, photos: photos)
         } catch {
             phase = .failed("Couldn't save the scan: \(error.localizedDescription)")
             return
