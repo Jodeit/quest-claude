@@ -98,7 +98,9 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   Measured column.
 - **Team twin:** **More → Share for team twin (.zip)** packages the scan for the shared Claude artifact
   page (`roomscan twin` makes the same format): the LiDAR mesh trimmed to the room, coloured from the
-  frames that painted it, wound to face them and shrunk by 2.5 cm vertex clustering, as base64 text;
+  frames that painted it (each triangle textured from its best frame, chosen with neighbour
+  smoothing, the frames written at 960 px with their exposure corrections baked in), wound to face
+  them and shrunk by 3 cm vertex clustering, as base64 text;
   twin.json with walls, doorways, spots and their shelves, floor and photos; the images; and what was
   done in the app (spot names, tape measurements, products, 3D measurements). On the page, **Add a
   scan** uploads it for the team and brings those along.

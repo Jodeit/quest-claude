@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import RoomPlan
@@ -125,22 +126,62 @@ enum TwinExport {
         var meshInfo: Any = NSNull()
         if let mesh = library.mesh(for: s), let first = ends.first {
             let lo = ends.reduce(first) { simd_min($0, $1) }, hi = ends.reduce(first) { simd_max($0, $1) }
-            let web = mesh.webMesh(frames: library.keyframes(for: s), ceilingY: ceilingY,
-                                   bounds: (SIMD3(lo.x - 0.4, floorY - 0.3, lo.z - 0.4), SIMD3(hi.x + 0.4, ceilingY + 0.3, hi.z + 0.4)))
-            var model: [UInt32] = [], ceil: [UInt32] = []
-            for (t, isCeiling) in web.ceiling.enumerated() {
-                let tri = web.faces[(t * 3)..<(t * 3 + 3)]
-                if isCeiling { ceil += tri } else { model += tri }
+            let frames = library.keyframes(for: s)
+            let web = mesh.texturedExport(frames: frames, ceilingY: ceilingY,
+                                          bounds: (SIMD3(lo.x - 0.4, floorY - 0.3, lo.z - 0.4), SIMD3(hi.x + 0.4, ceilingY + 0.3, hi.z + 0.4)))
+            let tri = web.choice.count
+            // Model triangles first, then ceiling; grouped by frame within each.
+            let order = (0..<tri).sorted { a, b in
+                web.ceiling[a] != web.ceiling[b] ? !web.ceiling[a] : web.choice[a] < web.choice[b]
             }
-            var data = Data("RTW1".utf8)
-            for n in [UInt32(web.positions.count), UInt32(model.count), UInt32(ceil.count)] { withUnsafeBytes(of: n.littleEndian) { data.append(contentsOf: $0) } }
-            for p in web.positions { for v in [p.x, p.y, p.z] { withUnsafeBytes(of: v.bitPattern.littleEndian) { data.append(contentsOf: $0) } } }
-            for c in web.colors { data.append(contentsOf: [c.x, c.y, c.z]) }
-            while data.count % 4 != 0 { data.append(0) }
-            for i in model + ceil { withUnsafeBytes(of: i.littleEndian) { data.append(contentsOf: $0) } }
+            // Each frame used, at 960 px with its exposure correction baked in.
+            let fdir = img.appendingPathComponent("f", isDirectory: true)
+            try FileManager.default.createDirectory(at: fdir, withIntermediateDirectories: true)
+            let context = CIContext()
+            var names = [Int: String]()
+            for k in Set(web.choice) where k >= 0 {
+                guard var image = CIImage(contentsOf: frames[k].1) else { continue }
+                let g = web.gains[k]
+                image = image.applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: CGFloat(g.x), y: 0, z: 0, w: 0),
+                    "inputGVector": CIVector(x: 0, y: CGFloat(g.y), z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: CGFloat(g.z), w: 0)])
+                if image.extent.width > 960 {
+                    image = image.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: 960 / image.extent.width])
+                }
+                let name = (frames[k].0.file as NSString).deletingPathExtension + ".jpg"
+                let quality = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
+                guard let jpeg = context.jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                            options: [quality: 0.82]) else { continue }
+                try jpeg.write(to: fdir.appendingPathComponent(name))
+                names[k] = "img/f/" + name
+            }
+            var groups: [[String: Any]] = []
+            var i = 0
+            while i < order.count {
+                let k = web.choice[order[i]], c = web.ceiling[order[i]]
+                var j = i
+                while j < order.count, web.choice[order[j]] == k, web.ceiling[order[j]] == c { j += 1 }
+                var g: [String: Any] = ["start": i, "count": j - i, "ceiling": c]
+                if let name = names[k] { g["image"] = name } else { g["image"] = NSNull() }
+                groups.append(g)
+                i = j
+            }
+            // RTW2: count, box (min, size), per corner u16 positions across the box and u16 texture coordinates.
+            let cs = order.flatMap { t in (0..<3).map { web.corners[t * 3 + $0] } }
+            let us = order.flatMap { t in (0..<3).map { web.uv[t * 3 + $0] } }
+            let bmin = cs.reduce(cs.first ?? .zero) { simd_min($0, $1) }, bmax = cs.reduce(cs.first ?? .zero) { simd_max($0, $1) }
+            let size = simd_max(bmax - bmin, SIMD3(repeating: 1e-6))
+            var data = Data("RTW2".utf8)
+            func put<T>(_ v: T) { withUnsafeBytes(of: v) { data.append(contentsOf: $0) } }
+            put(UInt32(tri).littleEndian)
+            for v in [bmin.x, bmin.y, bmin.z, size.x, size.y, size.z] { put(v.bitPattern.littleEndian) }
+            func q(_ x: Float) -> UInt16 { UInt16(Swift.min(65535, Swift.max(0, (x * 65535).rounded()))) }
+            for p in cs { let r = (p - bmin) / size; put(q(r.x).littleEndian); put(q(r.y).littleEndian); put(q(r.z).littleEndian) }
+            for u in us { put(q(u.x).littleEndian); put(q(u.y).littleEndian) }
             try data.base64EncodedString().write(to: dir.appendingPathComponent("mesh.b64.txt"), atomically: true, encoding: .ascii)
-            meshInfo = ["file": "mesh.b64.txt", "vertices": web.positions.count, "triangles": model.count / 3,
-                        "ceiling_triangles": ceil.count / 3]
+            meshInfo = ["file": "mesh.b64.txt", "format": "RTW2", "triangles": web.ceiling.filter { !$0 }.count,
+                        "ceiling_triangles": web.ceiling.filter { $0 }.count, "frames": names.count, "groups": groups]
         }
 
         // What the app already knows about the scan, for the page to start from.
