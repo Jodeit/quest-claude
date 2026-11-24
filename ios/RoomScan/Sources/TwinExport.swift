@@ -94,10 +94,10 @@ enum TwinExport {
             if let n = names[key] { d["name"] = n }
             if let pair = fronts.first(where: { $0.0.object == i }) {
                 let fr = pair.0, url = pair.1
-                d["front"] = ["image": copy(url) as Any, "shelves": fr.shelves.map { Double($0) },
+                d["front"] = ["image": copy(url).map { $0 as Any } ?? NSNull(), "shelves": fr.shelves.map { Double($0) },
                               "openings_top_first": fr.openings.reversed().map { Double($0) },
                               "width": Double(fr.width), "height": Double(fr.height), "depth": Double(fr.depth),
-                              "confirmed": fr.confirmed as Any]
+                              "confirmed": fr.confirmed.map { $0 as Any } ?? NSNull()]
             }
             objects.append(d)
         }
@@ -192,7 +192,7 @@ enum TwinExport {
             "products": library.products(for: s).map { ["spot": $0.location, "product": $0.product, "qty": $0.qty] },
             "measured": measured.confirmed.mapValues { Double($0) },
             "measures": measured.custom.map { ["label": $0.label, "a": $0.a.map { Double($0) }, "b": $0.b.map { Double($0) },
-                                              "length": Double($0.length), "confirmed": $0.confirmed.map { Double($0) } as Any] },
+                                              "length": Double($0.length), "confirmed": $0.confirmed.map { Double($0) as Any } ?? NSNull()] },
         ]
         let twin: [String: Any] = [
             "name": s.name, "date": ISO8601DateFormatter().string(from: s.date), "units": "imperial",
