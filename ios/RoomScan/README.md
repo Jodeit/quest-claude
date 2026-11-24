@@ -90,6 +90,12 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   opening) and every 3D measurement, each with a field for the tape measurement (15¼, 15 1/4,
   1' 3¼"). Tape measurements replace the estimates in the PDF, marked ✓, and fill the shelf pages'
   Measured column.
+- **Team twin:** **More → Share for team twin (.zip)** packages the scan for the shared Claude artifact
+  page (`roomscan twin` makes the same format): the LiDAR mesh trimmed to the room, coloured from the
+  frames that painted it, wound to face them and shrunk by 2.5 cm vertex clustering, as base64 text;
+  twin.json with walls, doorways, spots and their shelves, floor and photos; the images; and what was
+  done in the app (spot names, tape measurements, products, 3D measurements). On the page, **Add a
+  scan** uploads it for the team and brings those along.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan

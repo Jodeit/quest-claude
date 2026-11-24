@@ -64,6 +64,7 @@ td, th { padding: 5px 4px; border-bottom: 1px solid var(--line); text-align: lef
 th { font: 500 11px var(--body); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 td.num { font-family: var(--mono); font-size: 13px; }
 td.ok { color: var(--ok); font-weight: 600; }
+select { font: 13px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 220px; }
 input, textarea { font: 13px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; width: 100%; box-sizing: border-box; }
 input.tape { width: 92px; font-family: var(--mono); }
 .row { display: flex; gap: 6px; align-items: center; }
@@ -89,6 +90,12 @@ input.tape { width: 92px; font-family: var(--mono); }
       <h1 id="title">{{NAME}}</h1>
       <div class="meta" id="meta">Loading the scan…</div>
     </div>
+    <div class="scans row">
+      <label for="scan-pick" class="meta">Scan</label>
+      <select id="scan-pick"></select>
+      <button id="add-scan" class="small" title="Add a scan from the RoomScan app (More → Share for team twin)">Add a scan</button>
+      <input id="scan-file" type="file" accept=".zip,application/zip" hidden>
+    </div>
     <div class="modes" role="group" aria-label="View">
       <button id="m-real" aria-pressed="true">Photo-real</button>
       <button id="m-doll" aria-pressed="false">Dollhouse</button>
@@ -112,6 +119,7 @@ input.tape { width: 92px; font-family: var(--mono); }
   </aside>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
@@ -158,12 +166,26 @@ function parseLength(text) {
 }
 const slug = (key) => key.replace(/[^A-Za-z0-9_.~:@+-]/g, "-");
 
+// Which scan: the one published with the page, or one the team added (its id after # in the link).
+const scanId = (location.hash.slice(1).match(/^[A-Za-z0-9-]{1,80}$/) || [])[0] || "builtin";
+const capsP = Promise.all([
+  window.claude?.use?.("db") ?? null, window.claude?.use?.("user") ?? null, window.claude?.use?.("assets") ?? null,
+]).catch(() => [null, null, null]);
+let files = null;  // a team-added scan: its file paths -> uploaded asset urls
+if (scanId !== "builtin") {
+  const [db0] = await capsP;
+  try { const d = db0 ? await db0.doc(`scans/${scanId}`).get() : null; files = d?.exists ? (d.data().files || null) : null; } catch {}
+  if (!files) { location.hash = ""; }
+}
+const R = (path) => (path && files ? (files[path] || path) : path);
+const T = `twins/${files ? scanId : "builtin"}/`;  // where this scan's team data lives
+
 // Shared state, read by the 3D view from its first frame.
 const team = { spots: {}, products: [], notes: [], measures: [], canWrite: false, me: null, names: {} };
 let tab = "spots", selected = null;
 
 // ---------- the scan ----------
-const twin = await (await fetch("twin.json")).json();
+const twin = await (await fetch(R("twin.json"))).json();
 $("title").textContent = twin.name + " twin";
 const when = twin.date ? new Date(twin.date).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "";
 const area = twin.floor?.polygon?.length > 2 ? polyArea(twin.floor.polygon) : null;
@@ -198,7 +220,7 @@ scene.add(real, doll, boxes);
 // The photo-real mesh: RTW1, per-vertex colours, ceiling triangles apart.
 if (twin.mesh) {
   // Served as base64 text (artifacts don't serve raw binary files).
-  const b64 = (await (await fetch("mesh.b64.txt")).text()).trim();
+  const b64 = (await (await fetch(R(twin.mesh.file))).text()).trim();
   const bin = atob(b64), bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   const buf = bytes.buffer;
@@ -263,13 +285,13 @@ function wallGeometry(w) {
   return g;
 }
 for (const w of twin.walls) {
-  const mat = w.elevation ? new THREE.MeshBasicMaterial({ map: tex(w.elevation) }) : new THREE.MeshBasicMaterial({ color: 0xdedfe3 });
+  const mat = w.elevation ? new THREE.MeshBasicMaterial({ map: tex(R(w.elevation)) }) : new THREE.MeshBasicMaterial({ color: 0xdedfe3 });
   const wall = new THREE.Mesh(wallGeometry(w), mat);
   wall.name = "wall"; doll.add(wall);
 }
 if (twin.floor?.image) {
   const [x0, z0, x1, z1] = twin.floor.bounds;
-  const f = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ map: tex(twin.floor.image), transparent: true }));
+  const f = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshBasicMaterial({ map: tex(R(twin.floor.image)), transparent: true }));
   f.rotation.x = -Math.PI / 2; f.position.set((x0 + x1) / 2, twin.floor.y + 0.002, (z0 + z1) / 2); f.name = "floor"; doll.add(f);
 }
 // Spots as boxes: faint outlines over the mesh, tappable.
@@ -289,7 +311,7 @@ const tags = twin.objects.map((o, i) => {
   tagsEl.append(t); return { el: t, p: new THREE.Vector3(o.center[0], o.center[1] + o.size[1] / 2 + 0.12, o.center[2]) };
 });
 const photoTags = twin.photos.map((p) => {
-  const t = el("button", { class: "tag photo", text: p.id, onclick: () => window.open(p.image, "_blank") });
+  const t = el("button", { class: "tag photo", text: p.id, onclick: () => window.open(R(p.image), "_blank") });
   tagsEl.append(t); return { el: t, p: new THREE.Vector3(...p.position) };
 });
 
@@ -422,12 +444,13 @@ $("loading").remove();
 let db = null, user = null;
 (async () => {
   try {
-    [db, user] = await Promise.all([window.claude?.use?.("db"), window.claude?.use?.("user")]);
+    [db, user] = await capsP;
   } catch { db = null; }
   if (!db) { team.offline = true; render(); return; }
   try { team.me = await user?.id(); } catch {}
   team.canWrite = (await user?.can?.("data.write")) !== false;
-  const sub = (path, fn) => db.collection(path).onSnapshot(fn, () => { team.error = "Shared notes can't be reached right now."; render(); });
+  const sub = (path, fn) => db.collection(T + path).onSnapshot(fn, () => { team.error = "Shared notes can't be reached right now."; render(); });
+  db.collection("scans").onSnapshot((s) => { team.scans = s.docs.map((d) => ({ id: d.id, ...d.data() })); scanPicker(); }, () => {});
   sub("spots", (s) => { team.spots = Object.fromEntries(s.docs.map((d) => [d.id, d.data()])); if (selected != null) drawDims(selected); render(); });
   sub("products", (s) => { team.products = s.docs.map((d) => ({ id: d.id, ...d.data() })); render(); });
   sub("notes", (s) => { team.notes = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.at || "").localeCompare(b.at || "")); render(); });
@@ -528,13 +551,13 @@ function spotPage(p, i) {
   // Name it.
   const nameIn = el("input", { id: "spot-name", placeholder: "Give it a name, e.g. Coffee station", value: spotName(o) || "" });
   const saveName = el("button", { class: "small", text: "Save name", onclick: async () => {
-    await write(`spots/${slug(key)}`, { name: nameIn.value.trim() }); } });
+    await write(T + `spots/${slug(key)}`, { name: nameIn.value.trim() }); } });
   if (team.canWrite && db) p.append(el("div", { class: "row" }, nameIn, saveName));
 
   // Front with shelves.
   if (o.front?.image) {
     const box = el("div", { class: "front" });
-    const img = el("img", { src: o.front.image, alt: `Front of ${spotTitle(o)}, from the scan` });
+    const img = el("img", { src: R(o.front.image), alt: `Front of ${spotTitle(o)}, from the scan` });
     box.append(img);
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${o.front.width} ${o.front.height}`); svg.setAttribute("preserveAspectRatio", "none");
@@ -563,7 +586,7 @@ function spotPage(p, i) {
         const v = inp.value.trim() ? parseLength(inp.value) : null;
         if (inp.value.trim() && v == null) { inp.setCustomValidity("Type inches, like 15¼ or 1' 3¼\""); inp.reportValidity(); return; }
         inp.setCustomValidity("");
-        await write(`spots/${slug(key)}`, { confirmed: { ...confirmed, [field]: v } });
+        await write(T + `spots/${slug(key)}`, { confirmed: { ...confirmed, [field]: v } });
       });
       cell.append(inp);
     } else cell.textContent = have ? "✓ " + fine(have) : "–";
@@ -578,7 +601,7 @@ function spotPage(p, i) {
   if (!mine.length) plist.append(el("p", { class: "muted small", text: "None yet." }));
   for (const x of mine) {
     const row = el("div", { class: "row" }, el("span", { class: "num", text: `${Number(x.qty) || 1} ×` }), el("span", { text: String(x.product || "") }));
-    if (team.canWrite && db) row.append(el("button", { class: "small", text: "Remove", "aria-label": `Remove ${x.product}`, onclick: () => db.doc(`products/${x.id}`).delete().catch(fail) }));
+    if (team.canWrite && db) row.append(el("button", { class: "small", text: "Remove", "aria-label": `Remove ${x.product}`, onclick: () => db.doc(T + `products/${x.id}`).delete().catch(fail) }));
     plist.append(row);
   }
   p.append(plist);
@@ -587,7 +610,7 @@ function spotPage(p, i) {
     const n = el("input", { id: "prod-name", placeholder: "Product, as on the master list" });
     p.append(el("form", { class: "row", style: "margin-top:8px", onsubmit: async (e) => {
       e.preventDefault(); if (!n.value.trim()) return;
-      await add("products", { spot: key, product: n.value.trim(), qty: Math.max(1, parseInt(q.value) || 1), ...stamp() }); n.value = ""; q.value = "1";
+      await add(T + "products", { spot: key, product: n.value.trim(), qty: Math.max(1, parseInt(q.value) || 1), ...stamp() }); n.value = ""; q.value = "1";
     } }, q, n, el("button", { type: "submit", class: "small", text: "Add" })));
   }
 
@@ -605,7 +628,7 @@ function spotPage(p, i) {
   if (team.canWrite && db) {
     const t = el("textarea", { id: "note-text", rows: "2", placeholder: "e.g. Top shelf needs risers; client wants labels in script" });
     p.append(el("form", { style: "margin-top:8px", onsubmit: async (e) => {
-      e.preventDefault(); if (!t.value.trim()) return; await add("notes", { spot: key, text: t.value.trim(), ...stamp() }); t.value = "";
+      e.preventDefault(); if (!t.value.trim()) return; await add(T + "notes", { spot: key, text: t.value.trim(), ...stamp() }); t.value = "";
     } }, t, el("div", { class: "row", style: "justify-content:flex-end;margin-top:6px" }, el("button", { type: "submit", class: "small", text: "Add note" }))));
   }
 
@@ -613,7 +636,7 @@ function spotPage(p, i) {
   if (pics.length) {
     p.append(el("h3", { text: "Photos" }));
     const g = el("div", { class: "photos" });
-    for (const x of pics) g.append(el("a", { href: x.image, target: "_blank" }, el("img", { src: x.image, alt: `${x.id} of ${spotTitle(o)}` })));
+    for (const x of pics) g.append(el("a", { href: R(x.image), target: "_blank" }, el("img", { src: R(x.image), alt: `${x.id} of ${spotTitle(o)}` })));
     p.append(g);
   }
 }
@@ -658,7 +681,7 @@ function measuresView(p) {
       el("form", { class: "row", style: "margin-top:6px", onsubmit: async (e) => {
         e.preventDefault();
         if (!db || !team.canWrite) { team.error = "Saving needs claude.ai and edit access."; render(); return; }
-        await add("measures", { label: label.value.trim() || "Measurement", ...pending, ...stamp() });
+        await add(T + "measures", { label: label.value.trim() || "Measurement", ...pending, ...stamp() });
         pending = null; clearTemp(); measuring = false; $("m-measure").setAttribute("aria-pressed", "false"); hint(); render();
       } }, label, el("button", { type: "submit", class: "small", text: "Save" }))));
   }
@@ -669,10 +692,10 @@ function measuresView(p) {
     tape.addEventListener("change", async () => {
       const v = tape.value.trim() ? parseLength(tape.value) : null;
       if (tape.value.trim() && v == null) { tape.setCustomValidity("Type inches, like 15¼"); tape.reportValidity(); return; }
-      await write(`measures/${m.id}`, { confirmed: v });
+      await write(T + `measures/${m.id}`, { confirmed: v });
     });
     const row = el("div", { class: "row" }, el("span", { style: "flex:1", text: String(m.label || "Measurement") }), el("span", { class: "num", text: fine(m.length) }));
-    if (team.canWrite && db) row.append(tape, el("button", { class: "small", text: "Delete", onclick: () => db.doc(`measures/${m.id}`).delete().catch(fail) }));
+    if (team.canWrite && db) row.append(tape, el("button", { class: "small", text: "Delete", onclick: () => db.doc(T + `measures/${m.id}`).delete().catch(fail) }));
     else if (m.confirmed) row.append(el("span", { class: "num ok", text: "✓ " + fine(m.confirmed) }));
     list.append(row);
   }
@@ -694,6 +717,66 @@ function aboutView(p) {
   const ul = el("ul", { class: "small" }); for (const t of items) ul.append(el("li", { text: t })); p.append(ul);
 }
 
+// ---------- scans: the one published with the page, and any the team adds ----------
+function scanPicker() {
+  const pick = $("scan-pick"); pick.replaceChildren();
+  const opts = [{ id: "builtin", name: files ? "First scan" : twin.name }, ...(team.scans || []).map((x) => ({ id: x.id, name: x.name || "Scan" }))];
+  for (const o of opts) {
+    const when = (team.scans || []).find((x) => x.id === o.id)?.date;
+    const op = el("option", { value: o.id, text: when ? `${o.name} · ${new Date(when).toLocaleDateString()}` : o.name });
+    if ((files ? scanId : "builtin") === o.id) op.selected = true;
+    pick.append(op);
+  }
+}
+$("scan-pick").addEventListener("change", (e) => { location.hash = e.target.value === "builtin" ? "" : e.target.value; location.reload(); });
+$("add-scan").addEventListener("click", () => $("scan-file").click());
+$("scan-file").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0]; e.target.value = "";
+  if (file) await addScan(file);
+});
+const TYPES = { json: "application/json", txt: "text/plain", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png" };
+async function addScan(file) {
+  const [dbx, , assets] = await capsP;
+  const say = (t) => { team.error = t; render(); };
+  if (!dbx || !assets) return say("Adding a scan needs this page open in claude.ai, with edit access.");
+  if (!window.JSZip) return say("The zip reader didn't load. Reload the page and try again.");
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const entries = Object.values(zip.files).filter((f) => !f.dir);
+    const tw = entries.find((f) => f.name.endsWith("twin.json"));
+    if (!tw) return say("That zip isn't a team twin. In RoomScan, share it with More → Share for team twin.");
+    const base = tw.name.slice(0, -"twin.json".length);
+    const meta = JSON.parse(await tw.async("string"));
+    const files = {};
+    const todo = entries.filter((f) => f.name.startsWith(base) && !f.name.endsWith("index.html"));
+    let done = 0;
+    for (const f of todo) {
+      const rel = f.name.slice(base.length), ext = rel.split(".").pop().toLowerCase();
+      if (!TYPES[ext]) continue;
+      say(`Uploading ${meta.name}: ${++done} of ${todo.length} files…`);
+      const blob = new Blob([await f.async("arraybuffer")], { type: TYPES[ext] });
+      files[rel] = (await assets.upload(blob)).url;
+    }
+    const id = (String(meta.name || "scan").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "scan") + "-" + Date.now().toString(36);
+    await dbx.doc(`scans/${id}`).set({ name: String(meta.name || "Scan"), date: meta.date || null, files, ...stamp() });
+    // What was already done in the app comes along: spot names, tape measurements, products, 3D measurements.
+    const seed = meta.seed || {}, base2 = `twins/${id}/`;
+    const spots = {};
+    for (const [key, name] of Object.entries(seed.names || {})) (spots[slug(key)] ||= {}).name = String(name);
+    for (const [k, v] of Object.entries(seed.measured || {})) {
+      const [key, field] = String(k).split("|");
+      if (key && field && isFinite(v)) ((spots[slug(key)] ||= {}).confirmed ||= {})[field] = Number(v);
+    }
+    say(`Bringing over what was done in the app…`);
+    for (const [sid, body] of Object.entries(spots)) await dbx.doc(base2 + "spots/" + sid).set(body);
+    for (const x of seed.products || []) await dbx.collection(base2 + "products").add({ spot: String(x.spot), product: String(x.product), qty: Number(x.qty) || 1, ...stamp() });
+    for (const m of seed.measures || []) await dbx.collection(base2 + "measures").add({ label: String(m.label || "Measurement"), a: m.a, b: m.b, length: Number(m.length), confirmed: m.confirmed ?? null, ...stamp() });
+    location.hash = id; location.reload();
+  } catch (err) {
+    say("That scan didn't upload: " + (err?.message || "try again in a moment") + ".");
+  }
+}
+
 async function write(path, body) {
   if (!db) return;
   const ref = db.doc(path);
@@ -703,5 +786,6 @@ async function write(path, body) {
 async function add(path, body) { if (!db) return; try { await db.collection(path).add(body); } catch (e) { fail(e); } }
 function fail(e) { team.error = e?.code === "invalid_argument" ? "You can view this but not change it." : "That didn't save. Try again in a moment."; render(); }
 
+scanPicker();
 render();
 </script>

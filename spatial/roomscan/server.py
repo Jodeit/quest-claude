@@ -100,7 +100,7 @@ def make_server(store: Store, public_url: str | None = None) -> MCPServer:
         twin = build_twin(src, out)
         return {
             "page": str(out / "index.html"), "root": str(out), "files": publish_files(out),
-            "capabilities": {"db": {}, "user": {"scopes": ["profile"]}},
+            "capabilities": {"db": {}, "user": {"scopes": ["profile"]}, "assets": {}},
             "name": twin["name"], "spots": [o["key"] for o in twin["objects"]], "processing": twin["processing"],
             "how": "Publish with the Artifact tool: file_path=page, root=root, files=files, capabilities as given. "
                    "The page keeps team edits (names, tape measurements, products, notes, 3D measurements) in its db.",

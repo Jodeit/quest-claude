@@ -232,44 +232,7 @@ struct LiDARMesh {
             }
         }
 
-        var best = [Float](repeating: -1, count: tri)
-        var choice = [Int](repeating: -1, count: tri)
-        var pixel = [SIMD2<Float>](repeating: .zero, count: tri)
-        let ds: Float = 4
-        for (k, cam) in cams.enumerated() {
-            let bw = Int(cam.w / ds), bh = Int(cam.h / ds)
-            var zbuf = [Float](repeating: .infinity, count: bw * bh)
-            for p in positions {
-                let c = cam.inverse * SIMD4(p, 1)
-                let d = -c.z
-                guard d > 0.1 else { continue }
-                let x = Int((cam.cx + cam.fx * c.x / d) / ds), y = Int((cam.cy - cam.fy * c.y / d) / ds)
-                guard x >= 0, y >= 0, x < bw - 1, y < bh - 1 else { continue }
-                for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let i = (y + oy) * bw + x + ox
-                    if d < zbuf[i] { zbuf[i] = d }
-                }
-            }
-            for t in 0..<tri where keep[t] {
-                let c = cam.inverse * SIMD4(centre[t], 1)
-                let d = -c.z
-                guard d > 0.2, d < 6 else { continue }
-                let x = cam.cx + cam.fx * c.x / d, y = cam.cy - cam.fy * c.y / d
-                guard x > 8, y > 8, x < cam.w - 8, y < cam.h - 8 else { continue }
-                let zi = Int(y / ds) * bw + Int(x / ds)
-                guard d <= zbuf[zi] + 0.04 + 0.02 * d else { continue }
-                let toCam = cam.position - centre[t]
-                let dist = simd_length(toCam)
-                let facing = abs(simd_dot(toCam / dist, normal[t]))
-                guard facing > 0.2 else { continue }
-                let score = facing * facing / dist * weight[k]
-                if score > best[t] {
-                    best[t] = score
-                    choice[t] = k
-                    pixel[t] = SIMD2(x, y)
-                }
-            }
-        }
+        let choice = Self.frameChoices(positions: positions, cams: cams, weight: weight, centre: centre, normal: normal, keep: keep)
 
         // Two nodes' worth of geometry: three vertices per triangle (vertices sit in different
         // frames' textures), wound to face the camera that painted them.
@@ -319,6 +282,122 @@ struct LiDARMesh {
             return SCNNode(geometry: g)
         }
         return (node(model), node(ceiling))
+    }
+
+    /// For each triangle (where `keep`), the frame that sees it most head-on and closest, weighted by
+    /// sharpness, among frames where it's the nearest surface (a quarter-size depth buffer per frame
+    /// from the vertices). -1 where none does.
+    private static func frameChoices(positions: [SIMD3<Float>], cams: [Cam], weight: [Float], centre: [SIMD3<Float>],
+                                     normal: [SIMD3<Float>], keep: [Bool]) -> [Int] {
+        let tri = centre.count
+        var best = [Float](repeating: -1, count: tri)
+        var choice = [Int](repeating: -1, count: tri)
+        let ds: Float = 4
+        for (k, cam) in cams.enumerated() {
+            let bw = Int(cam.w / ds), bh = Int(cam.h / ds)
+            var zbuf = [Float](repeating: .infinity, count: bw * bh)
+            for p in positions {
+                let c = cam.inverse * SIMD4(p, 1)
+                let d = -c.z
+                guard d > 0.1 else { continue }
+                let x = Int((cam.cx + cam.fx * c.x / d) / ds), y = Int((cam.cy - cam.fy * c.y / d) / ds)
+                guard x >= 0, y >= 0, x < bw - 1, y < bh - 1 else { continue }
+                for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let i = (y + oy) * bw + x + ox
+                    if d < zbuf[i] { zbuf[i] = d }
+                }
+            }
+            for t in 0..<tri where keep[t] {
+                let c = cam.inverse * SIMD4(centre[t], 1)
+                let d = -c.z
+                guard d > 0.2, d < 6 else { continue }
+                let x = cam.cx + cam.fx * c.x / d, y = cam.cy - cam.fy * c.y / d
+                guard x > 8, y > 8, x < cam.w - 8, y < cam.h - 8 else { continue }
+                let zi = Int(y / ds) * bw + Int(x / ds)
+                guard d <= zbuf[zi] + 0.04 + 0.02 * d else { continue }
+                let toCam = cam.position - centre[t]
+                let dist = simd_length(toCam)
+                let facing = abs(simd_dot(toCam / dist, normal[t]))
+                guard facing > 0.2 else { continue }
+                let score = facing * facing / dist * weight[k]
+                if score > best[t] {
+                    best[t] = score
+                    choice[t] = k
+                }
+            }
+        }
+        return choice
+    }
+
+    /// The mesh for the team twin page: trimmed to `bounds`, each vertex coloured from the frames
+    /// that painted its triangles, triangles wound to face their frame, then shrunk by vertex
+    /// clustering (`cell` metres). Ceiling triangles flagged so the page can hide them.
+    func webMesh(frames: [(Keyframe, URL)], ceilingY: Float, bounds: (SIMD3<Float>, SIMD3<Float>), cell: Float = 0.025)
+        -> (positions: [SIMD3<Float>], colors: [SIMD3<UInt8>], faces: [UInt32], ceiling: [Bool]) {
+        let cams = frames.map { Cam($0.0) }
+        let tri = triangleCount
+        var centre = [SIMD3<Float>](repeating: .zero, count: tri), normal = centre
+        var keep = [Bool](repeating: false, count: tri)
+        for t in 0..<tri {
+            let a = positions[Int(faces[t * 3])], b = positions[Int(faces[t * 3 + 1])], c = positions[Int(faces[t * 3 + 2])]
+            let ctr = (a + b + c) / 3
+            centre[t] = ctr
+            let n = simd_cross(b - a, c - a), l = simd_length(n)
+            normal[t] = l > 1e-9 ? n / l : SIMD3(0, 1, 0)
+            keep[t] = ctr.x > bounds.0.x && ctr.z > bounds.0.z && ctr.y > bounds.0.y
+                && ctr.x < bounds.1.x && ctr.z < bounds.1.z && ctr.y < bounds.1.y
+        }
+        let sharp = frames.compactMap { $0.0.sharpness }.sorted()
+        let medianSharp = sharp.isEmpty ? 1 : Swift.max(1e-3, sharp[sharp.count / 2])
+        let weight = frames.map { f -> Float in f.0.sharpness.map { Swift.min(1.5, Swift.max(0.3, $0 / medianSharp)) } ?? 1 }
+        let choice = cams.isEmpty ? [Int](repeating: -1, count: tri)
+            : Self.frameChoices(positions: positions, cams: cams, weight: weight, centre: centre, normal: normal, keep: keep)
+
+        // Vertex colours: each kept triangle's corners sampled in its frame, averaged per vertex.
+        var acc = [SIMD3<Float>](repeating: .zero, count: positions.count)
+        var cnt = [Float](repeating: 0, count: positions.count)
+        var byFrame = [Int: [Int]]()
+        for t in 0..<tri where keep[t] && choice[t] >= 0 { byFrame[choice[t], default: []].append(t) }
+        for (k, tris) in byFrame {
+            guard let img = RGBImage(url: frames[k].1) else { continue }
+            let cam = cams[k]
+            for t in tris {
+                for j in 0..<3 {
+                    let v = Int(faces[t * 3 + j])
+                    guard let px = cam.pixelUnclamped(positions[v]) else { continue }
+                    acc[v] += img.sample(px.x * Float(img.width) / cam.w, px.y * Float(img.height) / cam.h)
+                    cnt[v] += 1
+                }
+            }
+        }
+        // Cluster vertices on a grid; average positions and colours.
+        var index = [SIMD3<Int32>: Int]()
+        var outP: [SIMD3<Float>] = [], outC: [SIMD3<Float>] = [], outN: [Float] = []
+        var remap = [Int](repeating: -1, count: positions.count)
+        let lo = bounds.0
+        for (i, p) in positions.enumerated() {
+            let key = SIMD3<Int32>(Int32(((p.x - lo.x) / cell).rounded(.down)), Int32(((p.y - lo.y) / cell).rounded(.down)),
+                                   Int32(((p.z - lo.z) / cell).rounded(.down)))
+            let colour = cnt[i] > 0 ? acc[i] / cnt[i] : SIMD3<Float>(205, 205, 205)
+            if let j = index[key] {
+                outP[j] += p; outC[j] += colour; outN[j] += 1; remap[i] = j
+            } else {
+                index[key] = outP.count; remap[i] = outP.count
+                outP.append(p); outC.append(colour); outN.append(1)
+            }
+        }
+        for j in outP.indices { outP[j] /= outN[j]; outC[j] /= outN[j] }
+        var outF: [UInt32] = [], ceiling: [Bool] = []
+        for t in 0..<tri where keep[t] {
+            var ids = [remap[Int(faces[t * 3])], remap[Int(faces[t * 3 + 1])], remap[Int(faces[t * 3 + 2])]]
+            guard ids[0] != ids[1], ids[1] != ids[2], ids[0] != ids[2] else { continue }
+            let toward = choice[t] >= 0 ? cams[choice[t]].position - centre[t] : SIMD3<Float>(0, 1, 0)
+            if simd_dot(normal[t], toward) < 0 { ids.swapAt(1, 2) }
+            outF += ids.map { UInt32($0) }
+            ceiling.append(centre[t].y > ceilingY - 0.3 && abs(normal[t].y) > 0.7)
+        }
+        let colours = outC.map { SIMD3<UInt8>(UInt8(Swift.min(255, $0.x)), UInt8(Swift.min(255, $0.y)), UInt8(Swift.min(255, $0.z))) }
+        return (outP, colours, outF, ceiling)
     }
 
     private struct Cam {

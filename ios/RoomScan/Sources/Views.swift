@@ -109,6 +109,7 @@ struct ScanRow: View {
     @State private var showProducts = false
     @State private var showNames = false
     @State private var bundleURL: URL?
+    @State private var makingTwin = false
     @State private var showDollhouse = false
     @State private var showMeasurements = false
     @State private var rebuilding = false
@@ -161,6 +162,21 @@ struct ScanRow: View {
                             planError = "Couldn't zip the scan: \(error.localizedDescription)"
                         }
                     } label: { Label("Share scan bundle (.zip)", systemImage: "archivebox") }
+                    Button {
+                        makingTwin = true
+                        let scan = scan, lib = library
+                        Task {
+                            let result: Result<URL, Error> = await Task.detached(priority: .userInitiated) {
+                                Result { try TwinExport.make(scan, library: lib) }
+                            }.value
+                            makingTwin = false
+                            switch result {
+                            case let .success(url): bundleURL = url
+                            case let .failure(error): planError = "Couldn't make the team twin: \(error.localizedDescription)"
+                            }
+                        }
+                    } label: { Label(makingTwin ? "Making the team twin…" : "Share for team twin (.zip)", systemImage: "person.3") }
+                    .disabled(makingTwin)
                     if library.hasFrames(scan) {
                         Button {
                             Task {

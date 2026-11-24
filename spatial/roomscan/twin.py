@@ -5,7 +5,7 @@ where a team walks the room in 3D, opens its spots (shelves, sizes, products, no
     roomscan twin <bundle folder or .zip> <out folder>
 
 Publish it with the Artifact tool: file_path out/index.html, root out, files = every other file in out
-(twin.json, mesh.b64.txt, img/*), capabilities {db: {}, user: {scopes: ["profile"]}}.
+(twin.json, mesh.b64.txt, img/*), capabilities {db: {}, user: {scopes: ["profile"]}, assets: {}}.
 
 The LiDAR mesh, when the scan has one, is processed the way photogrammetry tools do it:
   - lined up with RoomPlan's room (undoing ARKit's world jump on older scans, then a point-to-plane
