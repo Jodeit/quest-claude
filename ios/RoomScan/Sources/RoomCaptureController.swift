@@ -161,9 +161,11 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             while !Task.isCancelled {
                 self?.pollKeyframe()
                 self?.updateHint()
+                self?.updateCoverage()
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
+        overlay.start()  // gray where the 3D scan hasn't reached yet
         return true
     }
 
@@ -175,6 +177,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         meshPass = false
         pollTask?.cancel()
         pollTask = nil
+        overlay.stop()
         meshView?.removeFromSuperview()
         meshView = nil
         return mesh
@@ -267,6 +270,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
 
     /// About once a second: how well the kept frames cover each wall RoomPlan has found so far.
     private func updateCoverage() {
+        if meshPass { updateMeshCoverage(); return }
         guard running, !computingCoverage, Date().timeIntervalSince(lastCoverage) > 1,
               let room = latestRoom, let pose = lastPoll else { return }
         computingCoverage = true
@@ -278,6 +282,30 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             }.value
             computingCoverage = false
             if running {
+                overlay.snapshot = snapshot
+                onCoverage?(snapshot)
+            }
+        }
+    }
+
+    /// Every two seconds in the photo-real pass: how much of each wall the LiDAR mesh has reached, for the
+    /// map, the gray overlay and the hint.
+    private func updateMeshCoverage() {
+        guard !computingCoverage, Date().timeIntervalSince(lastCoverage) > 2,
+              let room = latestRoom, let pose = lastPoll, let jump = meshJump, let mesh = LiDARMesh.harvest(arSession) else { return }
+        computingCoverage = true
+        lastCoverage = Date()
+        Task {
+            let snapshot = await Task.detached(priority: .utility) { () -> CoverageSnapshot in
+                let stride = Swift.max(1, mesh.positions.count / 120_000)
+                let points = Swift.stride(from: 0, to: mesh.positions.count, by: stride).map { i -> SIMD3<Float> in
+                    let p = jump * SIMD4(mesh.positions[i], 1)
+                    return SIMD3(p.x, p.y, p.z)
+                }
+                return Coverage.fromMesh(room: room, points: points, camera: pose)
+            }.value
+            computingCoverage = false
+            if meshPass {
                 overlay.snapshot = snapshot
                 onCoverage?(snapshot)
             }

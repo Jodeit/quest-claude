@@ -44,7 +44,6 @@ struct CaptureHints {
         if let room, let missing = storageWithoutFront(room: room, keyframes: keyframes, from: pose) {
             return "Stand about a metre in front of the storage \(missing) and hold still: that's what gives shelf sizes."
         }
-        if meshPass { return "Sweep slowly at chest height; go close to shelves and anything you'll want to measure." }
         return nil
     }
 

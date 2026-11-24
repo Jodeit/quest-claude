@@ -26,6 +26,7 @@ struct CoverageSnapshot {
     var overall: Float         // length-weighted
     var hint: String?
     var weakWalls: Int         // longer than 60 cm and under 70% covered
+    var label = "Wall photos"  // what the percentage is of
 }
 
 enum Coverage {
@@ -82,6 +83,67 @@ enum Coverage {
         }
         return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
                                 weakWalls: weak.count)
+    }
+
+    /// For the photo-real pass: how much of each RoomPlan wall the LiDAR mesh has reached, on a 10 cm
+    /// grid (a cell counts once a mesh vertex lies within 6 cm of the wall there; doors, windows and
+    /// openings left out). On a real scan the closet walls came out 66-83% covered while the main walls
+    /// were 86-100%: this is what points the scanner back at them. `points` in RoomPlan's coordinates.
+    static func fromMesh(room: CapturedRoom, points: [SIMD3<Float>], camera: simd_float4x4) -> CoverageSnapshot {
+        let camPos = simd_make_float3(camera.columns.3)
+        let flatCam = SIMD2(camPos.x, camPos.z)
+        var heading = SIMD2(-camera.columns.2.x, -camera.columns.2.z)
+        heading = simd_length(heading) > 1e-4 ? simd_normalize(heading) : SIMD2(0, -1)
+        let centres = room.walls.map { simd_make_float3($0.transform.columns.3) }
+        let centroid = centres.isEmpty ? SIMD3<Float>(0, 0, 0) : centres.reduce(.zero, +) / Float(centres.count)
+        let holes = room.doors + room.windows + room.openings
+        let step: Float = 0.1
+        var walls: [CoverageSnapshot.Wall] = [], cells: [CoverageSnapshot.Cell] = []
+        for (i, w) in room.walls.enumerated() where w.dimensions.x > 0.3 && w.dimensions.y > 0.3 {
+            let c = simd_make_float3(w.transform.columns.3), z = simd_make_float3(w.transform.columns.2)
+            let f = WallFrame(w, flipped: simd_dot(centroid - c, z) < 0)
+            let nu = Swift.max(1, Int(f.width / step)), nv = Swift.max(1, Int(f.height / step))
+            var hit = [Bool](repeating: false, count: nu * nv)
+            for p in points {
+                let l = f.local(p)
+                guard abs(l.depth) < 0.06, l.u >= 0, l.u < f.width, l.v >= 0, l.v < f.height else { continue }
+                hit[Swift.min(nv - 1, Int(l.v / step)) * nu + Swift.min(nu - 1, Int(l.u / step))] = true
+            }
+            var covered = 0, counted = 0
+            for a in 0..<nu {
+                for b in 0..<nv {
+                    let u0 = Float(a) * f.width / Float(nu), u1 = u0 + f.width / Float(nu)
+                    let v0 = Float(b) * f.height / Float(nv), v1 = v0 + f.height / Float(nv)
+                    let mid = f.world(u: (u0 + u1) / 2, v: (v0 + v1) / 2)
+                    let inHole = holes.contains { h in
+                        let hc = simd_make_float3(h.transform.columns.3), hx = simd_normalize(simd_make_float3(h.transform.columns.0))
+                        return abs(simd_dot(hc - c, f.normal)) < 0.3 && abs(simd_dot(mid - hc, hx)) < h.dimensions.x / 2
+                            && abs(mid.y - hc.y) < h.dimensions.y / 2
+                    }
+                    if inHole { continue }
+                    counted += 1
+                    let seen = hit[b * nu + a]
+                    if seen { covered += 1 }
+                    let lift = f.normal * 0.01
+                    cells.append(.init(corners: [f.world(u: u0, v: v0) + lift, f.world(u: u1, v: v0) + lift,
+                                                 f.world(u: u1, v: v1) + lift, f.world(u: u0, v: v1) + lift], covered: seen))
+                }
+            }
+            let left = f.world(u: 0, v: 0), right = f.world(u: f.width, v: 0)
+            walls.append(.init(id: i, a: SIMD2(left.x, left.z), b: SIMD2(right.x, right.z), length: f.width,
+                               fraction: counted > 0 ? Float(covered) / Float(counted) : 1))
+        }
+        let total = walls.reduce(Float(0)) { $0 + $1.length }
+        let overall = total > 0 ? walls.reduce(Float(0)) { $0 + $1.fraction * $1.length } / total : 0
+        var hint: String?
+        if let worst = walls.filter({ $0.length > 0.6 && $0.fraction < 0.85 }).min(by: { $0.fraction < $1.fraction }) {
+            hint = "Fill in the wall \(direction(of: (worst.a + worst.b) / 2, from: flatCam, heading: heading)): "
+                + "the 3D scan has gaps there (\(Int(worst.fraction * 100))%). Go closer, into corners and shelves."
+        } else if !walls.isEmpty {
+            hint = "The walls are well covered. Sweep any shelves and furniture you'll want to measure, then Finish."
+        }
+        return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
+                                weakWalls: walls.filter { $0.length > 0.6 && $0.fraction < 0.7 }.count, label: "3D scan")
     }
 
     /// "ahead", "to your left", "to your right" or "behind you", as the phone points now.
@@ -163,7 +225,7 @@ struct CoverageMap: View {
                 ctx.fill(Path(ellipseIn: CGRect(x: mid.x - 4, y: mid.y - 4, width: 8, height: 8)), with: .color(.white))
             }
             .frame(width: 130, height: 130)
-            Text("Wall photos \(Int(snapshot.overall * 100))%").font(.caption2.weight(.semibold))
+            Text("\(snapshot.label) \(Int(snapshot.overall * 100))%").font(.caption2.weight(.semibold))
         }
         .padding(8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))

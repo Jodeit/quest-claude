@@ -112,6 +112,7 @@ final class ScanSession: ObservableObject, Identifiable {
         guard case .done = phase, !meshPassRunning else { return }
         if controller.startMeshPass() {
             meshPassRunning = true
+            coverage = nil  // the pass reports its own, from the mesh
             serverStatus = "Photo-real pass: sweep the room slowly, close to things you care about, until the "
                 + "blue mesh covers them. Then tap Finish."
         } else {

@@ -246,7 +246,7 @@ struct ScanScreen: View {
                 .ignoresSafeArea()
             Color.white.opacity(flash ? 0.6 : 0).ignoresSafeArea().allowsHitTesting(false)
                 .onChange(of: session.photoCount) { flashOnce() }
-            if session.phase == .scanning, let coverage = session.coverage {
+            if session.phase == .scanning || session.meshPassRunning, let coverage = session.coverage {
                 CoverageMap(snapshot: coverage)
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -258,7 +258,8 @@ struct ScanScreen: View {
                      + "\(session.counts.windows) windows · \(session.counts.objects) objects")
                     .font(.subheadline)
                 if session.phase == .scanning || session.meshPassRunning,
-                   let hint = session.hint ?? (session.phase == .scanning ? session.coverage?.hint : nil) {
+                   let hint = session.hint ?? session.coverage?.hint
+                    ?? (session.meshPassRunning ? "Sweep slowly at chest height; go close to shelves and anything you'll want to measure." : nil) {
                     Text(hint).font(.callout.weight(.medium)).multilineTextAlignment(.center)
                         .animation(.default, value: hint)
                 }
