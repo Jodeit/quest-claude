@@ -1,5 +1,6 @@
 import ARKit
 import Foundation
+import RoomPlan
 import SceneKit
 import UIKit
 import simd
@@ -136,15 +137,15 @@ struct LiDARMesh {
                 let q = m * SIMD4(p0, 1)
                 let p = SIMD3(q.x, q.y, q.z)
                 if abs(p.y - floorY) < band {
-                    add(SIMD4(0, 0, 1, 0), floorY - p.y)
+                    add(SIMD4<Float>(0, 0, 1, 0), floorY - p.y)
                     continue
                 }
                 for w in planes {
                     let d = p - w.c
                     let off = simd_dot(d, w.z)
                     guard abs(off) < band, abs(simd_dot(d, w.x)) < w.hw - 0.1, abs(d.y) < w.hh - 0.15 else { continue }
-                    let dp = SIMD3(p.z - t.z, 0, -(p.x - t.x))  // how p moves per radian of yaw
-                    add(SIMD4(simd_dot(dp, w.z), w.z.x, 0, w.z.z), -off)
+                    let dp = SIMD3<Float>(p.z - t.z, 0, -(p.x - t.x))  // how p moves per radian of yaw
+                    add(SIMD4<Float>(simd_dot(dp, w.z), w.z.x, 0, w.z.z), -off)
                     break
                 }
             }
