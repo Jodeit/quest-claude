@@ -1,0 +1,227 @@
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+/// The organizing products used in one scanned room, by location on the plan, with the way out to
+/// the product calculator.
+struct ProductsView: View {
+    @EnvironmentObject private var library: ScanLibrary
+    @EnvironmentObject private var catalog: Catalog
+    @Environment(\.dismiss) private var dismiss
+    let scan: SavedScan
+
+    @State private var lines: [ProductLine] = []
+    @State private var locations: [String] = []
+    @State private var adding = false
+    @State private var importing = false
+    @State private var notice: String?
+    @State private var csvURL: URL?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if catalog.products.isEmpty {
+                    Section {
+                        Button {
+                            importing = true
+                        } label: {
+                            Label("Import the product catalog", systemImage: "square.and.arrow.down")
+                        }
+                    } footer: {
+                        Text("Export the calculator's product tab as CSV (File → Download → .csv) and pick it "
+                             + "here. It needs a column headed Product; Unit Price and Store are read too. "
+                             + "It stays on this phone.")
+                    }
+                }
+                if lines.isEmpty {
+                    Section {
+                        Text("No products yet. Tap + to add what went where.").foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(groupedLocations, id: \.self) { loc in
+                    Section(loc) {
+                        ForEach(lines.filter { $0.location == loc }) { line in
+                            HStack {
+                                Text(line.product).font(.subheadline)
+                                Spacer()
+                                Stepper("\(line.qty)", value: qtyBinding(line.id), in: 1...999)
+                                    .fixedSize()
+                            }
+                        }
+                        .onDelete { offsets in
+                            let ids = offsets.map { lines.filter { $0.location == loc }[$0].id }
+                            lines.removeAll { ids.contains($0.id) }
+                            save()
+                        }
+                    }
+                }
+                if let notice {
+                    Section { Text(notice).font(.callout) }
+                }
+            }
+            .navigationTitle("\(scan.name) products")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Menu {
+                        Button {
+                            UIPasteboard.general.string = ProductExport.calculatorRows(lines, room: scan.name)
+                            notice = "Copied \(lines.count) row\(lines.count == 1 ? "" : "s"). In the calculator's "
+                                + "Client Product List, click the first empty cell in the Location column and paste: "
+                                + "Location, Product and Qty in Home fill in, and the sheet looks up the price."
+                        } label: { Label("Copy rows for the calculator", systemImage: "doc.on.clipboard") }
+                            .disabled(lines.isEmpty)
+                        Button {
+                            csvURL = writeCSV()
+                        } label: { Label("Share as CSV", systemImage: "tablecells") }
+                            .disabled(lines.isEmpty)
+                        Button {
+                            importing = true
+                        } label: {
+                            Label(catalog.products.isEmpty ? "Import catalog" : "Replace catalog (\(catalog.products.count))",
+                                  systemImage: "square.and.arrow.down")
+                        }
+                    } label: { Image(systemName: "ellipsis.circle") }
+                    Button {
+                        adding = true
+                    } label: { Image(systemName: "plus") }
+                        .disabled(catalog.products.isEmpty)
+                }
+            }
+            .sheet(isPresented: $adding) {
+                AddProductView(locations: locations) { line in
+                    lines.append(line)
+                    save()
+                }
+            }
+            .sheet(item: $csvURL) { url in ShareSheet(items: [url]) }
+            .fileImporter(isPresented: $importing,
+                          allowedContentTypes: [.commaSeparatedText, .tabSeparatedText, .plainText]) { result in
+                do {
+                    let n = try catalog.importFile(try result.get())
+                    notice = "Catalog imported: \(n) products."
+                } catch {
+                    notice = error.localizedDescription
+                }
+            }
+            .onAppear {
+                lines = library.products(for: scan)
+                locations = library.locations(for: scan)
+            }
+        }
+    }
+
+    /// Locations in plan order, then any others (a scan re-labelled since), only those in use.
+    private var groupedLocations: [String] {
+        let used = Set(lines.map(\.location))
+        let known = locations.filter(used.contains)
+        return known + used.subtracting(known).sorted()
+    }
+
+    private func qtyBinding(_ id: UUID) -> Binding<Int> {
+        Binding(
+            get: { lines.first { $0.id == id }?.qty ?? 1 },
+            set: { q in
+                if let i = lines.firstIndex(where: { $0.id == id }) {
+                    lines[i].qty = q
+                    save()
+                }
+            })
+    }
+
+    private func save() { library.setProducts(lines, for: scan) }
+
+    private func writeCSV() -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(scan.id)-products.csv")
+        guard (try? ProductExport.csv(lines, room: scan.name).write(to: url, atomically: true, encoding: .utf8)) != nil
+        else { return nil }
+        return url
+    }
+}
+
+/// Pick a location, find a product in the catalog, set how many.
+struct AddProductView: View {
+    @EnvironmentObject private var catalog: Catalog
+    @Environment(\.dismiss) private var dismiss
+    let locations: [String]
+    let add: (ProductLine) -> Void
+
+    @State private var location = ProductLine.wholeRoom
+    @State private var search = ""
+    @State private var picked: CatalogProduct?
+    @State private var qty = 1
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Where") {
+                    Picker("Location", selection: $location) {
+                        ForEach(locations, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+                if let picked {
+                    Section("Product") {
+                        Text(picked.name)
+                        if let price = picked.price {
+                            Text(price, format: .currency(code: "USD")).foregroundStyle(.secondary)
+                        }
+                        Stepper("Quantity: \(qty)", value: $qty, in: 1...999)
+                        Button("Pick a different product") { self.picked = nil }
+                    }
+                } else {
+                    Section("Product") {
+                        ForEach(matches) { p in
+                            Button {
+                                picked = p
+                            } label: {
+                                VStack(alignment: .leading) {
+                                    Text(p.name).foregroundStyle(.primary)
+                                    if let store = p.store { Text(store).font(.caption).foregroundStyle(.secondary) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "Search the catalog")
+            .navigationTitle("Add product")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        guard let picked else { return }
+                        add(ProductLine(product: picked.name, store: picked.store, price: picked.price, qty: qty,
+                                        location: location))
+                        dismiss()
+                    }
+                    .disabled(picked == nil)
+                }
+            }
+        }
+    }
+
+    /// Every word typed must appear somewhere in the name or store; at most 100 shown.
+    private var matches: [CatalogProduct] {
+        let words = search.lowercased().split(separator: " ").map(String.init)
+        let hits = words.isEmpty ? catalog.products : catalog.products.filter { p in
+            let hay = (p.name + " " + (p.store ?? "")).lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+        return Array(hits.prefix(100))
+    }
+}
+
+/// UIKit's share sheet, for a file made on demand.
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+extension URL: Identifiable {
+    public var id: String { absoluteString }
+}

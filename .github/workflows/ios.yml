@@ -72,8 +72,20 @@ jobs:
           set -euo pipefail
           brew install xcodegen
           xcodegen generate
+          # Rebuild the .p8 from whatever the secret holds: the file's text (line breaks lost or
+          # CRLF from pasting are fine), just the base64 between the BEGIN/END lines, or the
+          # whole file base64-encoded.
           key="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
-          printf '%s\n' "$P8" > "$key"
+          strip() { tr -d '\r' | sed -e 's/-----BEGIN PRIVATE KEY-----//g' -e 's/-----END PRIVATE KEY-----//g' | tr -d ' \n\t'; }
+          body=$(printf '%s' "$P8" | strip)
+          if printf '%s' "$body" | base64 -d 2>/dev/null | grep -q 'BEGIN PRIVATE KEY'; then
+            body=$(printf '%s' "$body" | base64 -d | strip)
+          fi
+          { echo "-----BEGIN PRIVATE KEY-----"; printf '%s\n' "$body" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$key"
+          if ! openssl pkey -in "$key" -noout 2>/dev/null; then
+            echo "::error::ASC_KEY_P8 isn't a readable private key (${#body} base64 characters after cleanup; an App Store Connect .p8 has about 200). Paste the whole AuthKey_*.p8 file's text into the secret again."
+            exit 1
+          fi
           auth=(-allowProvisioningUpdates -authenticationKeyPath "$key"
                 -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER")
           xcodebuild -project RoomScan.xcodeproj -scheme RoomScan -configuration Release \

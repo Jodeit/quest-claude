@@ -9,13 +9,16 @@ import simd
 /// the phone's region uses them.
 enum FloorPlanPDF {
     static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
-                      elevations: [(Elevation, URL)] = [], to url: URL) throws {
-        try render(room, name: name, date: date, photos: photos, elevations: elevations)
+                      elevations: [(Elevation, URL)] = [], products: [ProductLine] = [], to url: URL) throws {
+        try render(room, name: name, date: date, photos: photos, elevations: elevations, products: products)
             .write(to: url, options: .atomic)
     }
 
+    /// "washerDryer" -> "Washer dryer": how objects are named on the plan and in product locations.
+    static func objectLabel(_ c: CapturedRoom.Object.Category) -> String { Plan.label(c) }
+
     static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
-                       elevations: [(Elevation, URL)] = []) -> Data {
+                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = []) -> Data {
         let plan = Plan(room, photos: photos.map { $0.0 })
         let units = Units(imperial: Locale.current.measurementSystem == .us)
         let page = plan.size.x > plan.size.y * 1.1
@@ -31,6 +34,7 @@ enum FloorPlanPDF {
                 drawElevation(e, image: url, room: room, units: units, name: name, pdf: pdf)
             }
             drawList(plan, units: units, name: name, page: page, pdf: pdf)
+            drawProducts(products, name: name, page: page, pdf: pdf)
             drawPhotos(plan, files: photos.map { $0.1 }, name: name, pdf: pdf)
         }
     }
@@ -308,6 +312,39 @@ enum FloorPlanPDF {
         text("Photo projected onto the wall from frames kept while scanning: flat things are to scale, "
              + "anything standing out from the wall looks stretched. Gray: no frame saw it.",
              at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
+    }
+
+    // MARK: products page
+
+    /// What went where: each location as on the plan, its products and quantities.
+    private static func drawProducts(_ lines: [ProductLine], name: String, page: CGRect,
+                                     pdf: UIGraphicsPDFRendererContext) {
+        guard !lines.isEmpty else { return }
+        var order: [String] = []
+        for l in lines where !order.contains(l.location) { order.append(l.location) }
+        var rows: [(String, Bool)] = []  // text, is a heading
+        for loc in order {
+            rows.append((loc, true))
+            for l in lines where l.location == loc { rows.append(("\(l.qty) × \(l.product)", false)) }
+        }
+        let rowH: CGFloat = 16
+        var y = page.height
+        for row in rows {
+            let need = row.1 ? rowH * 2.5 : rowH
+            if y + need > page.height - margin {
+                pdf.beginPage()
+                text("\(name): products by location", at: CGPoint(x: margin, y: margin), size: 14,
+                     weight: .semibold, anchor: .topLeft)
+                y = margin + 34
+            }
+            if row.1 {
+                y += 6
+                text(row.0, at: CGPoint(x: margin, y: y + rowH / 2), size: 10.5, weight: .semibold, anchor: .left)
+            } else {
+                text(row.0, at: CGPoint(x: margin + 14, y: y + rowH / 2), size: 9, anchor: .left)
+            }
+            y += rowH
+        }
     }
 
     // MARK: photo pages

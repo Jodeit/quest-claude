@@ -59,6 +59,29 @@ final class ScanLibrary: ObservableObject {
 
     func elevations(for s: SavedScan) -> [(Elevation, URL)] { WallElevations.load(from: elevationsFolder(s)) }
 
+    func products(for s: SavedScan) -> [ProductLine] {
+        guard let data = try? Data(contentsOf: folder(s).appendingPathComponent("products.json")) else { return [] }
+        return (try? decoder.decode([ProductLine].self, from: data)) ?? []
+    }
+
+    /// Saves the scan's product list; the plan PDF is redrawn with it next time it's opened.
+    func setProducts(_ lines: [ProductLine], for s: SavedScan) {
+        try? encoder.encode(lines).write(to: folder(s).appendingPathComponent("products.json"), options: .atomic)
+        try? FileManager.default.removeItem(at: planURL(s))
+        objectWillChange.send()
+    }
+
+    /// The places products can go, labelled as on the plan: the whole room, each wall, each object.
+    func locations(for s: SavedScan) -> [String] {
+        var out = [ProductLine.wholeRoom]
+        guard let data = try? json(for: s), let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) else {
+            return out
+        }
+        out += room.objects.enumerated().map { "\($0.offset + 1) \(FloorPlanPDF.objectLabel($0.element.category))" }
+        out += room.walls.indices.map { "Wall W\($0 + 1)" }
+        return out
+    }
+
     /// Projects the scan's keyframes onto each wall, then redraws the plan PDF with them.
     /// Takes a few seconds; runs off the main thread.
     func addElevations(_ s: SavedScan, room: CapturedRoom) async {
@@ -70,7 +93,7 @@ final class ScanLibrary: ObservableObject {
         }.value
         guard !made.isEmpty else { return }
         try? FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
-                                elevations: elevations(for: s), to: planURL(s))
+                                elevations: elevations(for: s), products: products(for: s), to: planURL(s))
     }
 
     /// The scan's photos with their files, in the order they were taken.
@@ -88,7 +111,7 @@ final class ScanLibrary: ObservableObject {
         if !FileManager.default.fileExists(atPath: url.path) {
             let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
             try FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
-                                   elevations: elevations(for: s), to: url)
+                                   elevations: elevations(for: s), products: products(for: s), to: url)
         }
         return url
     }

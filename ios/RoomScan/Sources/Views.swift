@@ -77,6 +77,7 @@ struct ScanRow: View {
     @State private var sending = false
     @State private var planPreview: URL?
     @State private var planError: String?
+    @State private var showProducts = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -107,10 +108,15 @@ struct ScanRow: View {
                         planError = "Couldn't draw the plan: \(error.localizedDescription)"
                     }
                 } label: { Label("Plan", systemImage: "ruler") }
-                ShareLink(item: library.jsonURL(scan)) { Label("JSON", systemImage: "square.and.arrow.up") }
-                if library.hasUSDZ(scan) {
-                    ShareLink(item: library.usdzURL(scan)) { Label("3D", systemImage: "cube") }
-                }
+                Button {
+                    showProducts = true
+                } label: { Label("Products", systemImage: "shippingbox") }
+                Menu {
+                    ShareLink(item: library.jsonURL(scan)) { Label("Scan (RoomPlan JSON)", systemImage: "doc") }
+                    if library.hasUSDZ(scan) {
+                        ShareLink(item: library.usdzURL(scan)) { Label("3D model (USDZ)", systemImage: "cube") }
+                    }
+                } label: { Label("Files", systemImage: "square.and.arrow.up") }
             }
             .buttonStyle(.borderless)
             .font(.caption)
@@ -120,6 +126,7 @@ struct ScanRow: View {
         }
         .padding(.vertical, 4)
         .quickLookPreview($planPreview)  // its share button sends the PDF on (Mail, AirDrop, Files)
+        .sheet(isPresented: $showProducts) { ProductsView(scan: scan) }
     }
 
     private func upload() async {

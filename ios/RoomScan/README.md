@@ -30,6 +30,14 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   scale; anything standing out from it (cabinet fronts, furniture) is smeared a little, and parts no
   frame saw are gray. Frames are kept in the scan's `frames/` folder (10–20 MB a scan), so the
   elevations can be redrawn.
+- **Products:** each scan's **Products** button lists the organizing products used in the room by
+  location, using the plan's own labels (*3 Storage*, *Wall W2*, or the whole room), picked from a
+  catalog imported once from a CSV export of the product calculator's product tab (a column headed
+  *Product*; *Unit Price* and *Store* are read too). The catalog stays on the phone. **Copy rows for
+  the calculator** puts tab-separated rows on the clipboard shaped for the calculator's *Client
+  Product List*: Location, Product, an empty Price (the sheet's formula fills it) and Qty in Home, so
+  they paste in at the Location column. **Share as CSV** gives the same with unit prices and stores.
+  The plan PDF gets a *products by location* page.
 - **Offline:** with no server set, or if sending fails, scans stay on the phone; a row's **Send**
   button retries. **JSON** and **3D** share either file anywhere.
 
