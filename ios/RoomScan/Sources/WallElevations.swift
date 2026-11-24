@@ -56,7 +56,62 @@ struct WallFrame {
 enum WallElevations {
     private static let pixelsPerMetre: Float = 200
     private static let maxSide: Float = 1800
-    private static let framesPerWall = 16
+    private static let framesPerWall = 30
+
+    /// A flat rectangle standing upright: a wall, or a door/window/opening (a hole in one).
+    private struct Panel {
+        let c, x, z: SIMD3<Float>  // centre; horizontal along and across, unit length
+        let halfW, halfH: Float
+        var holes: [Panel] = []
+
+        init(_ s: CapturedRoom.Surface) {
+            let t = s.transform
+            c = simd_make_float3(t.columns.3)
+            x = Self.flat(t.columns.0, SIMD3(1, 0, 0))
+            z = Self.flat(t.columns.2, SIMD3(0, 0, 1))
+            halfW = s.dimensions.x / 2
+            halfH = s.dimensions.y / 2
+        }
+
+        private static func flat(_ v: simd_float4, _ fallback: SIMD3<Float>) -> SIMD3<Float> {
+            let h = SIMD3<Float>(v.x, 0, v.z), l = simd_length(h)
+            return l > 1e-6 ? h / l : fallback
+        }
+    }
+
+    /// The room's walls with their holes, for asking whether a wall stands between a camera and a point.
+    private struct Occluders {
+        var walls: [Panel]
+
+        init(_ room: CapturedRoom) {
+            let holes = (room.doors + room.windows + room.openings).map(Panel.init)
+            walls = room.walls.map { w in
+                var p = Panel(w)
+                p.holes = holes.filter { abs(simd_dot($0.c - p.c, p.z)) < 0.3 }
+                return p
+            }
+        }
+
+        /// True if another wall (not `skip`) crosses the line from the camera to the point, other
+        /// than through a door, window or opening in it.
+        func blocked(_ cam: SIMD3<Float>, _ p: SIMD3<Float>, skip: Int) -> Bool {
+            let d = p - cam
+            for (j, w) in walls.enumerated() where j != skip {
+                let den = simd_dot(d, w.z)
+                guard abs(den) > 1e-6 else { continue }
+                let t = simd_dot(w.c - cam, w.z) / den
+                guard t > 0.02, t < 0.97 else { continue }
+                let hit = cam + d * t
+                let r = hit - w.c
+                guard abs(simd_dot(r, w.x)) < w.halfW - 0.03, abs(r.y) < w.halfH else { continue }
+                let throughHole = w.holes.contains { h in
+                    abs(simd_dot(hit - h.c, h.x)) < h.halfW && abs(hit.y - h.c.y) < h.halfH
+                }
+                if !throughHole { return true }
+            }
+            return false
+        }
+    }
 
     /// Makes elevations/<W#>.jpg and elevations.json in `dir` (replacing what was there) and
     /// returns what it made. Slow-ish (a second or so a wall): call it off the main thread.
@@ -65,10 +120,13 @@ enum WallElevations {
         try? FileManager.default.removeItem(at: dir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let views = frames.map { View($0.0, url: $0.1) }
+        let occluders = Occluders(room)
         var made: [Elevation] = []
         for (i, wall) in room.walls.enumerated() {
             autoreleasepool {
-                if let e = renderWall(i, wall, views: views, to: dir) { made.append(e) }
+                if let e = renderWall(i, wall, room: room, occluders: occluders, views: views, to: dir) {
+                    made.append(e)
+                }
             }
         }
         if let data = try? JSONEncoder().encode(made) {
@@ -84,7 +142,8 @@ enum WallElevations {
         return list.map { ($0, dir.appendingPathComponent($0.file)) }
     }
 
-    private static func renderWall(_ index: Int, _ wall: CapturedRoom.Surface, views: [View], to dir: URL) -> Elevation? {
+    private static func renderWall(_ index: Int, _ wall: CapturedRoom.Surface, room: CapturedRoom,
+                                   occluders: Occluders, views: [View], to dir: URL) -> Elevation? {
         guard wall.dimensions.x > 0.2, wall.dimensions.y > 0.2 else { return nil }
         // The room is on whichever side the camera mostly was.
         let c = simd_make_float3(wall.transform.columns.3)
@@ -108,13 +167,34 @@ enum WallElevations {
         let chosen = scored.sorted { $0.1 > $1.1 }.prefix(framesPerWall).compactMap { Bitmap($0.0) }
         guard !chosen.isEmpty else { return nil }
 
+        // Storage, appliances and the like standing against the wall: look at their front face rather
+        // than the wall behind, so shelves and drawers land where they are instead of smearing.
+        struct Front { var u0, u1, v0, v1, depth: Float }
+        var fronts: [Front] = []
+        for o in room.objects {
+            let t = o.transform
+            let oc = simd_make_float3(t.columns.3)
+            let ax = simd_make_float3(t.columns.0) * (o.dimensions.x / 2)
+            let az = simd_make_float3(t.columns.2) * (o.dimensions.z / 2)
+            let corners = [oc - ax - az, oc + ax - az, oc + ax + az, oc - ax + az].map { f.local($0) }
+            let us = corners.map { $0.u }, depths = corners.map { $0.depth }
+            guard let near = depths.min(), let far = depths.max(), near < 0.4, near > -0.3,
+                  let u0 = us.min(), let u1 = us.max(), u1 > 0, u0 < f.width else { continue }
+            let v0 = oc.y - o.dimensions.y / 2 - f.bottom
+            fronts.append(Front(u0: u0, u1: u1, v0: v0, v1: v0 + o.dimensions.y, depth: far))
+        }
+
         let ppm = Swift.min(pixelsPerMetre, maxSide / Swift.max(f.width, f.height))
         let w = Swift.max(1, Int(f.width * ppm)), h = Swift.max(1, Int(f.height * ppm))
         var out = [UInt8](repeating: 255, count: w * h * 4)
         for j in 0..<h {
             let v = (Float(h - j) - 0.5) / ppm
             for i in 0..<w {
-                let p = f.world(u: (Float(i) + 0.5) / ppm, v: v)
+                let u = (Float(i) + 0.5) / ppm
+                var p = f.world(u: u, v: v)
+                if let front = fronts.first(where: { u >= $0.u0 && u <= $0.u1 && v >= $0.v0 && v <= $0.v1 }) {
+                    p += f.normal * front.depth
+                }
                 var rgb = SIMD3<Float>(0, 0, 0), total: Float = 0
                 for bm in chosen {
                     guard let px = bm.view.project(p) else { continue }
@@ -122,10 +202,12 @@ enum WallElevations {
                     let toCam = bm.view.position - p
                     let dist = simd_length(toCam)
                     let facing = simd_dot(toCam / dist, f.normal)
-                    guard facing > 0.15 else { continue }
+                    guard facing > 0.15, !occluders.blocked(bm.view.position, p, skip: index) else { continue }
                     // Prefer head-on, close, and away from the frame's edges (where seams would show).
                     let edge = Swift.min(1, Swift.min(Swift.min(x, bm.w - x), Swift.min(y, bm.h - y)) / (0.12 * bm.w))
+                    // To the 8th power: the best frame for each spot wins, so there are fewer double images.
                     var weight = facing * edge
+                    weight = weight * weight
                     weight = weight * weight
                     weight = weight * weight / (dist * dist)
                     guard weight > 0 else { continue }

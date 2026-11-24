@@ -43,11 +43,11 @@ enum FloorPlanPDF {
             pdf.beginPage()
             drawPlan(plan, units: units, name: name, date: date, page: page, ctx: pdf.cgContext)
             for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
-                drawElevation(e, image: url, room: room, units: units, name: name, names: names, pdf: pdf)
+                drawElevation(e, image: url, room: room, units: units, name: name, names: names, page: page, pdf: pdf)
             }
             drawList(plan, units: units, name: name, page: page, pdf: pdf)
             drawProducts(products, name: name, names: names, page: page, pdf: pdf)
-            drawPhotos(plan, files: photos.map { $0.1 }, name: name, pdf: pdf)
+            drawPhotos(plan, files: photos.map { $0.1 }, name: name, page: page, pdf: pdf)
         }
     }
 
@@ -134,9 +134,17 @@ enum FloorPlanPDF {
                  angle: upright(pt(o.b) - pt(o.a)))
         }
 
-        // Each wall's length on a dimension line outside it, and its number inside.
+        // Each wall's length on a dimension line outside it, and its number inside, a quarter of the
+        // way along (the middle is where door and window labels go). A wall with floor on both sides
+        // (between two scanned spaces) has no outside, so its length goes with its number instead.
         for (i, wall) in plan.walls.enumerated() {
             let a = pt(wall.a), b = pt(wall.b), n = cg(wall.out)
+            let tagAt = a + (b - a) * 0.25 - n * 9
+            if wall.interior {
+                text("W\(i + 1) · \(units.length(wall.length))", at: tagAt, size: 6.5, color: faint,
+                     angle: upright(b - a))
+                continue
+            }
             let off: CGFloat = 14
             let da = a + n * off, db = b + n * off
             line(ctx, a + n * 4, da + n * 3, width: 0.4, color: faint)
@@ -147,7 +155,7 @@ enum FloorPlanPDF {
             let angle = upright(b - a)
             text(units.length(wall.length), at: (da + db) * 0.5 + n * 7, size: 8.5, weight: .medium,
                  angle: angle)
-            text("W\(i + 1)", at: (a + b) * 0.5 - n * 9, size: 6, color: faint, angle: angle)
+            text("W\(i + 1)", at: tagAt, size: 6, color: faint, angle: angle)
         }
 
         // Photo pins: where each photo was taken, with a wedge the way it faced.
@@ -237,15 +245,17 @@ enum FloorPlanPDF {
 
     // MARK: elevation pages
 
-    /// One wall per landscape page: the projected photo to scale, its width and height, and the
+    /// One wall per page: the projected photo to scale, its width and height, and the
     /// doors, windows and objects on or against it, labelled as on the plan.
     private static func drawElevation(_ e: Elevation, image url: URL, room: CapturedRoom, units: Units,
-                                      name: String, names: [String: String], pdf: UIGraphicsPDFRendererContext) {
+                                      name: String, names: [String: String], page: CGRect,
+                                      pdf: UIGraphicsPDFRendererContext) {
         guard let image = UIImage(contentsOfFile: url.path) else { return }
         let wall = room.walls[e.wall]
         let f = WallFrame(wall, flipped: e.flipped)
-        let page = CGRect(x: 0, y: 0, width: 792, height: 612)
-        pdf.beginPage(withBounds: page, pageInfo: [:])
+        // Every page is the document's own size: UIKit lays pages out for the renderer's bounds, so a
+        // page of another size gets cut off.
+        pdf.beginPage()
         let ctx = pdf.cgContext
         text("\(name): wall \(shown("Wall W\(e.wall + 1)", names))", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
              anchor: .topLeft)
@@ -362,20 +372,23 @@ enum FloorPlanPDF {
 
     // MARK: photo pages
 
-    /// Two by two on portrait pages, each captioned with its pin number and what it faces.
-    private static func drawPhotos(_ plan: Plan, files: [URL], name: String, pdf: UIGraphicsPDFRendererContext) {
+    /// Six to a page (three across on landscape pages, two on portrait), each captioned with its pin
+    /// number and what it faces.
+    private static func drawPhotos(_ plan: Plan, files: [URL], name: String, page: CGRect,
+                                   pdf: UIGraphicsPDFRendererContext) {
         guard !files.isEmpty else { return }
-        let page = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let cols = page.width > page.height ? 3 : 2, rows = page.width > page.height ? 2 : 3
+        let perPage = cols * rows
         let top = margin + 30, gutter: CGFloat = 16, caption: CGFloat = 18
-        let cellW = (page.width - 2 * margin - gutter) / 2
-        let cellH = (page.height - top - margin - gutter) / 2
+        let cellW = (page.width - 2 * margin - gutter * CGFloat(cols - 1)) / CGFloat(cols)
+        let cellH = (page.height - top - margin - gutter * CGFloat(rows - 1)) / CGFloat(rows)
         for (i, url) in files.enumerated() {
-            if i % 4 == 0 {
-                pdf.beginPage(withBounds: page, pageInfo: [:])
+            if i % perPage == 0 {
+                pdf.beginPage()
                 text("\(name): photos", at: CGPoint(x: margin, y: margin), size: 14, weight: .semibold,
                      anchor: .topLeft)
             }
-            let col = CGFloat(i % 2), row = CGFloat((i % 4) / 2)
+            let col = CGFloat(i % cols), row = CGFloat((i % perPage) / cols)
             let cell = CGRect(x: margin + col * (cellW + gutter), y: top + row * (cellH + gutter),
                               width: cellW, height: cellH - caption)
             if let image = UIImage(contentsOfFile: url.path), image.size.width > 0, image.size.height > 0 {
@@ -484,7 +497,7 @@ private struct Units {
 /// The room seen from above, in metres, turned so the longest wall runs across the page.
 /// Page x is ARKit x and page y is ARKit z (both point the same way as on paper: no mirroring).
 private struct Plan {
-    struct Wall { var a, b, out: SIMD2<Float>; var length, height: Float }
+    struct Wall { var a, b, out: SIMD2<Float>; var length, height: Float; var interior = false }
     struct Opening { var a, b, out: SIMD2<Float>; var width, height, sill: Float }
     struct Item { var corners: [SIMD2<Float>]; var center: SIMD2<Float>; var name: String
                   var width, depth, height: Float }
@@ -551,7 +564,9 @@ private struct Plan {
 
         for w in room.walls {
             let (a, b) = ends(w.transform, w.dimensions.x)
-            walls.append(Wall(a: a, b: b, out: outward(a, b), length: w.dimensions.x, height: w.dimensions.y))
+            let out = outward(a, b)
+            let interior = floorPolys.contains { Self.inside((a + b) / 2 + out * 0.15, $0) }
+            walls.append(Wall(a: a, b: b, out: out, length: w.dimensions.x, height: w.dimensions.y, interior: interior))
         }
         ceiling = room.walls.map(\.dimensions.y).max()
         func opening(_ o: CapturedRoom.Surface) -> Opening {

@@ -59,6 +59,39 @@ final class ScanLibrary: ObservableObject {
 
     func elevations(for s: SavedScan) -> [(Elevation, URL)] { WallElevations.load(from: elevationsFolder(s)) }
 
+    func hasFrames(_ s: SavedScan) -> Bool {
+        FileManager.default.fileExists(atPath: framesFolder(s).appendingPathComponent("frames.json").path)
+    }
+
+    /// Redraw the elevations from the frames already kept (after the app's method improves).
+    func rebuildElevations(_ s: SavedScan) async throws {
+        let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
+        await addElevations(s, room: room)
+    }
+
+    /// The whole scan folder as a .zip (scan, photos, frames, elevations, PDF, products, names), for
+    /// sending on. iOS zips a folder when it's read "for uploading".
+    func bundle(_ s: SavedScan) throws -> URL {
+        _ = try? plan(for: s)  // include an up-to-date PDF
+        var made: URL?
+        var failure: Error?
+        var coordError: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: folder(s), options: .forUploading, error: &coordError) { zip in
+            let dest = FileManager.default.temporaryDirectory.appendingPathComponent("\(s.id).zip")
+            do {
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.copyItem(at: zip, to: dest)
+                made = dest
+            } catch {
+                failure = error
+            }
+        }
+        if let coordError { throw coordError }
+        if let failure { throw failure }
+        guard let made else { throw CocoaError(.fileWriteUnknown) }
+        return made
+    }
+
     func products(for s: SavedScan) -> [ProductLine] {
         guard let data = try? Data(contentsOf: folder(s).appendingPathComponent("products.json")) else { return [] }
         return (try? decoder.decode([ProductLine].self, from: data)) ?? []

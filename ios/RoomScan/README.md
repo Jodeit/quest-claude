@@ -29,7 +29,13 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   and objects on or against it outlined, labelled as on the plan. Flat things on the wall are true to
   scale; anything standing out from it (cabinet fronts, furniture) is smeared a little, and parts no
   frame saw are gray. Frames are kept in the scan's `frames/` folder (10–20 MB a scan), so the
-  elevations can be redrawn.
+  elevations can be redrawn (**More → Rebuild elevations**). A frame only paints a spot if no other
+  wall stands in the way (doors, windows and openings excepted), and where storage or an appliance
+  stands against the wall, its front face is used instead of the wall behind it. Tuned against a
+  real two-space scan with a numpy copy of the method; with closet shelving that removed most of the
+  smearing.
+- **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
+  elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan
   (*3 Storage*, *Wall W2*); give the ones that matter a name (*Coffee station*). Names show on the
   plan, elevations, photo captions and products page (*3 Coffee station*), and in the calculator's

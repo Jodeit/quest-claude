@@ -85,8 +85,9 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
 
     // MARK: keyframes
 
-    /// Four times a second: keep this frame if the phone is being held fairly still (less blur)
-    /// and it's a new view: moved 30 cm or turned 15 degrees since the last frame kept.
+    /// Four times a second: keep this frame if the phone isn't swinging fast (less blur) and it's a
+    /// new view: moved 20 cm or turned 10 degrees since the last frame kept. (The first real scan
+    /// kept only 21 frames with stricter limits, leaving gaps on the walls.)
     private func pollKeyframe() {
         guard running, !encoding, keyframes.count < Self.maxKeyframes,
               let frame = captureView.captureSession.arSession.currentFrame,
@@ -94,9 +95,9 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         let pose = frame.camera.transform
         let previous = lastPoll
         lastPoll = pose
-        guard let previous, Self.turn(previous, pose) < 0.035,
-              simd_distance(previous.columns.3, pose.columns.3) < 0.03 else { return }
-        if let k = lastKey, simd_distance(k.columns.3, pose.columns.3) < 0.3, Self.turn(k, pose) < 0.26 { return }
+        guard let previous, Self.turn(previous, pose) < 0.07,
+              simd_distance(previous.columns.3, pose.columns.3) < 0.06 else { return }
+        if let k = lastKey, simd_distance(k.columns.3, pose.columns.3) < 0.2, Self.turn(k, pose) < 0.17 { return }
         lastKey = pose
 
         let buffer = frame.capturedImage

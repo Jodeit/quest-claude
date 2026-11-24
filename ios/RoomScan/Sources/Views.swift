@@ -79,6 +79,8 @@ struct ScanRow: View {
     @State private var planError: String?
     @State private var showProducts = false
     @State private var showNames = false
+    @State private var bundleURL: URL?
+    @State private var rebuilding = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -116,6 +118,24 @@ struct ScanRow: View {
                     Button {
                         showNames = true
                     } label: { Label("Name spots…", systemImage: "tag") }
+                    Button {
+                        do { bundleURL = try library.bundle(scan) } catch {
+                            planError = "Couldn't zip the scan: \(error.localizedDescription)"
+                        }
+                    } label: { Label("Share scan bundle (.zip)", systemImage: "archivebox") }
+                    if library.hasFrames(scan) {
+                        Button {
+                            Task {
+                                rebuilding = true
+                                defer { rebuilding = false }
+                                do { try await library.rebuildElevations(scan) } catch {
+                                    planError = "Couldn't rebuild the elevations: \(error.localizedDescription)"
+                                }
+                            }
+                        } label: { Label(rebuilding ? "Rebuilding elevations…" : "Rebuild elevations",
+                                         systemImage: "square.3.layers.3d") }
+                        .disabled(rebuilding)
+                    }
                     ShareLink(item: library.jsonURL(scan)) { Label("Scan (RoomPlan JSON)", systemImage: "doc") }
                     if library.hasUSDZ(scan) {
                         ShareLink(item: library.usdzURL(scan)) { Label("3D model (USDZ)", systemImage: "cube") }
@@ -132,6 +152,7 @@ struct ScanRow: View {
         .quickLookPreview($planPreview)  // its share button sends the PDF on (Mail, AirDrop, Files)
         .sheet(isPresented: $showProducts) { ProductsView(scan: scan) }
         .sheet(isPresented: $showNames) { SpotNamesView(scan: scan) }
+        .sheet(item: $bundleURL) { url in ShareSheet(items: [url]) }
     }
 
     private func upload() async {
