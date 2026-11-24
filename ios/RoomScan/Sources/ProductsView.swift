@@ -30,7 +30,7 @@ struct ProductsView: View {
                     } footer: {
                         Text("Export the calculator's product tab as CSV (File → Download → .csv) and pick it "
                              + "here. It needs a column headed Product; Unit Price and Store are read too. "
-                             + "It stays on this phone.")
+                             + "It stays on this phone. Or tap + and paste a store link to add products one by one.")
                     }
                 }
                 if lines.isEmpty {
@@ -77,6 +77,18 @@ struct ProductsView: View {
                         } label: { Label("Share as CSV", systemImage: "tablecells") }
                             .disabled(lines.isEmpty)
                         Button {
+                            let fresh = catalog.newProducts
+                            UIPasteboard.general.string = catalog.masterListRows(fresh)
+                            catalog.markAdded(fresh)
+                            notice = "Copied \(fresh.count) new product\(fresh.count == 1 ? "" : "s") for the master "
+                                + "product tab (Product, Unit Price, Store, URL): paste at the first empty Product cell, "
+                                + "so the calculator can price them."
+                        } label: {
+                            Label("Copy new products for the master list (\(catalog.newProducts.count))",
+                                  systemImage: "list.bullet.rectangle")
+                        }
+                        .disabled(catalog.newProducts.isEmpty)
+                        Button {
                             importing = true
                         } label: {
                             Label(catalog.products.isEmpty ? "Import catalog" : "Replace catalog (\(catalog.products.count))",
@@ -86,7 +98,6 @@ struct ProductsView: View {
                     Button {
                         adding = true
                     } label: { Image(systemName: "plus") }
-                        .disabled(catalog.products.isEmpty)
                 }
             }
             .sheet(isPresented: $adding) {
@@ -151,6 +162,11 @@ struct AddProductView: View {
     @State private var search = ""
     @State private var picked: CatalogProduct?
     @State private var qty = 1
+    @State private var link = ""
+    @State private var reading = false
+    @State private var readError: String?
+    @State private var draft: CatalogProduct?
+    @State private var draftPrice = ""
 
     var body: some View {
         NavigationStack {
@@ -169,7 +185,53 @@ struct AddProductView: View {
                         Stepper("Quantity: \(qty)", value: $qty, in: 1...999)
                         Button("Pick a different product") { self.picked = nil }
                     }
+                } else if draft != nil {
+                    Section {
+                        TextField("Name", text: draftBinding(\.name), axis: .vertical)
+                        TextField("Price", text: $draftPrice).keyboardType(.decimalPad)
+                        if let store = draft?.store { LabeledContent("Store", value: store) }
+                        if let dims = draft?.dimensions { LabeledContent("Size", value: dims) }
+                        Button("Use this product") {
+                            guard var p = draft else { return }
+                            p.name = p.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                            p.price = Double(draftPrice.replacingOccurrences(of: "$", with: ""))
+                            guard !p.name.isEmpty else { return }
+                            catalog.add(p)
+                            picked = p
+                            draft = nil
+                        }
+                        Button("Cancel", role: .cancel) { draft = nil }
+                    } header: {
+                        Text("From the store page")
+                    } footer: {
+                        Text("Edit the name to match the master list's style if you like: the calculator "
+                             + "looks prices up by exact name. New products are marked for adding to the master list.")
+                    }
                 } else {
+                    Section {
+                        HStack {
+                            TextField("Paste a product link", text: $link)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            Button("Paste") { link = UIPasteboard.general.string ?? link }
+                                .buttonStyle(.borderless)
+                        }
+                        Button {
+                            Task { await readLink() }
+                        } label: {
+                            HStack {
+                                Text(reading ? "Reading the page…" : "Read product from link")
+                                if reading { Spacer(); ProgressView() }
+                            }
+                        }
+                        .disabled(reading || URL(string: link.trimmingCharacters(in: .whitespaces))?.host == nil)
+                        if let readError { Text(readError).font(.caption).foregroundStyle(.red) }
+                    } header: {
+                        Text("From a store")
+                    } footer: {
+                        Text("Copy the link from Safari or the Target, Amazon or Container Store app (Share → Copy).")
+                    }
                     Section("Product") {
                         ForEach(matches) { p in
                             Button {
@@ -199,6 +261,25 @@ struct AddProductView: View {
                     .disabled(picked == nil)
                 }
             }
+        }
+    }
+
+    private func draftBinding(_ key: WritableKeyPath<CatalogProduct, String>) -> Binding<String> {
+        Binding(get: { draft?[keyPath: key] ?? "" }, set: { draft?[keyPath: key] = $0 })
+    }
+
+    @MainActor private func readLink() async {
+        guard let url = URL(string: link.trimmingCharacters(in: .whitespaces)) else { return }
+        reading = true
+        readError = nil
+        defer { reading = false }
+        do {
+            let found = try await ProductPageReader().read(url)
+            draft = CatalogProduct(name: found.name ?? "", price: found.price, store: found.store, url: found.url,
+                                   image: found.image, dimensions: found.dimensions, isNew: true)
+            draftPrice = found.price.map { String(format: "%.2f", $0) } ?? ""
+        } catch {
+            readError = error.localizedDescription
         }
     }
 

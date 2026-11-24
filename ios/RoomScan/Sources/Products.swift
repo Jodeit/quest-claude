@@ -6,6 +6,10 @@ struct CatalogProduct: Codable, Hashable, Identifiable {
     var name: String
     var price: Double?
     var store: String?
+    var url: String?
+    var image: String?
+    var dimensions: String?  // as the store words it, e.g. "24 Inches (L), 13.12 Inches (H) x 16.5 Inches (W)"
+    var isNew: Bool?         // added on the phone from a store link; not in the master list yet
     var id: String { name }
 }
 
@@ -88,9 +92,35 @@ final class Catalog: ObservableObject {
             list.append(CatalogProduct(name: name, price: price, store: cell(storeCol)))
         }
         guard !list.isEmpty else { throw ImportError.empty }
-        try JSONEncoder().encode(list).write(to: url, options: .atomic)
-        products = list
+        // Keep products added from links that the new master list doesn't have yet.
+        let kept = products.filter { $0.isNew == true && !seen.contains($0.name) }
+        products = list + kept
+        try persist()
         return list.count
+    }
+
+    /// A product read from a store link: replaces one of the same name, else joins the catalog.
+    func add(_ p: CatalogProduct) {
+        if let i = products.firstIndex(where: { $0.name == p.name }) { products[i] = p } else { products.append(p) }
+        try? persist()
+    }
+
+    var newProducts: [CatalogProduct] { products.filter { $0.isNew == true } }
+
+    /// Rows for the calculator's master product tab: Product, Unit Price, Store, URL.
+    func masterListRows(_ list: [CatalogProduct]) -> String {
+        list.map { [$0.name, $0.price.map { String(format: "%.2f", $0) } ?? "", $0.store ?? "", $0.url ?? ""]
+            .joined(separator: "\t") }.joined(separator: "\n")
+    }
+
+    func markAdded(_ list: [CatalogProduct]) {
+        let names = Set(list.map(\.name))
+        for i in products.indices where names.contains(products[i].name) { products[i].isNew = nil }
+        try? persist()
+    }
+
+    private func persist() throws {
+        try JSONEncoder().encode(products).write(to: url, options: .atomic)
     }
 
     /// RFC 4180-style: quoted fields, doubled quotes inside them (product names are full of inch

@@ -38,6 +38,14 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   Product List*: Location, Product, an empty Price (the sheet's formula fills it) and Qty in Home, so
   they paste in at the Location column. **Share as CSV** gives the same with unit prices and stores.
   The plan PDF gets a *products by location* page.
+- **Products from a store link:** in *Add product*, paste a product link (Safari, or the Target,
+  Amazon or Container Store app: Share → Copy). The app opens it in a hidden browser on the phone, so
+  the page's own scripts run (Target fills its price in that way) and bot checks see a real phone,
+  then reads the name, price, photo and dimensions. Edit the name to the master list's style, and it
+  joins the catalog marked new; **Copy new products for the master list** puts them on the clipboard
+  as Product, Unit Price, Store, URL rows for the calculator's product tab, so its price lookups work.
+  Whether each store lets a hidden browser read its pages is only known on a phone: from a cloud
+  server Container Store shows a robot check and Target a "Sorry for the wait" page.
 - **Offline:** with no server set, or if sending fails, scans stay on the phone; a row's **Send**
   button retries. **JSON** and **3D** share either file anywhere.
 
