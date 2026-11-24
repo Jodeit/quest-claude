@@ -152,6 +152,7 @@ struct ScanScreen: View {
             RoomCaptureRepresentable(controller: session.controller)
                 .ignoresSafeArea()
             Color.white.opacity(flash ? 0.6 : 0).ignoresSafeArea().allowsHitTesting(false)
+                .onChange(of: session.photoCount) { flashOnce() }
             VStack(spacing: 10) {
                 Text(title).font(.headline)
                 Text("\(session.counts.walls) walls · \(session.counts.doors) doors · "
@@ -190,10 +191,10 @@ struct ScanScreen: View {
         }
     }
 
-    /// Take a photo from the scanning camera: a flash and a tap so it's clear it worked.
-    private func shoot() async {
-        guard await session.takePhoto() else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    private func shoot() async { _ = await session.takePhoto() }
+
+    /// A flash on every photo, whether from the button, Camera Control or a volume button.
+    private func flashOnce() {
         flash = true
         withAnimation(.easeOut(duration: 0.3)) { flash = false }
     }

@@ -4,15 +4,18 @@ import simd
 
 /// A dimensioned floor plan of a scan, drawn on the phone (no server): page 1 is the plan to scale
 /// (walls with their lengths, doors, windows, furniture footprints, floor area, ceiling height),
-/// then a list of every measurement, then the photos taken while scanning, each pinned on the plan
-/// where it was taken. Feet and inches where the phone's region uses them.
+/// then an elevation of each wall (when the scan kept frames), a list of every measurement, and the
+/// photos taken while scanning, each pinned on the plan where it was taken. Feet and inches where
+/// the phone's region uses them.
 enum FloorPlanPDF {
     static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
-                      to url: URL) throws {
-        try render(room, name: name, date: date, photos: photos).write(to: url, options: .atomic)
+                      elevations: [(Elevation, URL)] = [], to url: URL) throws {
+        try render(room, name: name, date: date, photos: photos, elevations: elevations)
+            .write(to: url, options: .atomic)
     }
 
-    static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = []) -> Data {
+    static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
+                       elevations: [(Elevation, URL)] = []) -> Data {
         let plan = Plan(room, photos: photos.map { $0.0 })
         let units = Units(imperial: Locale.current.measurementSystem == .us)
         let page = plan.size.x > plan.size.y * 1.1
@@ -24,6 +27,9 @@ enum FloorPlanPDF {
         return UIGraphicsPDFRenderer(bounds: page, format: format).pdfData { pdf in
             pdf.beginPage()
             drawPlan(plan, units: units, name: name, date: date, page: page, ctx: pdf.cgContext)
+            for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
+                drawElevation(e, image: url, room: room, units: units, name: name, pdf: pdf)
+            }
             drawList(plan, units: units, name: name, page: page, pdf: pdf)
             drawPhotos(plan, files: photos.map { $0.1 }, name: name, pdf: pdf)
         }
@@ -210,6 +216,98 @@ enum FloorPlanPDF {
             text(row.2, at: CGPoint(x: margin + 150, y: cy), size: 9, anchor: .left)
             y += rowH
         }
+    }
+
+    // MARK: elevation pages
+
+    /// One wall per landscape page: the projected photo to scale, its width and height, and the
+    /// doors, windows and objects on or against it, labelled as on the plan.
+    private static func drawElevation(_ e: Elevation, image url: URL, room: CapturedRoom, units: Units,
+                                      name: String, pdf: UIGraphicsPDFRendererContext) {
+        guard let image = UIImage(contentsOfFile: url.path) else { return }
+        let wall = room.walls[e.wall]
+        let f = WallFrame(wall, flipped: e.flipped)
+        let page = CGRect(x: 0, y: 0, width: 792, height: 612)
+        pdf.beginPage(withBounds: page, pageInfo: [:])
+        let ctx = pdf.cgContext
+        text("\(name): wall W\(e.wall + 1)", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
+             anchor: .topLeft)
+        text("\(units.length(f.width)) wide × \(units.length(f.height)) high, seen from inside the room",
+             at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
+
+        let cell = CGRect(x: margin + 30, y: margin + 50, width: page.width - 2 * margin - 40,
+                          height: page.height - 2 * margin - 50 - 56)
+        let s = Swift.min(cell.width / CGFloat(f.width), cell.height / CGFloat(f.height))  // points per metre
+        let r = CGRect(x: cell.minX, y: cell.minY, width: CGFloat(f.width) * s, height: CGFloat(f.height) * s)
+        image.draw(in: r)
+        ctx.setStrokeColor(ink.cgColor)
+        ctx.setLineWidth(1)
+        ctx.stroke(r)
+        func box(u0: Float, u1: Float, v0: Float, v1: Float) -> CGRect {
+            let x0 = r.minX + CGFloat(Swift.max(0, u0)) * s, x1 = r.minX + CGFloat(Swift.min(f.width, u1)) * s
+            let y0 = r.maxY - CGFloat(Swift.min(f.height, v1)) * s, y1 = r.maxY - CGFloat(Swift.max(0, v0)) * s
+            return CGRect(x: x0, y: y0, width: Swift.max(0, x1 - x0), height: Swift.max(0, y1 - y0))
+        }
+        func outline(_ rect: CGRect, _ color: UIColor, _ label: String, dashed: Bool = false) {
+            guard rect.width > 1, rect.height > 1 else { return }
+            ctx.saveGState()
+            ctx.setStrokeColor(color.cgColor)
+            ctx.setLineWidth(1.4)
+            if dashed { ctx.setLineDash(phase: 0, lengths: [4, 3]) }
+            ctx.stroke(rect)
+            ctx.restoreGState()
+            let at = CGPoint(x: rect.minX + 3, y: rect.minY + 3)
+            let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8, weight: .semibold)]
+            let sz = (label as NSString).size(withAttributes: attrs)
+            ctx.setFillColor(UIColor.white.withAlphaComponent(0.8).cgColor)
+            ctx.fill(CGRect(x: at.x - 1, y: at.y - 1, width: sz.width + 2, height: sz.height + 2))
+            text(label, at: at, size: 8, weight: .semibold, color: color, anchor: .topLeft)
+        }
+
+        // Doors, windows and openings in this wall: within 30 cm of its plane, along its length.
+        func onWall(_ o: CapturedRoom.Surface) -> CGRect? {
+            let l = f.local(simd_make_float3(o.transform.columns.3))
+            guard abs(l.depth) < 0.3, l.u > -0.1, l.u < f.width + 0.1 else { return nil }
+            return box(u0: l.u - o.dimensions.x / 2, u1: l.u + o.dimensions.x / 2,
+                       v0: l.v - o.dimensions.y / 2, v1: l.v + o.dimensions.y / 2)
+        }
+        for (i, d) in room.doors.enumerated() {
+            if let b = onWall(d) { outline(b, doorColor, "D\(i + 1) \(units.length(d.dimensions.x))") }
+        }
+        for (i, w) in room.windows.enumerated() {
+            if let b = onWall(w) { outline(b, windowColor, "Win\(i + 1) \(units.length(w.dimensions.x))") }
+        }
+        for o in room.openings {
+            if let b = onWall(o) { outline(b, faint, "Opening") }
+        }
+        // Objects standing against it: footprint within 40 cm of the wall, overlapping its length.
+        for (i, o) in room.objects.enumerated() {
+            let t = o.transform
+            let c = simd_make_float3(t.columns.3)
+            let ax = simd_make_float3(t.columns.0) * (o.dimensions.x / 2)
+            let az = simd_make_float3(t.columns.2) * (o.dimensions.z / 2)
+            let corners = [c - ax - az, c + ax - az, c + ax + az, c - ax + az].map { f.local($0) }
+            let us = corners.map { $0.u }, depths = corners.map { $0.depth }
+            guard let near = depths.min(), near < 0.4, near > -0.3,
+                  let u0 = us.min(), let u1 = us.max(), u1 > 0, u0 < f.width else { continue }
+            let v0 = c.y - o.dimensions.y / 2 - f.bottom
+            outline(box(u0: u0, u1: u1, v0: v0, v1: v0 + o.dimensions.y), faint,
+                    "\(i + 1) \(Plan.label(o.category))", dashed: true)
+        }
+
+        // Width under, height to the left.
+        let wy = r.maxY + 14
+        line(ctx, CGPoint(x: r.minX, y: wy), CGPoint(x: r.maxX, y: wy), width: 0.6, color: ink)
+        for x in [r.minX, r.maxX] { line(ctx, CGPoint(x: x - 3, y: wy + 3), CGPoint(x: x + 3, y: wy - 3), width: 0.9, color: ink) }
+        text(units.length(f.width), at: CGPoint(x: r.midX, y: wy + 9), size: 9, weight: .medium)
+        let hx = r.minX - 14
+        line(ctx, CGPoint(x: hx, y: r.minY), CGPoint(x: hx, y: r.maxY), width: 0.6, color: ink)
+        for y in [r.minY, r.maxY] { line(ctx, CGPoint(x: hx - 3, y: y + 3), CGPoint(x: hx + 3, y: y - 3), width: 0.9, color: ink) }
+        text(units.length(f.height), at: CGPoint(x: hx - 9, y: r.midY), size: 9, weight: .medium, angle: -.pi / 2)
+
+        text("Photo projected onto the wall from frames kept while scanning: flat things are to scale, "
+             + "anything standing out from the wall looks stretched. Gray: no frame saw it.",
+             at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
     }
 
     // MARK: photo pages

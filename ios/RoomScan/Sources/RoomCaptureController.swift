@@ -1,14 +1,27 @@
 import ARKit
+import AVKit
 import CoreImage
 import RoomPlan
 import SwiftUI
 import UIKit
 
-/// Apple's RoomCaptureView (the live scanning UI, coaching and the processed 3D result), with two
-/// hooks out: every interim model RoomPlan builds while scanning, and the final processed room.
+/// Apple's RoomCaptureView (the live scanning UI, coaching and the processed 3D result), with
+/// hooks out: every interim model RoomPlan builds while scanning, the final processed room, and the
+/// hardware shutter (Camera Control or a volume button). While scanning it also keeps keyframes:
+/// still, sharp-ish frames from new viewpoints, for wall elevations.
 final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, RoomCaptureSessionDelegate {
     var onLiveUpdate: ((CapturedRoom) -> Void)?
     var onFinished: ((Result<CapturedRoom, Error>) -> Void)?
+    var onShutter: (() -> Void)?
+
+    /// The frames kept so far: what's described, and the JPEG.
+    private(set) var keyframes: [(Keyframe, Data)] = []
+    private static let maxKeyframes = 150
+    private static let keyframeWidth: CGFloat = 960
+    private var pollTask: Task<Void, Never>?
+    private var lastPoll: simd_float4x4?
+    private var lastKey: simd_float4x4?
+    private var encoding = false
 
     private var captureView: RoomCaptureView!
     private var running = false
@@ -21,6 +34,14 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         captureView.delegate = self
         captureView.captureSession.delegate = self
         view.addSubview(captureView)
+        // Camera Control and the volume buttons as a shutter. iOS may only send these to apps that
+        // run their own camera session; RoomPlan runs it for us, so this is best effort.
+        if #available(iOS 17.2, *) {
+            let shutter = AVCaptureEventInteraction { [weak self] event in
+                if event.phase == .ended { self?.onShutter?() }
+            }
+            view.addInteraction(shutter)
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -34,12 +55,19 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             captureView.captureSession.stop()
             running = false
         }
+        stopKeyframes()
     }
 
     func start() {
         guard !running else { return }
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
         running = true
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.pollKeyframe()
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
     }
 
     /// Stop scanning; RoomPlan then processes the room and calls captureView(didPresent:error:).
@@ -47,6 +75,56 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         guard running else { return }
         captureView.captureSession.stop()
         running = false
+        stopKeyframes()
+    }
+
+    private func stopKeyframes() {
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    // MARK: keyframes
+
+    /// Four times a second: keep this frame if the phone is being held fairly still (less blur)
+    /// and it's a new view: moved 30 cm or turned 15 degrees since the last frame kept.
+    private func pollKeyframe() {
+        guard running, !encoding, keyframes.count < Self.maxKeyframes,
+              let frame = captureView.captureSession.arSession.currentFrame,
+              case .normal = frame.camera.trackingState else { return }
+        let pose = frame.camera.transform
+        let previous = lastPoll
+        lastPoll = pose
+        guard let previous, Self.turn(previous, pose) < 0.035,
+              simd_distance(previous.columns.3, pose.columns.3) < 0.03 else { return }
+        if let k = lastKey, simd_distance(k.columns.3, pose.columns.3) < 0.3, Self.turn(k, pose) < 0.26 { return }
+        lastKey = pose
+
+        let buffer = frame.capturedImage
+        let fullW = CGFloat(CVPixelBufferGetWidth(buffer)), fullH = CGFloat(CVPixelBufferGetHeight(buffer))
+        let scale = Self.keyframeWidth / fullW
+        let k = frame.camera.intrinsics
+        let key = Keyframe(file: String(format: "F%03d.jpg", keyframes.count + 1), transform: pose.packed,
+                           fx: k.columns.0.x * Float(scale), fy: k.columns.1.y * Float(scale),
+                           cx: k.columns.2.x * Float(scale), cy: k.columns.2.y * Float(scale),
+                           width: Int((fullW * scale).rounded()), height: Int((fullH * scale).rounded()))
+        let context = ciContext
+        encoding = true
+        Task {
+            let jpeg: Data? = await Task.detached(priority: .utility) {
+                let image = CIImage(cvPixelBuffer: buffer).transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                let quality = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
+                return context.jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                  options: [quality: 0.75])
+            }.value
+            if let jpeg { keyframes.append((key, jpeg)) }
+            encoding = false
+        }
+    }
+
+    /// The angle between where two poses look, in radians.
+    private static func turn(_ a: simd_float4x4, _ b: simd_float4x4) -> Float {
+        let fa = -simd_make_float3(a.columns.2), fb = -simd_make_float3(b.columns.2)
+        return acos(Swift.min(1, Swift.max(-1, simd_dot(simd_normalize(fa), simd_normalize(fb)))))
     }
 
     /// The camera's current frame as a JPEG, upright for how the phone is held, with the camera's

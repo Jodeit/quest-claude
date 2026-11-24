@@ -47,6 +47,31 @@ final class ScanLibrary: ObservableObject {
     func hasUSDZ(_ s: SavedScan) -> Bool { FileManager.default.fileExists(atPath: usdzURL(s).path) }
     func planURL(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("\(s.id)-plan.pdf") }
     func photosFolder(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("photos", isDirectory: true) }
+    func framesFolder(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("frames", isDirectory: true) }
+    func elevationsFolder(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("elevations", isDirectory: true) }
+
+    func keyframes(for s: SavedScan) -> [(Keyframe, URL)] {
+        let dir = framesFolder(s)
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("frames.json")),
+              let list = try? decoder.decode([Keyframe].self, from: data) else { return [] }
+        return list.map { ($0, dir.appendingPathComponent($0.file)) }
+    }
+
+    func elevations(for s: SavedScan) -> [(Elevation, URL)] { WallElevations.load(from: elevationsFolder(s)) }
+
+    /// Projects the scan's keyframes onto each wall, then redraws the plan PDF with them.
+    /// Takes a few seconds; runs off the main thread.
+    func addElevations(_ s: SavedScan, room: CapturedRoom) async {
+        let frames = keyframes(for: s)
+        guard !frames.isEmpty else { return }
+        let dir = elevationsFolder(s)
+        let made = await Task.detached(priority: .userInitiated) {
+            WallElevations.render(room, frames: frames, to: dir)
+        }.value
+        guard !made.isEmpty else { return }
+        try? FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
+                                elevations: elevations(for: s), to: planURL(s))
+    }
 
     /// The scan's photos with their files, in the order they were taken.
     func photos(for s: SavedScan) -> [(ScanPhoto, URL)] {
@@ -62,7 +87,8 @@ final class ScanLibrary: ObservableObject {
         let url = planURL(s)
         if !FileManager.default.fileExists(atPath: url.path) {
             let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
-            try FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s), to: url)
+            try FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
+                                   elevations: elevations(for: s), to: url)
         }
         return url
     }
@@ -76,9 +102,11 @@ final class ScanLibrary: ObservableObject {
         .sorted { $0.date > $1.date }
     }
 
-    /// Keep a processed room: its RoomPlan JSON, a USDZ model of it, the photos taken while
-    /// scanning, a floor plan PDF, and the bookkeeping.
-    func save(room: CapturedRoom, json: Data, name: String, photos: [(ScanPhoto, Data)] = []) throws -> SavedScan {
+    /// Keep a processed room: its RoomPlan JSON, a USDZ model of it, the photos and keyframes
+    /// taken while scanning, a floor plan PDF, and the bookkeeping. Elevations come after
+    /// (addElevations), since they take a while.
+    func save(room: CapturedRoom, json: Data, name: String, photos: [(ScanPhoto, Data)] = [],
+              frames: [(Keyframe, Data)] = []) throws -> SavedScan {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyyMMdd-HHmmss"
@@ -98,6 +126,12 @@ final class ScanLibrary: ObservableObject {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             for (photo, jpeg) in photos { try jpeg.write(to: dir.appendingPathComponent(photo.file)) }
             try encoder.encode(photos.map { $0.0 }).write(to: dir.appendingPathComponent("photos.json"))
+        }
+        if !frames.isEmpty {
+            let dir = framesFolder(scan)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            for (frame, jpeg) in frames { try? jpeg.write(to: dir.appendingPathComponent(frame.file)) }
+            try? encoder.encode(frames.map { $0.0 }).write(to: dir.appendingPathComponent("frames.json"))
         }
         try? FloorPlanPDF.write(room, name: name, date: scan.date, photos: self.photos(for: scan), to: planURL(scan))
         try write(scan)

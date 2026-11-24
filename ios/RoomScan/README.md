@@ -19,6 +19,17 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   ahead, else the wall), and adds photo pages. Photos stay on the phone (`photos/` in the scan's
   folder) and in the PDF; they aren't sent to the server. Pause for a moment when you take one: the
   frame is the scanning camera's (about 1920×1440), so movement blurs it.
+  **Camera Control** (iPhone 16) and the volume buttons are meant to work as the shutter too; iOS may
+  only deliver those presses to apps that run their own camera, and RoomPlan runs it for us, so this
+  is unconfirmed on a device.
+- **Wall elevations:** while you scan, the app quietly keeps up to 150 frames (960×720), whenever the
+  phone is held fairly still and has moved 30 cm or turned 15° since the last one. After the scan it
+  projects the best of them onto each wall, giving a straight-on, to-scale photo of every wall seen
+  from inside the room. The PDF gets a page per wall with its width and height and the doors, windows
+  and objects on or against it outlined, labelled as on the plan. Flat things on the wall are true to
+  scale; anything standing out from it (cabinet fronts, furniture) is smeared a little, and parts no
+  frame saw are gray. Frames are kept in the scan's `frames/` folder (10–20 MB a scan), so the
+  elevations can be redrawn.
 - **Offline:** with no server set, or if sending fails, scans stay on the phone; a row's **Send**
   button retries. **JSON** and **3D** share either file anywhere.
 

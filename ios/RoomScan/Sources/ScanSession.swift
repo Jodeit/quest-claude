@@ -1,5 +1,6 @@
 import Foundation
 import RoomPlan
+import UIKit
 
 /// One scan from start to saved: streams interim rooms to the server while scanning (at most one
 /// every couple of seconds, always the newest), then saves and sends the processed room.
@@ -59,6 +60,9 @@ final class ScanSession: ObservableObject, Identifiable {
         controller.onFinished = { [weak self] result in
             Task { @MainActor in self?.finished(result) }
         }
+        controller.onShutter = { [weak self] in
+            Task { @MainActor in _ = await self?.takePhoto() }
+        }
     }
 
     func finish() {
@@ -78,6 +82,7 @@ final class ScanSession: ObservableObject, Identifiable {
         let photo = ScanPhoto(file: String(format: "P%02d.jpg", photos.count + 1), date: Date(), pose: shot.pose)
         photos.append((photo, shot.jpeg))
         photoCount = photos.count
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         return true
     }
 
@@ -145,10 +150,17 @@ final class ScanSession: ObservableObject, Identifiable {
         var saved: SavedScan
         do {
             body = try JSONEncoder().encode(room)
-            saved = try library.save(room: room, json: body, name: name, photos: photos)
+            saved = try library.save(room: room, json: body, name: name, photos: photos,
+                                     frames: controller.keyframes)
         } catch {
             phase = .failed("Couldn't save the scan: \(error.localizedDescription)")
             return
+        }
+        if !controller.keyframes.isEmpty {
+            let status = serverStatus
+            serverStatus = "Making wall elevations…"
+            await library.addElevations(saved, room: room)
+            serverStatus = status
         }
         if client != nil {
             while sending { try? await Task.sleep(nanoseconds: 100_000_000) }  // let a live send land first
