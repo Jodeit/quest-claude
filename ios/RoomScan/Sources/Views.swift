@@ -80,6 +80,7 @@ struct ScanRow: View {
     @State private var showProducts = false
     @State private var showNames = false
     @State private var bundleURL: URL?
+    @State private var showDollhouse = false
     @State private var rebuilding = false
 
     var body: some View {
@@ -111,6 +112,9 @@ struct ScanRow: View {
                         planError = "Couldn't draw the plan: \(error.localizedDescription)"
                     }
                 } label: { Label("Plan", systemImage: "ruler") }
+                Button {
+                    showDollhouse = true
+                } label: { Label("3D", systemImage: "cube.transparent") }
                 Button {
                     showProducts = true
                 } label: { Label("Products", systemImage: "shippingbox") }
@@ -153,6 +157,7 @@ struct ScanRow: View {
         .sheet(isPresented: $showProducts) { ProductsView(scan: scan) }
         .sheet(isPresented: $showNames) { SpotNamesView(scan: scan) }
         .sheet(item: $bundleURL) { url in ShareSheet(items: [url]) }
+        .fullScreenCover(isPresented: $showDollhouse) { DollhouseView(scan: scan) }
     }
 
     private func upload() async {
