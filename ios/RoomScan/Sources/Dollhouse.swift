@@ -113,7 +113,8 @@ enum Dollhouse {
             root.addChildNode(node)
         }
         // The floor photo, laid on top: a plane over the floor's bounds, transparent outside it.
-        if let (f, url) = part.floor, let image = UIImage(contentsOfFile: url.path) {
+        if let floor = part.floor, let image = UIImage(contentsOfFile: floor.1.path) {
+            let f = floor.0
             let plane = SCNPlane(width: CGFloat(f.maxX - f.minX), height: CGFloat(f.maxZ - f.minZ))
             let m = SCNMaterial()
             m.diffuse.contents = image
