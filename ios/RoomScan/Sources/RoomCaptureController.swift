@@ -44,6 +44,11 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     /// The photo-real pass: ARKit's own mesh reconstruction after RoomPlan, in the same session.
     private(set) var meshPass = false
     private var meshView: MeshPassView?
+    /// Starting ARKit's mesh mode moves the world origin (on a real scan, 3.5 m sideways). The
+    /// phone's pose just before and just after gives the move back to RoomPlan's coordinates.
+    private var preSwitchPose: simd_float4x4?
+    private var switchTime: TimeInterval = 0
+    private var meshJump: simd_float4x4?
     private var arSession: ARSession { captureView.captureSession.arSession }
 
     override func viewDidLoad() {
@@ -128,7 +133,10 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         guard !running, !meshPass, ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else { return false }
         let config = ARWorldTrackingConfiguration()
         config.sceneReconstruction = .mesh
-        arSession.run(config)  // no reset: the world stays where RoomPlan left it
+        preSwitchPose = arSession.currentFrame?.camera.transform
+        switchTime = ProcessInfo.processInfo.systemUptime
+        meshJump = nil
+        arSession.run(config)
         let v = MeshPassView(session: arSession)
         v.frame = view.bounds
         v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -149,7 +157,8 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     /// Ends the photo-real pass: the mesh, joined in world coordinates.
     func finishMeshPass() -> LiDARMesh? {
         guard meshPass else { return nil }
-        let mesh = LiDARMesh.harvest(arSession)
+        var mesh = LiDARMesh.harvest(arSession)
+        if let jump = meshJump { mesh?.apply(jump) }
         meshPass = false
         pollTask?.cancel()
         pollTask = nil
@@ -173,7 +182,11 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         guard running || meshPass, !encoding, keyframes.count < Self.maxKeyframes + (meshPass ? 150 : 0),
               let frame = captureView.captureSession.arSession.currentFrame,
               case .normal = frame.camera.trackingState else { return }
-        let pose = frame.camera.transform
+        if meshPass, meshJump == nil {
+            guard frame.timestamp > switchTime + 0.05, let pre = preSwitchPose else { return }
+            meshJump = LiDARMesh.yawTranslation(pre * frame.camera.transform.inverse)
+        }
+        let pose = meshPass ? (meshJump ?? matrix_identity_float4x4) * frame.camera.transform : frame.camera.transform
         let previous = lastPoll
         lastPoll = pose
         guard let previous, Self.turn(previous, pose) < 0.07,

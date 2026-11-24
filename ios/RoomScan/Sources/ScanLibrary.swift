@@ -118,8 +118,15 @@ final class ScanLibrary: ObservableObject {
     func meshURL(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("mesh.bin") }
     func mesh(for s: SavedScan) -> LiDARMesh? { LiDARMesh.read(from: meshURL(s)) }
 
-    /// Keeps a LiDAR mesh with the scan, and any frames taken for it (the photo-real pass).
+    /// Keeps a LiDAR mesh with the scan, and any frames taken for it (the photo-real pass), first
+    /// fitting it onto the room's walls and floor and moving the frames the same way.
     func addMesh(_ mesh: LiDARMesh, frames: [(Keyframe, Data)] = [], to s: SavedScan) {
+        var mesh = mesh
+        var frames = frames
+        if let data = try? json(for: s), let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) {
+            let fix = mesh.fit(to: room)
+            for i in frames.indices { frames[i].0.transform = (fix * frames[i].0.pose).packed }
+        }
         try? mesh.write(to: meshURL(s))
         if !frames.isEmpty {
             let dir = framesFolder(s)

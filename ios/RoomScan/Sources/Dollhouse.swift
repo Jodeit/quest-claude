@@ -61,9 +61,22 @@ enum Dollhouse {
 
         // The photo-real model replaces the photo-draped walls and floor when there is one.
         if let mesh = part.mesh {
-            let node = mesh.texturedNode(frames: part.frames)
-            node.name = "mesh:\(r)"
-            root.addChildNode(node)
+            let ceilingY = room.walls.map { $0.transform.columns.3.y + $0.dimensions.y / 2 }.max()
+            let ends = room.walls.flatMap { w -> [SIMD3<Float>] in
+                let c = simd_make_float3(w.transform.columns.3), x = simd_make_float3(w.transform.columns.0) * (w.dimensions.x / 2)
+                return [c - x, c + x]
+            }
+            var bounds: (SIMD3<Float>, SIMD3<Float>)?
+            if let first = ends.first {
+                let lo = ends.reduce(first) { simd_min($0, $1) }, hi = ends.reduce(first) { simd_max($0, $1) }
+                bounds = (SIMD3(lo.x - 0.4, floorY - 0.3, lo.z - 0.4), SIMD3(hi.x + 0.4, (ceilingY ?? hi.y + 2) + 0.3, hi.z + 0.4))
+            }
+            let nodes = mesh.texturedNodes(frames: part.frames, ceilingY: ceilingY, bounds: bounds)
+            nodes.model.name = "mesh:\(r)"
+            nodes.ceiling.name = "ceiling:\(r)"
+            nodes.ceiling.isHidden = true  // shown when walking
+            root.addChildNode(nodes.model)
+            root.addChildNode(nodes.ceiling)
         } else {
         // Walls, facing the room.
         for (i, w) in room.walls.enumerated() {
@@ -279,7 +292,7 @@ struct DollhouseView: View {
                     ProgressView("Building the dollhouse…")
                 }
                 Text(measuring ? (firstPoint == nil ? "Measuring: tap the first point." : "Now tap the second point.")
-                     : info ?? (walking ? "Drag to look around; pinch or drag with two fingers to move."
+                     : info ?? (walking ? "One finger looks around; two fingers walk and side-step; pinch steps forward."
                                 : "Drag to turn, pinch to zoom. Tap a box or a photo pin."))
                     .font(.callout)
                     .padding(10)
@@ -445,35 +458,94 @@ private struct SceneViewer: UIViewRepresentable {
         view.autoenablesDefaultLighting = true
         view.antialiasingMode = .multisampling4X
         view.backgroundColor = .systemGroupedBackground
-        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:)))
-        view.addGestureRecognizer(tap)
+        let c = context.coordinator
+        view.addGestureRecognizer(UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap(_:))))
+        // Walking: one finger looks, two fingers walk and side-step, pinch steps forward.
+        let look = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.look(_:)))
+        look.maximumNumberOfTouches = 1
+        let move = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.move(_:)))
+        move.minimumNumberOfTouches = 2
+        let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.pinch(_:)))
+        for g in [look, move, pinch] as [UIGestureRecognizer] {
+            g.delegate = c
+            view.addGestureRecognizer(g)
+        }
         return view
     }
 
-    /// Walk: stand in the room at eye height and fly the camera (drag to look, pinch or two fingers
-    /// to move). Dollhouse: back to turning the model from outside.
+    /// Walk: stand in the room at eye height, with the ceiling back on. Dollhouse: back to turning
+    /// the model from outside, ceiling off.
     func updateUIView(_ view: SCNView, context: Context) {
-        context.coordinator.preferSurface = preferSurface
-        guard context.coordinator.walking != walk else { return }
-        context.coordinator.walking = walk
+        let c = context.coordinator
+        c.preferSurface = preferSurface
+        guard c.walking != walk else { return }
+        c.walking = walk
         let camera = model.camera
+        for node in model.scene.rootNode.childNodes where node.name?.hasPrefix("ceiling:") == true {
+            node.isHidden = !walk
+        }
         if walk {
-            camera.simdPosition = model.eye
-            camera.simdLook(at: model.eye + SIMD3(0, -0.1, -1))
-            view.defaultCameraController.interactionMode = .fly
+            view.allowsCameraControl = false
+            c.camera = camera
+            c.position = model.eye
+            c.yaw = 0
+            c.pitch = -0.1
+            c.apply()
         } else {
             camera.simdTransform = model.start
+            view.allowsCameraControl = true
             view.defaultCameraController.interactionMode = .orbitTurntable
             view.defaultCameraController.target = SCNVector3(model.center.x, model.center.y, model.center.z)
         }
         view.pointOfView = camera
     }
 
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         let onTap: (String?, SIMD3<Float>?) -> Void
         var walking = false
         var preferSurface = false
+        weak var camera: SCNNode?
+        var position = SIMD3<Float>(0, 0, 0)
+        var yaw: Float = 0
+        var pitch: Float = 0
         init(onTap: @escaping (String?, SIMD3<Float>?) -> Void) { self.onTap = onTap }
+
+        func apply() {
+            camera?.simdPosition = position
+            camera?.simdOrientation = simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0)) * simd_quatf(angle: pitch, axis: SIMD3(1, 0, 0))
+        }
+
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool { walking || g is UITapGestureRecognizer }
+
+        func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            g is UIPinchGestureRecognizer || other is UIPinchGestureRecognizer
+        }
+
+        @objc func look(_ g: UIPanGestureRecognizer) {
+            guard walking, let v = g.view else { return }
+            let t = g.translation(in: v)
+            g.setTranslation(.zero, in: v)
+            yaw += Float(t.x) * 0.005
+            pitch = Swift.min(1.2, Swift.max(-1.2, pitch + Float(t.y) * 0.005))
+            apply()
+        }
+
+        @objc func move(_ g: UIPanGestureRecognizer) {
+            guard walking, let v = g.view else { return }
+            let t = g.translation(in: v)
+            g.setTranslation(.zero, in: v)
+            let forward = SIMD3<Float>(-sin(yaw), 0, -cos(yaw)), right = SIMD3<Float>(cos(yaw), 0, -sin(yaw))
+            position += forward * (Float(-t.y) * 0.008) + right * (Float(t.x) * 0.008)
+            apply()
+        }
+
+        @objc func pinch(_ g: UIPinchGestureRecognizer) {
+            guard walking else { return }
+            let forward = SIMD3<Float>(-sin(yaw), 0, -cos(yaw))
+            position += forward * Float(g.scale - 1) * 1.5
+            g.scale = 1
+            apply()
+        }
 
         /// Reports the first named thing hit (skipping tags and measurement marks), with the point
         /// on its surface.

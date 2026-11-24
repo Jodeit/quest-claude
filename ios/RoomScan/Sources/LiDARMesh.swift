@@ -82,109 +82,200 @@ struct LiDARMesh {
         }
     }
 
+    // MARK: lining up with RoomPlan
+
+    /// Just the turn about the vertical and the shift of a transform: ARKit's worlds are both
+    /// gravity-aligned, so anything else is noise.
+    static func yawTranslation(_ m: simd_float4x4) -> simd_float4x4 {
+        let yaw = atan2(m.columns.2.x, m.columns.0.x)
+        return rotationY(yaw, translation: simd_make_float3(m.columns.3))
+    }
+
+    static func rotationY(_ a: Float, translation t: SIMD3<Float>) -> simd_float4x4 {
+        let c = cos(a), s = sin(a)
+        return simd_float4x4(SIMD4(c, 0, -s, 0), SIMD4(0, 1, 0, 0), SIMD4(s, 0, c, 0), SIMD4(t.x, t.y, t.z, 1))
+    }
+
+    mutating func apply(_ m: simd_float4x4) {
+        for i in positions.indices {
+            let p = m * SIMD4(positions[i], 1)
+            positions[i] = SIMD3(p.x, p.y, p.z)
+        }
+    }
+
+    /// Fits the mesh onto RoomPlan's walls and floor (point-to-plane least squares on the turn
+    /// about the vertical and the shift; tried on a real scan, where it took a 3-7 cm misfit to
+    /// about 2.5 cm, the rest being baseboards and clutter). Applies it and returns it, so frames
+    /// taken with the mesh can be moved the same way.
+    mutating func fit(to room: CapturedRoom) -> simd_float4x4 {
+        guard !positions.isEmpty, !room.walls.isEmpty else { return matrix_identity_float4x4 }
+        struct Plane { var c, x, z: SIMD3<Float>; var hw, hh: Float }
+        func flat(_ v: simd_float4) -> SIMD3<Float> {
+            let h = SIMD3<Float>(v.x, 0, v.z), l = simd_length(h)
+            return l > 1e-6 ? h / l : SIMD3(1, 0, 0)
+        }
+        let planes = room.walls.map { w in
+            Plane(c: simd_make_float3(w.transform.columns.3), x: flat(w.transform.columns.0), z: flat(w.transform.columns.2),
+                  hw: w.dimensions.x / 2, hh: w.dimensions.y / 2)
+        }
+        let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
+        let stride = Swift.max(1, positions.count / 60000)
+        let sample = Swift.stride(from: 0, to: positions.count, by: stride).map { positions[$0] }
+        var yaw: Float = 0, t = SIMD3<Float>(0, 0, 0)
+        for iteration in 0..<10 {
+            let band: Float = iteration < 4 ? 0.25 : 0.08
+            let m = Self.rotationY(yaw, translation: t)
+            // Normal equations for (yaw, tx, ty, tz).
+            var ata = simd_float4x4(), atb = SIMD4<Float>(0, 0, 0, 0)
+            func add(_ row: SIMD4<Float>, _ r: Float) {
+                ata.columns.0 += row * row.x; ata.columns.1 += row * row.y
+                ata.columns.2 += row * row.z; ata.columns.3 += row * row.w
+                atb += row * r
+            }
+            for p0 in sample {
+                let q = m * SIMD4(p0, 1)
+                let p = SIMD3(q.x, q.y, q.z)
+                if abs(p.y - floorY) < band {
+                    add(SIMD4(0, 0, 1, 0), floorY - p.y)
+                    continue
+                }
+                for w in planes {
+                    let d = p - w.c
+                    let off = simd_dot(d, w.z)
+                    guard abs(off) < band, abs(simd_dot(d, w.x)) < w.hw - 0.1, abs(d.y) < w.hh - 0.15 else { continue }
+                    let dp = SIMD3(p.z - t.z, 0, -(p.x - t.x))  // how p moves per radian of yaw
+                    add(SIMD4(simd_dot(dp, w.z), w.z.x, 0, w.z.z), -off)
+                    break
+                }
+            }
+            // Keep it solvable when a direction has no constraint (e.g. no floor seen).
+            for k in 0..<4 { ata[k][k] += 1e-3 }
+            guard abs(ata.determinant) > 1e-9 else { break }
+            let step = ata.inverse * atb
+            yaw += step.x
+            t += SIMD3(step.y, step.z, step.w)
+        }
+        let fix = Self.rotationY(yaw, translation: t)
+        apply(fix)
+        return fix
+    }
+
     // MARK: texturing
 
-    /// The mesh painted with the kept frames: each triangle takes the frame that sees it most
-    /// head-on and closest, unless something in the mesh stands between them (checked by marching
-    /// through a 5 cm grid of the mesh), so a chair isn't painted onto the wall behind it. One
-    /// geometry element per frame, with that frame as its texture; triangles no frame saw are gray.
-    func texturedNode(frames: [(Keyframe, URL)]) -> SCNNode {
+    /// The painted model. Each triangle takes the frame that sees it most head-on and closest,
+    /// among frames where it's the nearest surface: each frame gets a quarter-size depth buffer
+    /// from the mesh's vertices, and a triangle counts as visible if its centre is within a few
+    /// centimetres of it (tried on a real scan: 95% of triangles painted, where a grid march left
+    /// most of them gray). Triangles are wound to face the frame that painted them and drawn
+    /// one-sided, so walls between you and the room vanish from outside. Triangles near the
+    /// ceiling go in a separate node (hidden in the dollhouse view), and anything outside `bounds`
+    /// (other rooms' scraps) is dropped.
+    func texturedNodes(frames: [(Keyframe, URL)], ceilingY: Float?, bounds: (SIMD3<Float>, SIMD3<Float>)?)
+        -> (model: SCNNode, ceiling: SCNNode) {
         let cams = frames.map { Cam($0.0) }
         let tri = triangleCount
-        guard tri > 0 else { return SCNNode() }
-
-        // Occupancy grid.
-        let cell: Float = 0.05
-        let lo = positions.reduce(SIMD3<Float>(repeating: .greatestFiniteMagnitude)) { simd_min($0, $1) } - cell
-        let hi = positions.reduce(SIMD3<Float>(repeating: -.greatestFiniteMagnitude)) { simd_max($0, $1) } + cell
-        let dims = SIMD3<Int>(Int((hi.x - lo.x) / cell) + 1, Int((hi.y - lo.y) / cell) + 1, Int((hi.z - lo.z) / cell) + 1)
-        var grid = [Bool](repeating: false, count: dims.x * dims.y * dims.z)
-        func index(_ p: SIMD3<Float>) -> Int? {
-            let q = (p - lo) / cell
-            let x = Int(q.x), y = Int(q.y), z = Int(q.z)
-            guard x >= 0, y >= 0, z >= 0, x < dims.x, y < dims.y, z < dims.z else { return nil }
-            return (z * dims.y + y) * dims.x + x
-        }
+        guard tri > 0, !cams.isEmpty else { return (SCNNode(), SCNNode()) }
+        var centre = [SIMD3<Float>](repeating: .zero, count: tri)
+        var normal = [SIMD3<Float>](repeating: .zero, count: tri)
+        var keep = [Bool](repeating: true, count: tri)
         for t in 0..<tri {
             let a = positions[Int(faces[t * 3])], b = positions[Int(faces[t * 3 + 1])], c = positions[Int(faces[t * 3 + 2])]
-            for p in [a, b, c, (a + b + c) / 3, (a + b) / 2, (b + c) / 2, (a + c) / 2] {
-                if let i = index(p) { grid[i] = true }
+            let ctr = (a + b + c) / 3
+            centre[t] = ctr
+            let n = simd_cross(b - a, c - a), l = simd_length(n)
+            normal[t] = l > 1e-9 ? n / l : SIMD3(0, 1, 0)
+            if let b = bounds, ctr.x < b.0.x || ctr.z < b.0.z || ctr.x > b.1.x || ctr.z > b.1.z || ctr.y < b.0.y || ctr.y > b.1.y {
+                keep[t] = false
             }
-        }
-        func clear(from p: SIMD3<Float>, to cam: SIMD3<Float>) -> Bool {
-            let d = cam - p, len = simd_length(d)
-            guard len > 0.2 else { return true }
-            let step = d / len * (cell * 0.8)
-            var q = p + d / len * 0.08  // start off the surface itself
-            var travelled: Float = 0.08
-            while travelled < len - 0.1 {
-                if let i = index(q), grid[i] { return false }
-                q += step
-                travelled += cell * 0.8
-            }
-            return true
         }
 
-        // Choose a frame per triangle.
+        var best = [Float](repeating: -1, count: tri)
         var choice = [Int](repeating: -1, count: tri)
-        var uv = [SIMD2<Float>](repeating: .zero, count: tri * 3)
-        for t in 0..<tri {
-            let a = positions[Int(faces[t * 3])], b = positions[Int(faces[t * 3 + 1])], c = positions[Int(faces[t * 3 + 2])]
-            let centre = (a + b + c) / 3
-            var n = simd_cross(b - a, c - a)
-            let nl = simd_length(n)
-            guard nl > 1e-9 else { continue }
-            n /= nl
-            var ranked: [(Int, Float, [SIMD2<Float>])] = []
-            for (k, cam) in cams.enumerated() {
-                let toCam = cam.position - centre
-                let dist = simd_length(toCam)
-                guard dist > 0.2, dist < 6 else { continue }
-                let facing = abs(simd_dot(toCam / dist, n))
-                guard facing > 0.2, let pa = cam.project(a), let pb = cam.project(b), let pc = cam.project(c) else { continue }
-                ranked.append((k, facing * facing / dist, [pa, pb, pc]))
+        var pixel = [SIMD2<Float>](repeating: .zero, count: tri)
+        let ds: Float = 4
+        for (k, cam) in cams.enumerated() {
+            let bw = Int(cam.w / ds), bh = Int(cam.h / ds)
+            var zbuf = [Float](repeating: .infinity, count: bw * bh)
+            for p in positions {
+                let c = cam.inverse * SIMD4(p, 1)
+                let d = -c.z
+                guard d > 0.1 else { continue }
+                let x = Int((cam.cx + cam.fx * c.x / d) / ds), y = Int((cam.cy - cam.fy * c.y / d) / ds)
+                guard x >= 0, y >= 0, x < bw - 1, y < bh - 1 else { continue }
+                for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let i = (y + oy) * bw + x + ox
+                    if d < zbuf[i] { zbuf[i] = d }
+                }
             }
-            ranked.sort { $0.1 > $1.1 }
-            for (k, _, pts) in ranked.prefix(4) where clear(from: centre, to: cams[k].position) {
-                choice[t] = k
-                for j in 0..<3 { uv[t * 3 + j] = SIMD2(pts[j].x / cams[k].w, pts[j].y / cams[k].h) }
-                break
+            for t in 0..<tri where keep[t] {
+                let c = cam.inverse * SIMD4(centre[t], 1)
+                let d = -c.z
+                guard d > 0.2, d < 6 else { continue }
+                let x = cam.cx + cam.fx * c.x / d, y = cam.cy - cam.fy * c.y / d
+                guard x > 8, y > 8, x < cam.w - 8, y < cam.h - 8 else { continue }
+                let zi = Int(y / ds) * bw + Int(x / ds)
+                guard d <= zbuf[zi] + 0.04 + 0.02 * d else { continue }
+                let toCam = cam.position - centre[t]
+                let dist = simd_length(toCam)
+                let facing = abs(simd_dot(toCam / dist, normal[t]))
+                guard facing > 0.2 else { continue }
+                let score = facing * facing / dist
+                if score > best[t] {
+                    best[t] = score
+                    choice[t] = k
+                    pixel[t] = SIMD2(x, y)
+                }
             }
         }
 
-        // Geometry: three vertices per triangle (a vertex can sit in two frames' textures).
-        var verts = [SCNVector3](), coords = [CGPoint]()
-        verts.reserveCapacity(tri * 3); coords.reserveCapacity(tri * 3)
-        for t in 0..<tri {
-            for j in 0..<3 {
-                let p = positions[Int(faces[t * 3 + j])]
-                verts.append(SCNVector3(p.x, p.y, p.z))
-                let u = uv[t * 3 + j]
-                coords.append(CGPoint(x: CGFloat(u.x), y: CGFloat(u.y)))
+        // Two nodes' worth of geometry: three vertices per triangle (vertices sit in different
+        // frames' textures), wound to face the camera that painted them.
+        struct Build { var verts = [SCNVector3](), coords = [CGPoint](), groups = [Int: [UInt32]]() }
+        var model = Build(), ceiling = Build()
+        for t in 0..<tri where keep[t] {
+            let k = choice[t]
+            var ids = [Int(faces[t * 3]), Int(faces[t * 3 + 1]), Int(faces[t * 3 + 2])]
+            var toward = normal[t]
+            if k >= 0 { toward = cams[k].position - centre[t] } else if let cy = ceilingY, centre[t].y > cy - 0.3 { toward = SIMD3(0, -1, 0) }
+            if simd_dot(normal[t], toward) < 0 { ids.swapAt(1, 2) }
+            let isCeiling = ceilingY.map { centre[t].y > $0 - 0.3 && abs(normal[t].y) > 0.7 } ?? false
+            let base = UInt32(isCeiling ? ceiling.verts.count : model.verts.count)
+            for id in ids {
+                let p = positions[id]
+                var uv = CGPoint.zero
+                if k >= 0, let px = cams[k].pixelUnclamped(p) { uv = CGPoint(x: CGFloat(px.x / cams[k].w), y: CGFloat(px.y / cams[k].h)) }
+                if isCeiling {
+                    ceiling.verts.append(SCNVector3(p.x, p.y, p.z)); ceiling.coords.append(uv)
+                } else {
+                    model.verts.append(SCNVector3(p.x, p.y, p.z)); model.coords.append(uv)
+                }
             }
+            if isCeiling { ceiling.groups[k, default: []].append(contentsOf: [base, base + 1, base + 2]) }
+            else { model.groups[k, default: []].append(contentsOf: [base, base + 1, base + 2]) }
         }
-        var groups = [Int: [UInt32]]()
-        for t in 0..<tri {
-            let base = UInt32(t * 3)
-            groups[choice[t], default: []].append(contentsOf: [base, base + 1, base + 2])
-        }
-        var elements: [SCNGeometryElement] = [], materials: [SCNMaterial] = []
-        for (k, idx) in groups.sorted(by: { $0.key < $1.key }) {
-            elements.append(SCNGeometryElement(indices: idx, primitiveType: .triangles))
-            let m = SCNMaterial()
-            if k >= 0, let image = UIImage(contentsOfFile: frames[k].1.path) {
-                m.diffuse.contents = image
-            } else {
-                m.diffuse.contents = UIColor(white: 0.82, alpha: 1)
+        var images = [Int: UIImage]()
+        func node(_ b: Build) -> SCNNode {
+            guard !b.verts.isEmpty else { return SCNNode() }
+            var elements: [SCNGeometryElement] = [], materials: [SCNMaterial] = []
+            for (k, idx) in b.groups.sorted(by: { $0.key < $1.key }) {
+                elements.append(SCNGeometryElement(indices: idx, primitiveType: .triangles))
+                let m = SCNMaterial()
+                if k >= 0 {
+                    if images[k] == nil { images[k] = UIImage(contentsOfFile: frames[k].1.path) }
+                    m.diffuse.contents = images[k] ?? UIColor(white: 0.82, alpha: 1)
+                } else {
+                    m.diffuse.contents = UIColor(white: 0.82, alpha: 1)
+                }
+                m.lightingModel = .constant
+                m.isDoubleSided = false
+                materials.append(m)
             }
-            m.lightingModel = .constant
-            m.isDoubleSided = true
-            materials.append(m)
+            let g = SCNGeometry(sources: [SCNGeometrySource(vertices: b.verts), SCNGeometrySource(textureCoordinates: b.coords)],
+                                elements: elements)
+            g.materials = materials
+            return SCNNode(geometry: g)
         }
-        let geometry = SCNGeometry(sources: [SCNGeometrySource(vertices: verts), SCNGeometrySource(textureCoordinates: coords)],
-                                   elements: elements)
-        geometry.materials = materials
-        return SCNNode(geometry: geometry)
+        return (node(model), node(ceiling))
     }
 
     private struct Cam {
@@ -198,6 +289,14 @@ struct LiDARMesh {
             position = simd_make_float3(pose.columns.3)
             fx = k.fx; fy = k.fy; cx = k.cx; cy = k.cy
             w = Float(k.width); h = Float(k.height)
+        }
+
+        /// Pixel in the frame (sensor orientation), even a little outside it; nil if behind.
+        func pixelUnclamped(_ p: SIMD3<Float>) -> SIMD2<Float>? {
+            let c = inverse * SIMD4(p, 1)
+            let depth = -c.z
+            guard depth > 0.05 else { return nil }
+            return SIMD2(cx + fx * c.x / depth, cy - fy * c.y / depth)
         }
 
         /// Pixel in the frame (sensor orientation), with a small margin; nil if out of view.

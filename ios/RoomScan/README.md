@@ -43,11 +43,16 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
 - **Photo-real 3D:** RoomPlan's boxes and flat walls can't look real: anything with depth smears
   across what's behind it. The app keeps ARKit's LiDAR mesh (the room's real surface shape) when the
   session has one, and after a room is saved, **Photo-real pass** keeps the camera going in ARKit's
-  mesh mode, drawing the mesh over the camera as it builds, while frames are kept as before. Each
-  mesh triangle is painted from the frame that sees it most head-on and close, unless the mesh
-  itself stands between them (a march through a 5 cm grid). The 3D view shows that model instead of
-  the photo-draped walls, with **Walk** to stand in the room at eye height (drag to look, pinch or
-  two fingers to move), and measuring lands on the real surfaces. Each scan's info.json records
+  mesh mode, drawing the mesh over the camera as it builds, while frames are kept as before.
+  Starting ARKit's mesh mode moves the world origin (3.5 m on the first try), so the phone's pose
+  just before and after the switch moves everything back, and the mesh is then fitted onto
+  RoomPlan's walls and floor (a few cm). Each triangle is painted from the frame that sees it most
+  head-on and close among frames where it's the nearest surface (a quarter-size depth buffer per
+  frame: 95% painted on a real scan), wound to face that frame and drawn one-sided, so walls
+  between you and the room vanish from outside. The ceiling is hidden in the dollhouse view, and
+  scraps beyond the room are trimmed. **Walk** stands you in the room at eye height: one finger
+  looks around, two fingers walk and side-step, pinch steps forward. Measuring lands on the real
+  surfaces. Each scan's info.json records
   `roomPlanMeshTriangles`: whether RoomPlan's own session builds a mesh at all.
 - **Dollhouse:** a scan's **3D** button shows it as a model to turn and zoom: walls wearing their
   elevation photos, the floor, furniture as see-through boxes tagged with their spot names, and photo
