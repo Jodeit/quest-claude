@@ -60,7 +60,7 @@ days and update by themselves. Everything below works from the iPhone:
 1. **Join the Developer Program**: the *Apple Developer* app → Account → Enroll. Approval can
    take a day or two.
 2. **Make the app record**: [App Store Connect](https://appstoreconnect.apple.com) → Apps → **+** →
-   New App. Platform iOS, name *RoomScan* (any unused name), bundle ID `dev.qlaude.roomscan`
+   New App. Platform iOS, name *RoomScan* (any unused name), bundle ID `dev.ai.roomscan`
    (register it at developer.apple.com → Identifiers → **+** → App IDs if it isn't offered),
    SKU anything.
 3. **Make an API key**: App Store Connect → Users and Access → Integrations → App Store Connect API
@@ -90,7 +90,7 @@ Apple ID it runs for 7 days, then needs re-signing; a paid developer account giv
 brew install xcodegen
 cd ios/RoomScan && xcodegen && open RoomScan.xcodeproj
 ```
-Pick your team under Signing & Capabilities (change the bundle id if `dev.qlaude.roomscan` is
+Pick your team under Signing & Capabilities (change the bundle id if `dev.ai.roomscan` is
 taken), plug in the phone, Run.
 
 ## Notes

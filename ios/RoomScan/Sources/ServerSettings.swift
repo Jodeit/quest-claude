@@ -24,7 +24,7 @@ final class ServerSettings: ObservableObject {
 }
 
 enum Keychain {
-    private static let service = "dev.qlaude.roomscan"
+    private static let service = "dev.ai.roomscan"
 
     private static func query(_ key: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
