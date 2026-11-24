@@ -211,12 +211,16 @@ const homeEye = centre.clone().add(new THREE.Vector3(reach * 0.55, reach * 0.95,
 camera.position.copy(homeEye);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(centre); controls.enableDamping = true; controls.update();
+// Moving the view by hand brings back everything near the camera that a spot close-up hid.
+controls.addEventListener("start", () => { if (camera.near !== 0.03) { camera.near = 0.03; camera.updateProjectionMatrix(); } });
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 1.6));
 
 const real = new THREE.Group(), doll = new THREE.Group(), boxes = new THREE.Group();
 let ceiling = null;
 scene.add(real, doll, boxes);
 
+const loader = new THREE.TextureLoader();
+const tex = (url) => { const t = loader.load(url); t.colorSpace = THREE.SRGBColorSpace; return t; };
 // The photo-real mesh: RTW1, per-vertex colours, ceiling triangles apart.
 if (twin.mesh) {
   // Served as base64 text (artifacts don't serve raw binary files).
@@ -225,6 +229,35 @@ if (twin.mesh) {
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   const buf = bytes.buffer;
   const dv = new DataView(buf);
+  const magic = String.fromCharCode(...bytes.slice(0, 4));
+  if (magic === "RTW2") {
+    // Photo-textured: per corner positions (u16 across a box) and texture coordinates (u16), in groups
+    // by frame, each drawn with that frame's photo.
+    const nt = dv.getUint32(4, true);
+    const lo = [0, 1, 2].map((i) => dv.getFloat32(8 + i * 4, true)), size = [0, 1, 2].map((i) => dv.getFloat32(20 + i * 4, true));
+    const pq = new Uint16Array(buf, 32, nt * 9), uq = new Uint16Array(buf, 32 + nt * 18, nt * 6);
+    const pos = new Float32Array(nt * 9), uvs = new Float32Array(nt * 6);
+    for (let i = 0; i < pos.length; i++) pos[i] = lo[i % 3] + pq[i] / 65535 * size[i % 3];
+    for (let i = 0; i < uvs.length; i++) uvs[i] = uq[i] / 65535;
+    const P = new THREE.BufferAttribute(pos, 3), U = new THREE.BufferAttribute(uvs, 2);
+    const gray = new THREE.MeshBasicMaterial({ color: 0xcfd1d6 });
+    const textures = new Map();
+    const part = (ceil) => {
+      const g = new THREE.BufferGeometry(); g.setAttribute("position", P); g.setAttribute("uv", U);
+      const mats = [];
+      for (const gr of twin.mesh.groups.filter((x) => x.ceiling === ceil)) {
+        let m = gray;
+        if (gr.image) {
+          if (!textures.has(gr.image)) textures.set(gr.image, new THREE.MeshBasicMaterial({ map: tex(R(gr.image)) }));
+          m = textures.get(gr.image);
+        }
+        g.addGroup(gr.start * 3, gr.count * 3, mats.length); mats.push(m);
+      }
+      return new THREE.Mesh(g, mats);
+    };
+    const model = part(false); model.name = "mesh"; real.add(model);
+    ceiling = part(true); ceiling.visible = false; real.add(ceiling);
+  } else {
   const nv = dv.getUint32(4, true), nm = dv.getUint32(8, true), nc = dv.getUint32(12, true);
   const pos = new Float32Array(buf, 16, nv * 3);
   const col = new Uint8Array(buf, 16 + nv * 12, nv * 3);
@@ -239,10 +272,9 @@ if (twin.mesh) {
   };
   const model = make(im); model.name = "mesh"; real.add(model);
   ceiling = make(ic); ceiling.visible = false; real.add(ceiling);
+  }
 }
 // The dollhouse: walls wearing their elevation photos, facing the room, and the floor photo.
-const loader = new THREE.TextureLoader();
-const tex = (url) => { const t = loader.load(url); t.colorSpace = THREE.SRGBColorSpace; return t; };
 // Each wall is a set of rectangles around its doors and open doorways (left open, so you see
 // through), mapped onto the wall's elevation photo. Windows stay: their glass is in the photo.
 function wallHoles(w) {
@@ -435,7 +467,7 @@ renderer.setAnimationLoop(() => {
   if (flight) {
     const k = Math.min(1, (performance.now() - flight.t0) / 700), e = k * k * (3 - 2 * k);
     camera.position.lerpVectors(flight.from, flight.to, e); controls.target.lerpVectors(flight.tFrom, flight.tTo, e);
-    if (k >= 1) flight = null;
+    if (k >= 1) { camera.near = flight.near; camera.updateProjectionMatrix(); flight = null; }
   }
 });
 $("loading").remove();
@@ -491,7 +523,8 @@ function focusSpot(i) {
   if (walking) $("m-walk").click();
   const fit = Math.max(f.w, f.h * camera.aspect) / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / camera.aspect;
   const eye = f.c.clone().addScaledVector(f.front, f.d / 2 + Math.max(0.9, fit * 1.35)).add(new THREE.Vector3(0, 0.15, 0));
-  flight = { from: camera.position.clone(), to: eye, tFrom: controls.target.clone(), tTo: f.c.clone(), t0: performance.now() };
+  flight = { from: camera.position.clone(), to: eye, tFrom: controls.target.clone(), tTo: f.c.clone(), t0: performance.now(),
+    near: Math.max(0.03, eye.distanceTo(f.c) - f.d / 2 - 0.45) };  // skip what stands between the eye and the unit
   drawDims(i);
 }
 function clearDims() { for (const t of dimTags) t.el.remove(); dimTags = []; dims.clear(); }
@@ -509,8 +542,16 @@ function drawDims(i) {
   line(P(-hw, -hh - gap, hd), P(hw, -hh - gap, hd)); label(P(0, -hh - gap - 0.05, hd), "W " + show("width", f.w));
   line(P(-hw - gap, -hh, hd), P(-hw - gap, hh, hd)); label(P(-hw - gap - 0.12, 0, hd), "H " + show("height", f.h));
   line(P(hw + gap, hh, -hd), P(hw + gap, hh, hd)); label(P(hw + gap + 0.1, hh, 0), "D " + show("depth", f.d));
-  // Shelves across the front, openings labelled between them (top first, as on the spot page).
+  // The unit's sharp front photo laid on its front face, to scale: what the shelves were found in.
   const fr = o.front;
+  if (fr?.image) {
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(f.w, f.h), new THREE.MeshBasicMaterial({ map: tex(R(fr.image)) }));
+    face.position.copy(P(0, 0, hd + 0.003));
+    face.lookAt(P(0, 0, hd + 1));
+    face.renderOrder = 5;
+    dims.add(face);
+  }
+  // Shelves across the front, openings labelled between them (top first, as on the spot page).
   if (fr && fr.shelves.length) {
     for (const s of fr.shelves) line(P(-hw, -hh + s, hd + 0.005), P(hw, -hh + s, hd + 0.005), shelfMat);
     const edges = [0, ...fr.shelves, fr.height];

@@ -186,6 +186,36 @@ class Frame:
         return top * (1 - fy) + bot * fy
 
 
+def smooth_choice(F: np.ndarray, bs: np.ndarray, bf: np.ndarray, iterations: int = 3, keep: float = 0.6) -> np.ndarray:
+    """Neighbouring triangles painted from different frames make speckle (each frame's exposure,
+    focus and small misalignments differ). Like the label smoothing in mesh texturing tools: a
+    triangle takes the frame most of its edge neighbours use, among its top three frames scoring at
+    least `keep` of its best."""
+    choice = bf[0].copy()
+    e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    t = np.tile(np.arange(len(F)), 3)
+    key = np.minimum(e[:, 0], e[:, 1]).astype(np.int64) * (int(F.max()) + 1) + np.maximum(e[:, 0], e[:, 1])
+    order = np.argsort(key, kind="stable")
+    ks, ts = key[order], t[order]
+    same = ks[1:] == ks[:-1]
+    a, b = ts[:-1][same], ts[1:][same]
+    pa, pb = np.concatenate([a, b]), np.concatenate([b, a])  # neighbour pairs, both ways
+    ok = (bf >= 0) & (bs >= keep * bs[0])
+    for _ in range(iterations):
+        votes = np.stack([np.bincount(pa, weights=(choice[pb] == bf[j][pa]).astype(float), minlength=len(F)) for j in range(3)])
+        votes = np.where(ok, votes + 1e-3 * bs, -1)
+        pick = votes.argmax(0)
+        choice = np.where(bf[0] >= 0, bf[pick, np.arange(len(F))], -1)
+    return choice
+
+
+def drop_slivers(P: np.ndarray, F: np.ndarray, longest: float = 0.12) -> np.ndarray:
+    """Triangles with an edge longer than `longest`: stretched shards from LiDAR noise and clustering."""
+    a, b, c = P[F[:, 0]], P[F[:, 1]], P[F[:, 2]]
+    edge = np.maximum.reduce([np.linalg.norm(a - b, axis=1), np.linalg.norm(b - c, axis=1), np.linalg.norm(c - a, axis=1)])
+    return F[edge <= longest]
+
+
 def paint(P: np.ndarray, F: np.ndarray, frames: list[Frame], report: dict, centre=None):
     """Per-vertex colours (uint8 RGB) for the mesh, from the frames, and the faces re-wound so each
     faces the frame that painted it (else the room's middle): drawn one-sided, walls between a
@@ -198,8 +228,9 @@ def paint(P: np.ndarray, F: np.ndarray, frames: list[Frame], report: dict, centr
     rel = np.clip(sharp / (np.median(sharp) + 1e-6), 0.3, 1.5)  # blurrier frames count for less
     report["frame_sharpness"] = {"min": round(float(sharp.min()), 1), "median": round(float(np.median(sharp)), 1)}
 
-    best = np.full(len(F), -1.0)
-    choice = np.full(len(F), -1)
+    # The three best frames per triangle (score, frame), for smoothing the choice afterwards.
+    bs = np.full((3, len(F)), -1.0)
+    bf = np.full((3, len(F)), -1)
     visible_by = []  # per frame: mask of triangles visible in it (for gain compensation)
     for fi, f in enumerate(frames):
         k = f.k
@@ -223,9 +254,16 @@ def paint(P: np.ndarray, F: np.ndarray, frames: list[Frame], report: dict, centr
         vis &= facing > 0.2
         visible_by.append(vis)
         score = np.where(vis, facing ** 2 / dist * rel[fi], -1)
-        upd = score > best
-        best[upd] = score[upd]
-        choice[upd] = fi
+        m1 = score > bs[0]
+        m2 = ~m1 & (score > bs[1])
+        m3 = ~m1 & ~m2 & (score > bs[2])
+        bs[2, m1 | m2], bf[2, m1 | m2] = bs[1, m1 | m2], bf[1, m1 | m2]
+        bs[1, m1], bf[1, m1] = bs[0, m1], bf[0, m1]
+        bs[0, m1], bf[0, m1] = score[m1], fi
+        bs[1, m2], bf[1, m2] = score[m2], fi
+        bs[2, m3], bf[2, m3] = score[m3], fi
+    choice = smooth_choice(F, bs, bf)
+    report["frame_switches_smoothed"] = int((choice != bf[0]).sum())
 
     # Gain compensation: per frame RGB gain so overlapping frames agree, least squares in log space,
     # anchored so the gains average to 1.
@@ -282,6 +320,7 @@ def paint(P: np.ndarray, F: np.ndarray, frames: list[Frame], report: dict, centr
     flip = ((toward - cen) * n).sum(1) < 0
     F = F.copy()
     F[flip] = F[flip][:, [0, 2, 1]]
+    report["_choice"] = choice  # the frame per triangle, for textured output
     return np.clip(colours, 0, 255).astype(np.uint8), F
 
 
@@ -336,7 +375,56 @@ def _photo_subject(pos, fwd, room_objects, room: Room):
     return best[0] if best else None
 
 
-def build_twin(bundle: Path, out: Path, cell: float = 0.025) -> dict:
+def write_textured_mesh(out: Path, P, F, choice, frames: list, room: "Room", width: int = 960) -> dict:
+    """RTW2: triangle count, the box positions are measured in (min xyz, size xyz, f32), then per
+    corner positions as u16 across that box (a fraction of a millimetre) and texture coordinates as
+    u16 across the frame (v up, as WebGL samples it); triangles sorted into groups by frame, ceiling
+    groups apart. The frames used are written, exposure-corrected, to img/f/. Base64 text, as RTW1."""
+    import base64
+
+    cen = P[F].mean(1)
+    nrm = np.cross(P[F[:, 1]] - P[F[:, 0]], P[F[:, 2]] - P[F[:, 0]])
+    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-12
+    ceiling = (cen[:, 1] > room.ceiling_y - 0.3) & (np.abs(nrm[:, 1]) > 0.7)
+    order = np.lexsort((choice, ceiling))  # model groups first, then ceiling; by frame within each
+    F, choice, ceiling = F[order], choice[order], ceiling[order]
+    (out / "img" / "f").mkdir(parents=True, exist_ok=True)
+    uv = np.zeros((len(F), 3, 2))
+    groups, names = [], {}
+    start = 0
+    while start < len(F):
+        k, c = choice[start], ceiling[start]
+        end = start
+        while end < len(F) and choice[end] == k and ceiling[end] == c:
+            end += 1
+        image = None
+        if k >= 0:
+            f = frames[k]
+            if k not in names:
+                im = Image.fromarray(np.clip(f.img * f.gain, 0, 255).astype(np.uint8))
+                if im.width > width:
+                    im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
+                names[k] = f"img/f/{Path(f.k['file']).stem}.jpg"
+                im.save(out / names[k], quality=82)
+            image = names[k]
+            for j in range(3):
+                x, y, _ = f.project(P[F[start:end, j]])
+                uv[start:end, j, 0] = x / f.k["width"]
+                uv[start:end, j, 1] = 1 - y / f.k["height"]
+        groups.append(dict(start=start, count=end - start, image=image, ceiling=bool(c)))
+        start = end
+    corners = P[F].reshape(-1, 3)
+    lo = corners.min(0)
+    size = np.maximum(corners.max(0) - lo, 1e-6)
+    pos = np.clip(np.round((corners - lo) / size * 65535), 0, 65535).astype("<u2").reshape(-1)
+    uvq = np.clip(np.round(uv * 65535), 0, 65535).astype("<u2").reshape(-1)
+    blob = b"RTW2" + struct.pack("<I", len(F)) + np.concatenate([lo, size]).astype("<f4").tobytes() + pos.tobytes() + uvq.tobytes()
+    (out / "mesh.b64.txt").write_text(base64.b64encode(blob).decode("ascii"))
+    return dict(file="mesh.b64.txt", format="RTW2", triangles=int((~ceiling).sum()), ceiling_triangles=int(ceiling.sum()),
+                frames=len(names), groups=groups)
+
+
+def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = True) -> dict:
     bundle, out = Path(bundle), Path(out)
     if bundle.suffix == ".zip":
         import tempfile
@@ -478,14 +566,27 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025) -> dict:
             & (cen[:, 1] > room.floor_y - 0.3) & (cen[:, 1] < room.ceiling_y + 0.3)
         F = F[keep]
         report["snapped_to_walls"] = snap_to_walls(P, room)
-        colours, F = paint(P, F, frames, report, centre=room.centre)
-        P2, F2, C2 = decimate(P, F, colours, cell)
-        cen2 = P2[F2].mean(1)
-        nrm = np.cross(P2[F2[:, 1]] - P2[F2[:, 0]], P2[F2[:, 2]] - P2[F2[:, 0]])
-        nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-12
-        ceiling = (cen2[:, 1] > room.ceiling_y - 0.3) & (np.abs(nrm[:, 1]) > 0.7)
-        write_web_mesh(out / "mesh.b64.txt", P2, F2, C2, ceiling)
-        mesh_out = dict(file="mesh.b64.txt", vertices=len(P2), triangles=int(len(F2)), ceiling_triangles=int(ceiling.sum()))
+        if textured:
+            # Shrink first, then paint with real texture: each triangle mapped onto its frame's photo
+            # (exposure correction baked into the photo), as photogrammetry tools texture a mesh.
+            dummy = np.zeros((len(P), 3), np.uint8)
+            P2, F2, _ = decimate(P, F, dummy, cell)
+            n0 = len(F2)
+            F2 = drop_slivers(P2, F2)
+            report["slivers_dropped"] = n0 - len(F2)
+            _, F2 = paint(P2, F2, frames, report, centre=room.centre)
+            choice = report.pop("_choice")
+            mesh_out = write_textured_mesh(out, P2, F2, choice, frames, room)
+        else:
+            colours, F = paint(P, F, frames, report, centre=room.centre)
+            report.pop("_choice", None)
+            P2, F2, C2 = decimate(P, F, colours, cell)
+            cen2 = P2[F2].mean(1)
+            nrm = np.cross(P2[F2[:, 1]] - P2[F2[:, 0]], P2[F2[:, 2]] - P2[F2[:, 0]])
+            nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-12
+            ceiling = (cen2[:, 1] > room.ceiling_y - 0.3) & (np.abs(nrm[:, 1]) > 0.7)
+            write_web_mesh(out / "mesh.b64.txt", P2, F2, C2, ceiling)
+            mesh_out = dict(file="mesh.b64.txt", vertices=len(P2), triangles=int(len(F2)), ceiling_triangles=int(ceiling.sum()))
         report["mesh_out"] = mesh_out
 
     twin = dict(
