@@ -40,6 +40,15 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   products; the home list gets a **Home plan**: every room in place on one page, with names and
   floor areas, and **Home 3D**: the dollhouse of every room together. Walk between rooms with the phone up; covering the camera or a long pause can lose
   tracking.
+- **Photo-real 3D:** RoomPlan's boxes and flat walls can't look real: anything with depth smears
+  across what's behind it. The app keeps ARKit's LiDAR mesh (the room's real surface shape) when the
+  session has one, and after a room is saved, **Photo-real pass** keeps the camera going in ARKit's
+  mesh mode, drawing the mesh over the camera as it builds, while frames are kept as before. Each
+  mesh triangle is painted from the frame that sees it most head-on and close, unless the mesh
+  itself stands between them (a march through a 5 cm grid). The 3D view shows that model instead of
+  the photo-draped walls, with **Walk** to stand in the room at eye height (drag to look, pinch or
+  two fingers to move), and measuring lands on the real surfaces. Each scan's info.json records
+  `roomPlanMeshTriangles`: whether RoomPlan's own session builds a mesh at all.
 - **Dollhouse:** a scan's **3D** button shows it as a model to turn and zoom: walls wearing their
   elevation photos, the floor, furniture as see-through boxes tagged with their spot names, and photo
   pins. Walls are one-sided, facing the room, so whichever walls stand between you and the room are

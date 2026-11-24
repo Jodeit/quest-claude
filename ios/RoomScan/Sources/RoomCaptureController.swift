@@ -37,6 +37,15 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private var running = false
     private let ciContext = CIContext()
 
+    /// Most LiDAR mesh triangles seen in the session during the RoomPlan scan (does RoomPlan
+    /// reconstruct a mesh we can use? this answers it), and the mesh taken as the scan ended.
+    private(set) var meshTrianglesSeen = 0
+    private(set) var roomMesh: LiDARMesh?
+    /// The photo-real pass: ARKit's own mesh reconstruction after RoomPlan, in the same session.
+    private(set) var meshPass = false
+    private var meshView: MeshPassView?
+    private var arSession: ARSession { captureView.captureSession.arSession }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         captureView = RoomCaptureView(frame: view.bounds)
@@ -83,6 +92,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             while !Task.isCancelled {
                 self?.pollKeyframe()
                 self?.updateCoverage()
+                if let self { self.meshTrianglesSeen = Swift.max(self.meshTrianglesSeen, LiDARMesh.triangles(in: self.arSession)) }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
@@ -92,6 +102,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     /// The camera session keeps running, so a next room continues in the same coordinates.
     func finish() {
         guard running else { return }
+        roomMesh = LiDARMesh.harvest(arSession)
         captureView.captureSession.stop(pauseARSession: false)
         running = false
         stopKeyframes()
@@ -102,10 +113,49 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     func startNextRoom() {
         guard !running else { return }
         keyframes = []
+        roomMesh = nil
+        meshTrianglesSeen = 0
         latestRoom = nil
         lastKey = nil
         lastPoll = nil
         start()
+    }
+
+    /// After a room is saved: run ARKit's mesh reconstruction in the same session (so the mesh lines
+    /// up with the room) and show it building over the camera, keeping frames as before. False if
+    /// the device can't reconstruct a mesh.
+    func startMeshPass() -> Bool {
+        guard !running, !meshPass, ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else { return false }
+        let config = ARWorldTrackingConfiguration()
+        config.sceneReconstruction = .mesh
+        arSession.run(config)  // no reset: the world stays where RoomPlan left it
+        let v = MeshPassView(session: arSession)
+        v.frame = view.bounds
+        v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.insertSubview(v, belowSubview: overlay)
+        meshView = v
+        meshPass = true
+        lastKey = nil
+        lastPoll = nil
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.pollKeyframe()
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+        return true
+    }
+
+    /// Ends the photo-real pass: the mesh, joined in world coordinates.
+    func finishMeshPass() -> LiDARMesh? {
+        guard meshPass else { return nil }
+        let mesh = LiDARMesh.harvest(arSession)
+        meshPass = false
+        pollTask?.cancel()
+        pollTask = nil
+        meshView?.removeFromSuperview()
+        meshView = nil
+        return mesh
     }
 
     private func stopKeyframes() {
@@ -120,7 +170,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     /// new view: moved 20 cm or turned 10 degrees since the last frame kept. (The first real scan
     /// kept only 21 frames with stricter limits, leaving gaps on the walls.)
     private func pollKeyframe() {
-        guard running, !encoding, keyframes.count < Self.maxKeyframes,
+        guard running || meshPass, !encoding, keyframes.count < Self.maxKeyframes + (meshPass ? 150 : 0),
               let frame = captureView.captureSession.arSession.currentFrame,
               case .normal = frame.camera.trackingState else { return }
         let pose = frame.camera.transform
@@ -135,7 +185,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         let fullW = CGFloat(CVPixelBufferGetWidth(buffer)), fullH = CGFloat(CVPixelBufferGetHeight(buffer))
         let scale = Self.keyframeWidth / fullW
         let k = frame.camera.intrinsics
-        let key = Keyframe(file: String(format: "F%03d.jpg", keyframes.count + 1), transform: pose.packed,
+        let key = Keyframe(file: String(format: meshPass ? "M%03d.jpg" : "F%03d.jpg", keyframes.count + 1), transform: pose.packed,
                            fx: k.columns.0.x * Float(scale), fy: k.columns.1.y * Float(scale),
                            cx: k.columns.2.x * Float(scale), cy: k.columns.2.y * Float(scale),
                            width: Int((fullW * scale).rounded()), height: Int((fullH * scale).rounded()))

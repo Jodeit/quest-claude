@@ -31,6 +31,7 @@ final class ScanSession: ObservableObject, Identifiable {
     /// Every room scanned in this session belongs to one home.
     let homeID = UUID().uuidString
     @Published private(set) var roomsSaved = 0
+    @Published private(set) var meshPassRunning = false
     let controller = RoomCaptureController()
 
     @Published private(set) var phase: Phase = .scanning
@@ -99,6 +100,32 @@ final class ScanSession: ObservableObject, Identifiable {
             : live ? "Live: waiting for the first walls…" : "Will send to the server when done."
         phase = .scanning
         controller.startNextRoom()
+    }
+
+    /// After a room is saved: sweep it again while ARKit builds its LiDAR mesh, for the photo-real model.
+    func startMeshPass() {
+        guard case .done = phase, !meshPassRunning else { return }
+        if controller.startMeshPass() {
+            meshPassRunning = true
+            serverStatus = "Photo-real pass: sweep the room slowly, close to things you care about, until the "
+                + "blue mesh covers them. Then tap Finish."
+        } else {
+            serverStatus = "This device can't build a LiDAR mesh."
+        }
+    }
+
+    func finishMeshPass() {
+        guard meshPassRunning, case let .done(saved) = phase else { return }
+        let mesh = controller.finishMeshPass()
+        meshPassRunning = false
+        guard let mesh else {
+            serverStatus = "No mesh came through; the room is saved as it was."
+            return
+        }
+        let known = Set(library.keyframes(for: saved).map { $0.0.file })
+        let frames = controller.keyframes.filter { $0.0.file.hasPrefix("M") && !known.contains($0.0.file) }
+        library.addMesh(mesh, frames: frames, to: saved)
+        serverStatus = "Photo-real model saved: \(mesh.triangleCount) triangles, \(frames.count) more frames. Open 3D."
     }
 
     /// Take a photo from the scanning camera; it's pinned on the plan where it was taken.
@@ -201,6 +228,11 @@ final class ScanSession: ObservableObject, Identifiable {
             }
             library.update(saved)
         }
+        // The LiDAR mesh, if RoomPlan's session had one (and how much it saw either way).
+        saved.roomPlanMeshTriangles = controller.meshTrianglesSeen
+        library.update(saved)
+        if let mesh = controller.roomMesh { library.addMesh(mesh, to: saved) }
+        saved = library.scans.first { $0.id == saved.id } ?? saved
         roomsSaved += 1
         phase = .done(saved)
     }

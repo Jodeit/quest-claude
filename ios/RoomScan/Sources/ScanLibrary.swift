@@ -13,6 +13,8 @@ struct SavedScan: Identifiable, Codable, Hashable {
     var objects: Int
     var photos: Int?  // nil for scans saved before the app took photos
     var homeID: String?  // rooms scanned one after another in one session share it
+    var meshTriangles: Int?          // the saved LiDAR mesh
+    var roomPlanMeshTriangles: Int?  // most mesh triangles the session had during the RoomPlan scan
     var serverScanID: String?
     var uploadError: String?
 
@@ -111,6 +113,24 @@ final class ScanLibrary: ObservableObject {
         let title = "Home: " + rooms.map(\.name).joined(separator: ", ")
         try FloorPlanPDF.renderHome(decoded, title: title, date: first.date).write(to: url, options: .atomic)
         return url
+    }
+
+    func meshURL(_ s: SavedScan) -> URL { folder(s).appendingPathComponent("mesh.bin") }
+    func mesh(for s: SavedScan) -> LiDARMesh? { LiDARMesh.read(from: meshURL(s)) }
+
+    /// Keeps a LiDAR mesh with the scan, and any frames taken for it (the photo-real pass).
+    func addMesh(_ mesh: LiDARMesh, frames: [(Keyframe, Data)] = [], to s: SavedScan) {
+        try? mesh.write(to: meshURL(s))
+        if !frames.isEmpty {
+            let dir = framesFolder(s)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            for (frame, jpeg) in frames { try? jpeg.write(to: dir.appendingPathComponent(frame.file)) }
+            let all = keyframes(for: s).map { $0.0 } + frames.map { $0.0 }
+            try? encoder.encode(all).write(to: dir.appendingPathComponent("frames.json"))
+        }
+        var updated = s
+        updated.meshTriangles = mesh.triangleCount
+        update(updated)
     }
 
     func products(for s: SavedScan) -> [ProductLine] {

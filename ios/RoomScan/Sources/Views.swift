@@ -122,7 +122,8 @@ struct ScanRow: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text("\(scan.walls) walls · \(scan.doors) doors · \(scan.windows) windows · \(scan.objects) objects"
-                 + (scan.photos.map { " · \($0) photo\($0 == 1 ? "" : "s")" } ?? ""))
+                 + (scan.photos.map { " · \($0) photo\($0 == 1 ? "" : "s")" } ?? "")
+                 + (scan.meshTriangles != nil ? " · photo-real 3D" : ""))
                 .font(.subheadline).foregroundStyle(.secondary)
             HStack(spacing: 16) {
                 if scan.uploaded {
@@ -278,9 +279,14 @@ struct ScanScreen: View {
                         }
                     case .processing:
                         ProgressView()
+                    case .done where session.meshPassRunning:
+                        Button("Finish photo-real pass") { session.finishMeshPass() }
+                            .buttonStyle(.borderedProminent)
                     case .done:
                         Button("Close", action: close).buttonStyle(.bordered)
-                        Button("Scan next room") {
+                        Button("Photo-real pass") { session.startMeshPass() }
+                            .buttonStyle(.bordered)
+                        Button("Next room") {
                             nextName = ""
                             askNext = true
                         }

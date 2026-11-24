@@ -14,6 +14,8 @@ enum Dollhouse {
         let scene: SCNScene
         let camera: SCNNode
         let center: SIMD3<Float>
+        let eye: SIMD3<Float>          // standing in the middle of the room, for walk mode
+        let start: simd_float4x4       // the dollhouse view's camera, to go back to
     }
 
     /// One room's worth: the scan and what the app made from it.
@@ -23,6 +25,9 @@ enum Dollhouse {
         let photos: [ScanPhoto]
         let names: [String: String]
         var floor: (WallElevations.FloorImage, URL)? = nil
+        /// The LiDAR mesh and the frames to paint it with: the photo-real model, when there is one.
+        var mesh: LiDARMesh? = nil
+        var frames: [(Keyframe, URL)] = []
     }
 
     /// One room, or every room of a home (they share coordinates, so they fit together). Tappable
@@ -43,7 +48,9 @@ enum Dollhouse {
         camera.simdPosition = centre + SIMD3(r * 0.55, r * 0.9, r * 0.75)
         camera.simdLook(at: centre)
         scene.rootNode.addChildNode(camera)
-        return Model(scene: scene, camera: camera, center: centre)
+        let floorY = parts.flatMap { $0.room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 } }.min() ?? centre.y - 1.2
+        return Model(scene: scene, camera: camera, center: centre, eye: SIMD3(centre.x, floorY + 1.55, centre.z),
+                     start: camera.simdTransform)
     }
 
     private static func add(_ part: Part, index r: Int, to root: SCNNode) {
@@ -52,6 +59,12 @@ enum Dollhouse {
         let centroid = wallCentres.isEmpty ? .zero : wallCentres.reduce(.zero, +) / Float(wallCentres.count)
         let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
 
+        // The photo-real model replaces the photo-draped walls and floor when there is one.
+        if let mesh = part.mesh {
+            let node = mesh.texturedNode(frames: part.frames)
+            node.name = "mesh:\(r)"
+            root.addChildNode(node)
+        } else {
         // Walls, facing the room.
         for (i, w) in room.walls.enumerated() {
             let elevation = elevations.first { $0.0.wall == i }
@@ -130,12 +143,15 @@ enum Dollhouse {
             root.addChildNode(node)
         }
 
-        // Furniture and fixtures: see-through boxes, named as on the plan.
+        }
+
+        // Furniture and fixtures: see-through boxes, named as on the plan (barely there over the
+        // photo-real model, but still tappable).
         for (i, o) in room.objects.enumerated() {
             let box = SCNBox(width: CGFloat(o.dimensions.x), height: CGFloat(o.dimensions.y),
                              length: CGFloat(o.dimensions.z), chamferRadius: 0.01)
             let m = SCNMaterial()
-            m.diffuse.contents = UIColor(white: 1, alpha: 0.4)
+            m.diffuse.contents = UIColor(white: 1, alpha: part.mesh == nil ? 0.4 : 0.06)
             m.transparencyMode = .dualLayer
             m.lightingModel = .lambert
             box.materials = [m]
@@ -242,6 +258,7 @@ struct DollhouseView: View {
     @State private var usdzURL: URL?
     @State private var spots: [[String]] = []  // per room: each object's plan label
     @State private var measuring = false
+    @State private var walking = false
     @State private var firstPoint: (point: SIMD3<Float>, room: Int)?
     @State private var pending: (a: SIMD3<Float>, b: SIMD3<Float>, room: Int)?
     @State private var measureName = ""
@@ -252,7 +269,7 @@ struct DollhouseView: View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 if let model {
-                    SceneViewer(model: model) { name, point in
+                    SceneViewer(model: model, walk: walking, preferSurface: measuring) { name, point in
                         if measuring { measureTap(name, point) } else if let name { tapped(name) }
                     }
                     .ignoresSafeArea(edges: .bottom)
@@ -262,7 +279,8 @@ struct DollhouseView: View {
                     ProgressView("Building the dollhouse…")
                 }
                 Text(measuring ? (firstPoint == nil ? "Measuring: tap the first point." : "Now tap the second point.")
-                     : info ?? "Drag to turn, pinch to zoom. Tap a box or a photo pin.")
+                     : info ?? (walking ? "Drag to look around; pinch or drag with two fingers to move."
+                                : "Drag to turn, pinch to zoom. Tap a box or a photo pin."))
                     .font(.callout)
                     .padding(10)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -277,6 +295,14 @@ struct DollhouseView: View {
                         measuring.toggle()
                         firstPoint = nil
                     } label: { Label(measuring ? "Stop measuring" : "Measure", systemImage: "ruler") }
+                    .disabled(model == nil)
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button {
+                        walking.toggle()
+                    } label: {
+                        Label(walking ? "Dollhouse" : "Walk", systemImage: walking ? "cube.transparent" : "figure.walk")
+                    }
                     .disabled(model == nil)
                 }
                 ToolbarItem(placement: .bottomBar) {
@@ -301,11 +327,11 @@ struct DollhouseView: View {
             } message: {
                 if let p = pending { Text("≈ \(FloorPlanPDF.fine(simd_distance(p.a, p.b))) in the model. Add the tape measurement later under Measurements.") }
             }
-            .task { load() }
+            .task { await load() }
         }
     }
 
-    private func load() {
+    private func load() async {
         guard model == nil else { return }
         do {
             var parts: [Dollhouse.Part] = []
@@ -317,9 +343,12 @@ struct DollhouseView: View {
                 })
                 parts.append(Dollhouse.Part(room: room, elevations: library.elevations(for: scan),
                                             photos: library.photos(for: scan).map { $0.0 },
-                                            names: library.names(for: scan), floor: library.floorImage(for: scan)))
+                                            names: library.names(for: scan), floor: library.floorImage(for: scan),
+                                            mesh: library.mesh(for: scan), frames: library.keyframes(for: scan)))
             }
-            let built = Dollhouse.build(parts)
+            let ready = parts
+            // Painting a LiDAR mesh takes a few seconds; off the main thread.
+            let built = await Task.detached(priority: .userInitiated) { Dollhouse.build(ready) }.value
             for scan in scans {
                 for m in library.measurements(for: scan).custom where m.a.count == 3 && m.b.count == 3 {
                     let text = m.confirmed.map { "✓ " + FloorPlanPDF.fine($0) } ?? FloorPlanPDF.fine(m.length)
@@ -399,7 +428,9 @@ struct DollhouseView: View {
 /// SceneKit's view with orbit controls, reporting the name of what's tapped.
 private struct SceneViewer: UIViewRepresentable {
     let model: Dollhouse.Model
-    /// The name of what was tapped (photo, object, wall, floor; nil for unnamed) and where on it.
+    var walk = false
+    var preferSurface = false
+    /// The name of what was tapped (photo, object, wall, floor, mesh; nil for unnamed) and where on it.
     let onTap: (String?, SIMD3<Float>?) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onTap: onTap) }
@@ -419,30 +450,57 @@ private struct SceneViewer: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: SCNView, context: Context) {}
+    /// Walk: stand in the room at eye height and fly the camera (drag to look, pinch or two fingers
+    /// to move). Dollhouse: back to turning the model from outside.
+    func updateUIView(_ view: SCNView, context: Context) {
+        context.coordinator.preferSurface = preferSurface
+        guard context.coordinator.walking != walk else { return }
+        context.coordinator.walking = walk
+        let camera = model.camera
+        if walk {
+            camera.simdPosition = model.eye
+            camera.simdLook(at: model.eye + SIMD3(0, -0.1, -1))
+            view.defaultCameraController.interactionMode = .fly
+        } else {
+            camera.simdTransform = model.start
+            view.defaultCameraController.interactionMode = .orbitTurntable
+            view.defaultCameraController.target = SCNVector3(model.center.x, model.center.y, model.center.z)
+        }
+        view.pointOfView = camera
+    }
 
     final class Coordinator: NSObject {
         let onTap: (String?, SIMD3<Float>?) -> Void
+        var walking = false
+        var preferSurface = false
         init(onTap: @escaping (String?, SIMD3<Float>?) -> Void) { self.onTap = onTap }
 
         /// Reports the first named thing hit (skipping tags and measurement marks), with the point
         /// on its surface.
         @objc func tap(_ g: UITapGestureRecognizer) {
             guard let view = g.view as? SCNView else { return }
+            var named: [(String, SIMD3<Float>)] = []
             for hit in view.hitTest(g.location(in: view), options: nil) {
                 var node: SCNNode? = hit.node
                 while let n = node {
                     if let name = n.name {
                         if name.hasPrefix("measure") { break }
-                        if ["photo:", "object:", "wall:", "floor:"].contains(where: { name.hasPrefix($0) }) {
-                            onTap(name, hit.simdWorldCoordinates)
-                            return
+                        if ["photo:", "object:", "wall:", "floor:", "mesh:"].contains(where: { name.hasPrefix($0) }) {
+                            named.append((name, hit.simdWorldCoordinates))
+                            break
                         }
                     }
                     node = n.parent
                 }
             }
-            onTap(nil, nil)
+            // Measuring lands on the real surface (the mesh) rather than a RoomPlan box in front of it.
+            if preferSurface, let surface = named.first(where: { $0.0.hasPrefix("mesh:") }) {
+                onTap(surface.0, surface.1)
+            } else if let first = named.first {
+                onTap(first.0, first.1)
+            } else {
+                onTap(nil, nil)
+            }
         }
     }
 }
