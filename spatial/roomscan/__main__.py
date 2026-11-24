@@ -6,6 +6,7 @@
   roomscan summary scan.json             the plan data an LLM would see
   roomscan plan scan.json plan.png       floor plan picture (.png or .svg)
   roomscan sample out.json               write the sample RoomPlan export
+  roomscan twin bundle out               a RoomScan scan bundle -> a shared 3D twin page to publish
 """
 
 from __future__ import annotations
@@ -45,10 +46,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--edits")
     p.add_argument("--story", type=int, default=0)
 
+    tw = sub.add_parser("twin", help="scan bundle (folder or .zip) -> a 3D twin web page folder")
+    tw.add_argument("bundle")
+    tw.add_argument("out")
+
     x = sub.add_parser("sample", help="write the sample RoomPlan export")
     x.add_argument("out", nargs="?", default="-")
 
     a = ap.parse_args(argv)
+
+    if a.cmd == "twin":
+        from .twin import build_twin, publish_files
+
+        t = build_twin(Path(a.bundle), Path(a.out))
+        print(json.dumps({"page": str(Path(a.out) / "index.html"), "files": publish_files(Path(a.out)),
+                          "processing": t["processing"]}, indent=1))
+        return 0
 
     if a.cmd == "serve":
         from .server import load_or_make_token, serve_http, serve_stdio

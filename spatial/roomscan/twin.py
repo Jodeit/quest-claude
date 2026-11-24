@@ -1,8 +1,11 @@
-"""A scan bundle from the RoomScan app (Share scan bundle, unzipped) -> a small digital twin: the files
-a shared web page (a Claude artifact) loads to show the room in 3D, its spots, shelves, photos and
-measurements, for a team to work on together.
+"""A scan bundle from the RoomScan app (Share scan bundle, unzipped) -> a small digital twin: a folder
+holding a web page (index.html) and everything it loads, ready to publish as a shared Claude artifact,
+where a team walks the room in 3D, opens its spots (shelves, sizes, products, notes) and measures.
 
-    roomscan twin <bundle folder> <out folder>
+    roomscan twin <bundle folder or .zip> <out folder>
+
+Publish it with the Artifact tool: file_path out/index.html, root out, files = every other file in out
+(twin.json, mesh.b64.txt, img/*), capabilities {db: {}, user: {scopes: ["profile"]}}.
 
 The LiDAR mesh, when the scan has one, is processed the way photogrammetry tools do it:
   - lined up with RoomPlan's room (undoing ARKit's world jump on older scans, then a point-to-plane
@@ -301,17 +304,17 @@ def decimate(P, F, Cl, cell: float):
 
 def write_web_mesh(path: Path, P, F, Cl, ceiling: np.ndarray):
     """RTW1: vertex count, model index count, ceiling index count; positions f32, colours u8 RGB,
-    then model indices and ceiling indices (u32)."""
+    then model indices and ceiling indices (u32). Written base64-encoded as text: artifacts serve
+    text, not raw binary."""
+    import base64
+
     model, ceil = F[~ceiling], F[ceiling]
-    with open(path, "wb") as fh:
-        fh.write(b"RTW1")
-        fh.write(struct.pack("<III", len(P), model.size, ceil.size))
-        fh.write(P.astype("<f4").tobytes())
-        fh.write(Cl.astype(np.uint8).tobytes())
-        if (len(P) * 3) % 4:
-            fh.write(b"\0" * (4 - (len(P) * 3) % 4))  # keep the indices 4-byte aligned
-        fh.write(model.astype("<u4").tobytes())
-        fh.write(ceil.astype("<u4").tobytes())
+    parts = [b"RTW1", struct.pack("<III", len(P), model.size, ceil.size), P.astype("<f4").tobytes(),
+             Cl.astype(np.uint8).tobytes()]
+    if (len(P) * 3) % 4:
+        parts.append(b"\0" * (4 - (len(P) * 3) % 4))  # keep the indices 4-byte aligned
+    parts += [model.astype("<u4").tobytes(), ceil.astype("<u4").tobytes()]
+    path.write_text(base64.b64encode(b"".join(parts)).decode("ascii"))
 
 
 def _photo_subject(pos, fwd, room_objects, room: Room):
@@ -335,6 +338,17 @@ def _photo_subject(pos, fwd, room_objects, room: Room):
 
 def build_twin(bundle: Path, out: Path, cell: float = 0.025) -> dict:
     bundle, out = Path(bundle), Path(out)
+    if bundle.suffix == ".zip":
+        import tempfile
+        import zipfile
+
+        tmp = Path(tempfile.mkdtemp(prefix="roomscan-bundle-"))
+        with zipfile.ZipFile(bundle) as z:
+            for m in z.namelist():  # unpack only inside tmp
+                if m.startswith("/") or ".." in Path(m).parts:
+                    raise ValueError(f"unsafe path in zip: {m}")
+            z.extractall(tmp)
+        bundle = tmp
     if not (bundle / "room.json").exists():  # a zip of the Scans folder: one scan inside
         inner = sorted(p.parent for p in bundle.rglob("room.json"))
         if not inner:
@@ -470,8 +484,8 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025) -> dict:
         nrm = np.cross(P2[F2[:, 1]] - P2[F2[:, 0]], P2[F2[:, 2]] - P2[F2[:, 0]])
         nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-12
         ceiling = (cen2[:, 1] > room.ceiling_y - 0.3) & (np.abs(nrm[:, 1]) > 0.7)
-        write_web_mesh(out / "mesh.bin", P2, F2, C2, ceiling)
-        mesh_out = dict(file="mesh.bin", vertices=len(P2), triangles=int(len(F2)), ceiling_triangles=int(ceiling.sum()))
+        write_web_mesh(out / "mesh.b64.txt", P2, F2, C2, ceiling)
+        mesh_out = dict(file="mesh.b64.txt", vertices=len(P2), triangles=int(len(F2)), ceiling_triangles=int(ceiling.sum()))
         report["mesh_out"] = mesh_out
 
     twin = dict(
@@ -482,4 +496,14 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025) -> dict:
         seed=dict(names=names, products=products, measured=measured), processing=report,
     )
     (out / "twin.json").write_text(json.dumps(twin, separators=(",", ":"), default=float))
+    page = (Path(__file__).with_name("twin_page.html")).read_text()
+    name = str(twin["name"]).replace("<", "").replace("&", "and")
+    (out / "index.html").write_text(page.replace("{{TITLE}}", f"{name} Twin").replace("{{NAME}}", name))
     return twin
+
+
+def publish_files(out: Path) -> dict:
+    """The Artifact tool's `files` map for a twin folder (everything but index.html)."""
+    out = Path(out)
+    return {str(p.relative_to(out)): str(p.relative_to(out)) for p in sorted(out.rglob("*"))
+            if p.is_file() and p.name != "index.html"}

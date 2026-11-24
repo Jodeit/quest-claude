@@ -86,6 +86,27 @@ def make_server(store: Store, public_url: str | None = None) -> MCPServer:
         return {"scan_id": scan_id, "counts": summarise(store.capture(scan_id))["counts"]}
 
     @mcp.tool()
+    def make_twin(bundle_path: str, out_dir: str | None = None) -> dict[str, Any]:
+        """Turn a RoomScan scan bundle (the app's More -> Share scan bundle: a .zip or its unzipped
+        folder, on this machine) into a shared 3D twin: a web page with the room as a photo-real
+        mesh and a dollhouse, its spots with shelf estimates, products, team notes and measurements.
+        Returns the folder and the publish recipe for the Artifact tool. Takes ~10-30 s with a mesh."""
+        from pathlib import Path as _P
+
+        from .twin import build_twin, publish_files
+
+        src = _P(bundle_path).expanduser()
+        out = _P(out_dir).expanduser() if out_dir else store.home / "twins" / src.stem
+        twin = build_twin(src, out)
+        return {
+            "page": str(out / "index.html"), "root": str(out), "files": publish_files(out),
+            "capabilities": {"db": {}, "user": {"scopes": ["profile"]}},
+            "name": twin["name"], "spots": [o["key"] for o in twin["objects"]], "processing": twin["processing"],
+            "how": "Publish with the Artifact tool: file_path=page, root=root, files=files, capabilities as given. "
+                   "The page keeps team edits (names, tape measurements, products, notes, 3D measurements) in its db.",
+        }
+
+    @mcp.tool()
     def get_scan(scan_id: str) -> dict[str, Any]:
         """A scan as plan data, with edits applied: spaces (outline, area), walls (ends, length, height,
         thickness, openings), doors/windows (host wall, offset, size, sill), objects (category, IFC class,

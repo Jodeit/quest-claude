@@ -56,6 +56,26 @@ except `GET /health` needs `Authorization: Bearer <token>`.
 To reach it from claude.ai or another cloud client, put it behind an HTTPS tunnel (Cloudflare
 Tunnel, Tailscale Funnel) and pass `--public-url https://…` so `build_ifc` returns download links.
 
+## Digital twin: a scan as a shared page
+
+```bash
+roomscan twin Scans.zip out/        # the app's More -> Share scan bundle, zipped or unzipped
+```
+
+makes `out/index.html` and what it loads: the room as a photo-real LiDAR mesh (when the scan has a
+photo-real pass) and as a dollhouse of photo walls, its spots with the shelves found and their
+sizes, photos, and a plan. Publish the folder as a Claude artifact (the `make_twin` MCP tool returns
+the recipe) and share it: the team walks the room, measures in it, names spots, and records tape
+measurements, products and notes per spot, kept in the artifact's shared store.
+
+The mesh is processed the way photogrammetry tools do it: lined up with RoomPlan's room (undoing
+the world jump ARKit makes when its mesh mode starts, then a point-to-plane fit), trimmed to the
+room, walls flattened by snapping vertices within 4 cm onto RoomPlan's planes, painted per triangle
+from the sharpest (Laplacian variance), most head-on, closest frame where it's the nearest surface
+(a depth buffer per frame), with per-frame exposure gains solved from overlaps, re-wound to face
+that frame so near walls vanish in the dollhouse view, and shrunk by vertex clustering (2.5 cm).
+On a real office scan: 12 s, 96% of the surface painted, 276k triangles.
+
 ## MCP tools
 
 | Tool | |
@@ -68,6 +88,7 @@ Tunnel, Tailscale Funnel) and pass `--public-url https://…` so `build_ifc` ret
 | `add_element` | Something the scanner missed, as a box (radiator, column, built-in) |
 | `set_names`, `set_defaults`, `add_note` | Project/building/storey names; default wall thickness; notes |
 | `build_ifc` | Write the model; returns counts, schema validation errors and a download link |
+| `make_twin` | A RoomScan scan bundle -> a shared 3D twin page folder, with the Artifact publish recipe |
 
 Resources: `scans://index`, `scan://<id>/summary` (updates are announced to subscribers),
 `scan://<id>/plan.svg`.
