@@ -56,10 +56,10 @@ struct WallFrame {
 enum WallElevations {
     private static let pixelsPerMetre: Float = 200
     private static let maxSide: Float = 1800
-    private static let framesPerWall = 30
+    static let framesPerWall = 30
 
     /// A flat rectangle standing upright: a wall, or a door/window/opening (a hole in one).
-    private struct Panel {
+    struct Panel {
         let c, x, z: SIMD3<Float>  // centre; horizontal along and across, unit length
         let halfW, halfH: Float
         var holes: [Panel] = []
@@ -80,7 +80,7 @@ enum WallElevations {
     }
 
     /// The room's walls with their holes, for asking whether a wall stands between a camera and a point.
-    private struct Occluders {
+    struct Occluders {
         var walls: [Panel]
 
         init(_ room: CapturedRoom) {
@@ -132,6 +132,7 @@ enum WallElevations {
         if let data = try? JSONEncoder().encode(made) {
             try? data.write(to: dir.appendingPathComponent("elevations.json"))
         }
+        renderStorageFronts(room, views: views, occluders: occluders, to: dir)
         autoreleasepool {
             if let floor = renderFloor(room, occluders: occluders, views: views, to: dir),
                let data = try? JSONEncoder().encode(floor) {
@@ -339,7 +340,7 @@ enum WallElevations {
     }
 
     /// A keyframe's camera: where it was, where it looked, and how it maps world points to pixels.
-    private struct View {
+    struct View {
         let url: URL
         let inverse: simd_float4x4
         let position: SIMD3<Float>
@@ -369,7 +370,7 @@ enum WallElevations {
     }
 
     /// A keyframe decoded to RGBA, for sampling.
-    private struct Bitmap {
+    struct Bitmap {
         let view: View
         let pixels: [UInt8]
         let w: Float, h: Float

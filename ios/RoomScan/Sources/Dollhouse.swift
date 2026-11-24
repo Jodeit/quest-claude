@@ -273,7 +273,11 @@ struct DollhouseView: View {
             let what = here.isEmpty ? "No products here yet."
                 : here.map { "\($0.qty) × \($0.product)" }.joined(separator: "\n")
             let place = FloorPlanPDF.shown(key, library.names(for: scan))
-            info = (scans.count > 1 ? "\(scan.name) · " : "") + "\(place)\n\(what)"
+            var shelves = ""
+            if let f = library.storageFronts(for: scan).first(where: { $0.0.object == i })?.0, !f.shelves.isEmpty {
+                shelves = "\nShelf openings \(FloorPlanPDF.openingsText(f)) (estimates: check with a tape)"
+            }
+            info = (scans.count > 1 ? "\(scan.name) · " : "") + "\(place)\(shelves)\n\(what)"
         }
     }
 }

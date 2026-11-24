@@ -58,6 +58,13 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   black and white over the live camera, and colour in as frames cover them (about 15 times a second:
   the uncovered 30 cm cells from the coverage, projected onto the screen as a mask over a grayscale
   copy of the camera frame). The half-circle button on the scan screen turns it off.
+- **Shelves:** RoomPlan gives a storage unit as one box. The elevation pass also projects the frames onto
+  each storage unit's front face, to scale, where every shelf edge is a horizontal line at its true
+  height; rows where brightness jumps across a quarter of the width or more, 8 cm apart, are taken as
+  shelf edges. The PDF gets a page per unit: the front with the shelves drawn, width, depth, height and
+  each opening's clear height to the nearest half inch, each with a blank to write the tape
+  measurement in. They're estimates (about ±1"), and say so. Tapping the unit in the dollhouse shows
+  the openings too. Tried on a real closet scan's frames first.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan

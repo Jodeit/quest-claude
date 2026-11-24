@@ -10,9 +10,15 @@ import simd
 enum FloorPlanPDF {
     static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
-                      names: [String: String] = [:], to url: URL) throws {
+                      names: [String: String] = [:], fronts: [(StorageFront, URL)] = [], to url: URL) throws {
         try render(room, name: name, date: date, photos: photos, elevations: elevations, products: products,
-                   names: names).write(to: url, options: .atomic)
+                   names: names, fronts: fronts).write(to: url, options: .atomic)
+    }
+
+    /// Shelf openings, top first, for a line of text: "≈ 15½", 14½", 24"".
+    static func openingsText(_ f: StorageFront) -> String {
+        let units = Units(imperial: Locale.current.measurementSystem == .us)
+        return "≈ " + f.openings.reversed().map(units.fine).joined(separator: ", ")
     }
 
     /// A spot's label with the name the organizer gave it: "3 Storage" named "Coffee station" shows
@@ -29,7 +35,7 @@ enum FloorPlanPDF {
 
     static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
                        elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
-                       names: [String: String] = [:]) -> Data {
+                       names: [String: String] = [:], fronts: [(StorageFront, URL)] = []) -> Data {
         var plan = Plan(room, photos: photos.map { $0.0 })
         plan.names = names
         let units = Units(imperial: Locale.current.measurementSystem == .us)
@@ -45,7 +51,11 @@ enum FloorPlanPDF {
             for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
                 drawElevation(e, image: url, room: room, units: units, name: name, names: names, page: page, pdf: pdf)
             }
-            drawList(plan, units: units, name: name, page: page, pdf: pdf)
+            for (f, url) in fronts.sorted(by: { $0.0.object < $1.0.object }) where f.object < room.objects.count {
+                let key = "\(f.object + 1) \(Plan.label(room.objects[f.object].category))"
+                drawShelves(f, image: url, label: shown(key, names), units: units, name: name, page: page, pdf: pdf)
+            }
+            drawList(plan, units: units, name: name, page: page, pdf: pdf, fronts: fronts.map { $0.0 })
             drawProducts(products, name: name, names: names, page: page, pdf: pdf)
             drawPhotos(plan, files: photos.map { $0.1 }, name: name, page: page, pdf: pdf)
         }
@@ -195,7 +205,11 @@ enum FloorPlanPDF {
     // MARK: page 2+, the measurements
 
     private static func drawList(_ plan: Plan, units: Units, name: String, page: CGRect,
-                                 pdf: UIGraphicsPDFRendererContext) {
+                                 pdf: UIGraphicsPDFRendererContext, fronts: [StorageFront] = []) {
+        func shelvesIn(_ i: Int) -> String {
+            guard let f = fronts.first(where: { $0.object == i }), !f.shelves.isEmpty else { return "" }
+            return "; \(f.shelves.count) shel\(f.shelves.count == 1 ? "f" : "ves"), openings \(openingsText(f))"
+        }
         func seenIn(_ subject: Plan.Subject) -> String {
             let shots = plan.pins.indices.filter { plan.pins[$0].subject == subject }.map { "P\($0 + 1)" }
             return shots.isEmpty ? "" : "; photos \(shots.joined(separator: ", "))"
@@ -218,7 +232,7 @@ enum FloorPlanPDF {
         for (i, item) in plan.items.enumerated() {
             rows.append(("\(i + 1)", plan.names["\(i + 1) \(item.name)"].map { "\($0) (\(item.name))" } ?? item.name, "\(units.length(item.width)) wide × "
                          + "\(units.length(item.depth)) deep × \(units.length(item.height)) high"
-                         + seenIn(.item(i))))
+                         + shelvesIn(i) + seenIn(.item(i))))
         }
         guard !rows.isEmpty else { return }
 
@@ -312,6 +326,85 @@ enum FloorPlanPDF {
                  + "Each room's own plan has its dimensions.",
                  at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
         }
+    }
+
+    // MARK: shelf pages
+
+    /// A storage unit's front to scale with its shelves, every size an estimate with a blank beside it
+    /// for the tape measurement.
+    private static func drawShelves(_ f: StorageFront, image url: URL, label: String, units: Units, name: String,
+                                    page: CGRect, pdf: UIGraphicsPDFRendererContext) {
+        guard let image = UIImage(contentsOfFile: url.path) else { return }
+        pdf.beginPage()
+        let ctx = pdf.cgContext
+        let accent = UIColor(red: 0.85, green: 0.1, blue: 0.35, alpha: 1)
+        text("\(name): \(label), shelves", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
+             anchor: .topLeft)
+        text("Estimated from the scan's photos (about ±1\"): confirm with a tape before ordering product.",
+             at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
+
+        // The front on the left, the measurements on the right.
+        let tableW: CGFloat = 250
+        let cell = CGRect(x: margin + 24, y: margin + 56, width: page.width - 2 * margin - tableW - 60,
+                          height: page.height - 2 * margin - 56 - 40)
+        let s = Swift.min(cell.width / CGFloat(f.width), cell.height / CGFloat(f.height))
+        let r = CGRect(x: cell.minX, y: cell.minY, width: CGFloat(f.width) * s, height: CGFloat(f.height) * s)
+        image.draw(in: r)
+        ctx.setStrokeColor(ink.cgColor)
+        ctx.setLineWidth(1)
+        ctx.stroke(r)
+        for h in f.shelves {
+            let y = r.maxY - CGFloat(h) * s
+            line(ctx, CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y), width: 1.6, color: accent, cap: .butt)
+        }
+        // Opening labels between the lines, top first numbered from 1.
+        let edges = [Float(0)] + f.shelves + [f.height]
+        var openings: [(top: Float, bottom: Float)] = []
+        for k in 1..<edges.count where edges[k] - edges[k - 1] > 0.05 { openings.append((edges[k], edges[k - 1])) }
+        openings.reverse()
+        for (k, o) in openings.enumerated() {
+            let y = r.maxY - CGFloat((o.top + o.bottom) / 2) * s
+            let tag = "\(k + 1)  \(units.fine(o.top - o.bottom))"
+            let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .semibold)]
+            let sz = (tag as NSString).size(withAttributes: attrs)
+            let at = CGPoint(x: r.maxX - sz.width - 6, y: y)
+            ctx.setFillColor(UIColor.white.withAlphaComponent(0.85).cgColor)
+            ctx.fill(CGRect(x: at.x - 3, y: y - sz.height / 2 - 1, width: sz.width + 6, height: sz.height + 2))
+            text(tag, at: at, size: 9, weight: .semibold, color: accent, anchor: .left)
+        }
+        let wy = r.maxY + 14
+        line(ctx, CGPoint(x: r.minX, y: wy), CGPoint(x: r.maxX, y: wy), width: 0.6, color: ink)
+        text(units.fine(f.width), at: CGPoint(x: r.midX, y: wy + 9), size: 9, weight: .medium)
+        let hx = r.minX - 14
+        line(ctx, CGPoint(x: hx, y: r.minY), CGPoint(x: hx, y: r.maxY), width: 0.6, color: ink)
+        text(units.fine(f.height), at: CGPoint(x: hx - 9, y: r.midY), size: 9, weight: .medium, angle: -.pi / 2)
+
+        // The table: estimate, then a blank for the tape.
+        let tx = page.width - margin - tableW
+        var y = cell.minY
+        text("Estimate", at: CGPoint(x: tx + 110, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
+        text("Measured", at: CGPoint(x: tx + 175, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
+        y += 18
+        func row(_ what: String, _ estimate: String, color: UIColor = ink) {
+            text(what, at: CGPoint(x: tx, y: y), size: 10, color: color, anchor: .left)
+            text(estimate, at: CGPoint(x: tx + 110, y: y), size: 10, weight: .medium, color: color, anchor: .left)
+            line(ctx, CGPoint(x: tx + 175, y: y + 6), CGPoint(x: tx + tableW, y: y + 6), width: 0.6, color: faint)
+            y += 22
+        }
+        row("Width", units.fine(f.width))
+        row("Depth", units.fine(f.depth))
+        row("Height", units.fine(f.height))
+        y += 6
+        if openings.count > 1 {
+            for (k, o) in openings.enumerated() {
+                row("Opening \(k + 1)\(k == 0 ? " (top)" : "")", units.fine(o.top - o.bottom), color: accent)
+            }
+        } else {
+            text("No shelves found in the photos: measure inside.", at: CGPoint(x: tx, y: y), size: 9,
+                 color: faint, anchor: .left)
+        }
+        text("Openings are between shelf edges as seen from the front; take off shelf thickness.",
+             at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
     }
 
     // MARK: elevation pages
@@ -544,6 +637,17 @@ private struct Units {
             return inch == 0 ? "\(ft)' 0\"" : "\(ft)' \(inch)\""
         }
         return m < 1 ? "\(Int((m * 100).rounded())) cm" : String(format: "%.2f m", m)
+    }
+
+    /// To the nearest half inch (or centimetre), for shelf estimates.
+    func fine(_ m: Float) -> String {
+        if imperial {
+            let halves = Int((Double(m) / 0.0254 * 2).rounded())
+            let whole = halves / 2, half = halves % 2 == 1 ? "½" : ""
+            if whole >= 36 { return "\(whole / 12)' \(whole % 12)\(half)\"" }
+            return "\(whole)\(half)\""
+        }
+        return "\(Int((m * 100).rounded())) cm"
     }
 
     func area(_ m2: Float) -> String {

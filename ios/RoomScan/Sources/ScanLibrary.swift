@@ -59,6 +59,7 @@ final class ScanLibrary: ObservableObject {
     }
 
     func elevations(for s: SavedScan) -> [(Elevation, URL)] { WallElevations.load(from: elevationsFolder(s)) }
+    func storageFronts(for s: SavedScan) -> [(StorageFront, URL)] { WallElevations.loadStorageFronts(from: elevationsFolder(s)) }
     func floorImage(for s: SavedScan) -> (WallElevations.FloorImage, URL)? { WallElevations.loadFloor(from: elevationsFolder(s)) }
 
     func hasFrames(_ s: SavedScan) -> Bool {
@@ -160,7 +161,7 @@ final class ScanLibrary: ObservableObject {
         guard !made.isEmpty else { return }
         try? FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
                                 elevations: elevations(for: s), products: products(for: s), names: names(for: s),
-                                to: planURL(s))
+                                fronts: storageFronts(for: s), to: planURL(s))
     }
 
     /// The scan's photos with their files, in the order they were taken.
@@ -179,7 +180,7 @@ final class ScanLibrary: ObservableObject {
             let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
             try FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
                                    elevations: elevations(for: s), products: products(for: s), names: names(for: s),
-                                   to: url)
+                                   fronts: storageFronts(for: s), to: url)
         }
         return url
     }
