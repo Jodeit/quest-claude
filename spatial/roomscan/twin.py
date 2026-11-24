@@ -375,6 +375,44 @@ def _photo_subject(pos, fwd, room_objects, room: Room):
     return best[0] if best else None
 
 
+def confirm_shelves(P: np.ndarray, F: np.ndarray, rd: dict, objects: list, tol: float = 0.04) -> int:
+    """Shelf edges found in a unit's front photo, checked against the LiDAR mesh: a shelf is a flat,
+    upward-facing surface inside the unit's box, so peaks in the height histogram of those triangles
+    (weighted by area) confirm an edge within `tol`. The mesh misses shelves covered by bins (it sees
+    the bins' tops) and the photo can take a box edge for a shelf, so each edge gets a flag rather than
+    either replacing the other. On a real closet the two agreed within an inch where both found one,
+    and the mesh didn't back the box edge the photo had taken for a shelf. Returns how many confirmed."""
+    A, B, C = P[F[:, 0]], P[F[:, 1]], P[F[:, 2]]
+    nrm = np.cross(B - A, C - A)
+    area = np.linalg.norm(nrm, axis=1) / 2
+    up = nrm[:, 1] / (2 * area + 1e-12) > 0.9
+    cen = (A + B + C) / 3
+    confirmed = 0
+    for i, o in enumerate(objects):
+        fr = o.get("front")
+        if not fr or not fr["shelves"]:
+            continue
+        t = _m(rd["objects"][i]["transform"])
+        c, x, z = t[:3, 3], t[:3, 0], t[:3, 2]
+        W, H, D = (float(v) for v in rd["objects"][i]["dimensions"])
+        d = cen - c
+        inside = up & (np.abs(d @ x) < W / 2 - 0.03) & (np.abs(d @ z) < D / 2 + 0.03) & (np.abs(d[:, 1]) < H / 2 + 0.02)
+        hs = cen[inside, 1] - (c[1] - H / 2)
+        bins = np.arange(-0.02, H + 0.04, 0.01)
+        hist, _ = np.histogram(hs, bins=bins, weights=area[inside])
+        sm = np.convolve(hist, [0.25, 0.5, 0.25], "same")
+        peaks = []
+        for k in np.argsort(-sm):
+            if sm[k] < 0.04 * (sm.sum() + 1e-9):
+                break
+            if all(abs(k - q) > 6 for q in peaks):
+                peaks.append(k)
+        tops = [bins[k] + 0.005 for k in peaks]
+        fr["confirmed"] = [any(abs(sh - tp) < tol for tp in tops) for sh in fr["shelves"]]
+        confirmed += sum(fr["confirmed"])
+    return confirmed
+
+
 def write_textured_mesh(out: Path, P, F, choice, frames: list, room: "Room", width: int = 960) -> dict:
     """RTW2: triangle count, the box positions are measured in (min xyz, size xyz, f32), then per
     corner positions as u16 across that box (a fraction of a millimetre) and texture coordinates as
@@ -565,6 +603,7 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
         keep = (cen[:, 0] > lo[0]) & (cen[:, 0] < hi[0]) & (cen[:, 2] > lo[2]) & (cen[:, 2] < hi[2]) \
             & (cen[:, 1] > room.floor_y - 0.3) & (cen[:, 1] < room.ceiling_y + 0.3)
         F = F[keep]
+        report["shelf_edges_confirmed_by_depth"] = confirm_shelves(P, F, rd, objects)
         report["snapped_to_walls"] = snap_to_walls(P, room)
         if textured:
             # Shrink first, then paint with real texture: each triangle mapped onto its frame's photo

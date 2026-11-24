@@ -553,7 +553,13 @@ function drawDims(i) {
   }
   // Shelves across the front, openings labelled between them (top first, as on the spot page).
   if (fr && fr.shelves.length) {
-    for (const s of fr.shelves) line(P(-hw, -hh + s, hd + 0.005), P(hw, -hh + s, hd + 0.005), shelfMat);
+    const dashed = new THREE.LineDashedMaterial({ color: 0xffb000, dashSize: 0.03, gapSize: 0.025, depthTest: false, transparent: true });
+    fr.shelves.forEach((s, k) => {
+      const sure = !fr.confirmed || fr.confirmed[k];
+      const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([P(-hw, -hh + s, hd + 0.005), P(hw, -hh + s, hd + 0.005)]), sure ? shelfMat : dashed);
+      if (!sure) l.computeLineDistances();
+      l.renderOrder = 10; dims.add(l);
+    });
     const edges = [0, ...fr.shelves, fr.height];
     const opens = [];
     for (let k = 1; k < edges.length; k++) if (edges[k] - edges[k - 1] > 0.05) opens.push([edges[k - 1], edges[k]]);
@@ -602,12 +608,13 @@ function spotPage(p, i) {
     box.append(img);
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${o.front.width} ${o.front.height}`); svg.setAttribute("preserveAspectRatio", "none");
-    for (const h of o.front.shelves) {
+    o.front.shelves.forEach((h, k) => {
       const l = document.createElementNS(svg.namespaceURI, "line");
-      const y = o.front.height - h;
-      Object.entries({ x1: 0, x2: o.front.width, y1: y, y2: y, stroke: "#e0337a", "stroke-width": 0.012 }).forEach(([k, v]) => l.setAttribute(k, v));
+      const y = o.front.height - h, sure = !o.front.confirmed || o.front.confirmed[k];
+      Object.entries({ x1: 0, x2: o.front.width, y1: y, y2: y, stroke: "#e0337a", "stroke-width": 0.012 }).forEach(([a, v]) => l.setAttribute(a, v));
+      if (!sure) l.setAttribute("stroke-dasharray", "0.04 0.03");
       svg.append(l);
-    }
+    });
     box.append(svg); p.append(box);
   }
 
@@ -633,7 +640,9 @@ function spotPage(p, i) {
     } else cell.textContent = have ? "✓ " + fine(have) : "–";
     table.append(el("tr", {}, el("td", { text: label }), el("td", { class: "num", text: fine(est) }), cell));
   }
-  p.append(table, el("p", { class: "muted small", text: "Scan sizes are estimates (about ±1\"). Openings are measured between shelf edges from the front; take off the shelf thickness." }));
+  const unsure = o.front?.confirmed ? o.front.confirmed.filter((x) => !x).length : 0;
+  p.append(table, el("p", { class: "muted small", text: "Scan sizes are estimates (about ±1\"). Openings are measured between shelf edges from the front; take off the shelf thickness."
+    + (unsure ? ` Dashed lines (${unsure}) weren't confirmed by the depth scan: they may be a box or bin edge rather than a shelf.` : "") }));
 
   // Products.
   p.append(el("h3", { text: "Products here" }));
