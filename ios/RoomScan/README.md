@@ -9,9 +9,13 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   furniture appear and can tell you what's missing. Turn it off in Settings to send only the end result.
 - **Final:** the processed room is saved on the phone (RoomPlan JSON plus a USDZ 3D model, both in
   the Files app under RoomScan) and replaces the live version on the server.
-- **Plan:** every saved scan has a dimensioned floor plan PDF, drawn on the phone with no server:
-  the room to scale with each wall's length, doors and windows, furniture footprints, floor area and
-  ceiling height, then a list of every measurement (window sill heights included). Feet and inches
+- **Plan:** every saved scan has a report PDF, drawn on the phone with no server, organised the way
+  an organizer works, by spot: the floor plan with every spot numbered (walls with lengths, doors,
+  windows, furniture, floor area, ceiling height); then a page per spot (each storage unit, and
+  anything named, holding products or photographed) with its front and shelves, size and openings as
+  estimates beside tape measurements, the products that go there and its photos; then a page per
+  wall with its elevation, photos and products; then the product list, every measurement, and all
+  the photos. Feet and inches
   when the phone's region is the US. Tap **Plan** to preview it; its share button mails or AirDrops it.
 - **Photos:** the **Photo** button on the scan screen takes a picture from the scanning camera without
   stopping the scan. Each one keeps where the phone stood and which way it faced, so the plan shows it

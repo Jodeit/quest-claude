@@ -53,13 +53,25 @@ enum FloorPlanPDF {
         return UIGraphicsPDFRenderer(bounds: page, format: format).pdfData { pdf in
             pdf.beginPage()
             drawPlan(plan, units: units, name: name, date: date, page: page, ctx: pdf.cgContext)
-            for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
-                drawElevation(e, image: url, room: room, units: units, name: name, names: names, page: page, pdf: pdf)
+            let photoFiles = photos.map { $0.1 }
+            func photosOf(_ subject: Plan.Subject) -> [(Int, URL)] {
+                plan.pins.indices.filter { plan.pins[$0].subject == subject && $0 < photoFiles.count }.map { ($0, photoFiles[$0]) }
             }
-            for (f, url) in fronts.sorted(by: { $0.0.object < $1.0.object }) where f.object < room.objects.count {
-                let key = "\(f.object + 1) \(Plan.label(room.objects[f.object].category))"
-                drawShelves(f, image: url, key: key, label: shown(key, names), units: units, name: name,
-                            measured: measured, page: page, pdf: pdf)
+            // A page per spot that matters: storage, or named, or with products or photos.
+            for (i, o) in room.objects.enumerated() {
+                let key = "\(i + 1) \(Plan.label(o.category))"
+                let front = fronts.first { $0.0.object == i }
+                let here = products.filter { $0.location == key }
+                let pics = photosOf(.item(i))
+                guard front != nil || !here.isEmpty || !pics.isEmpty || names[key] != nil || o.category == .storage else { continue }
+                drawSpot(key: key, label: shown(key, names), size: o.dimensions, front: front, products: here, photos: pics,
+                         units: units, name: name, measured: measured, page: page, pdf: pdf)
+            }
+            for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
+                let key = "Wall W\(e.wall + 1)"
+                drawElevation(e, image: url, room: room, units: units, name: name, names: names,
+                              products: products.filter { $0.location == key }, photos: photosOf(.wall(e.wall)),
+                              page: page, pdf: pdf)
             }
             drawList(plan, units: units, name: name, page: page, pdf: pdf, fronts: fronts.map { $0.0 },
                      measured: measured)
@@ -349,90 +361,151 @@ enum FloorPlanPDF {
         }
     }
 
-    // MARK: shelf pages
+    // MARK: spot pages
 
-    /// A storage unit's front to scale with its shelves, every size an estimate with a blank beside it
-    /// for the tape measurement.
-    private static func drawShelves(_ f: StorageFront, image url: URL, key: String, label: String, units: Units,
-                                    name: String, measured: ScanMeasurements, page: CGRect,
-                                    pdf: UIGraphicsPDFRendererContext) {
-        guard let image = UIImage(contentsOfFile: url.path) else { return }
+    /// Everything about one spot (a storage unit, or anything named, holding products or photographed)
+    /// on one page: its front to scale with the shelves found, its size and shelf openings as
+    /// estimates beside the tape measurements, the products that go there and the photos of it.
+    private static func drawSpot(key: String, label: String, size: SIMD3<Float>, front: (StorageFront, URL)?,
+                                 products: [ProductLine], photos: [(Int, URL)], units: Units, name: String,
+                                 measured: ScanMeasurements, page: CGRect, pdf: UIGraphicsPDFRendererContext) {
         pdf.beginPage()
         let ctx = pdf.cgContext
         let accent = UIColor(red: 0.85, green: 0.1, blue: 0.35, alpha: 1)
-        text("\(name): \(label), shelves", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
+        let green = UIColor(red: 0.1, green: 0.5, blue: 0.25, alpha: 1)
+        text("\(name): \(label)", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold, anchor: .topLeft)
+        text("Sizes are estimates from the scan (about ±1\"); ✓ marks a tape measurement. "
+             + "Confirm before ordering product.", at: CGPoint(x: margin, y: margin + 22), size: 9, color: faint,
              anchor: .topLeft)
-        text("Estimated from the scan's photos (about ±1\"): confirm with a tape before ordering product.",
-             at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
 
-        // The front on the left, the measurements on the right.
         let tableW: CGFloat = 250
-        let cell = CGRect(x: margin + 24, y: margin + 56, width: page.width - 2 * margin - tableW - 60,
-                          height: page.height - 2 * margin - 56 - 40)
-        let s = Swift.min(cell.width / CGFloat(f.width), cell.height / CGFloat(f.height))
-        let r = CGRect(x: cell.minX, y: cell.minY, width: CGFloat(f.width) * s, height: CGFloat(f.height) * s)
-        image.draw(in: r)
-        ctx.setStrokeColor(ink.cgColor)
-        ctx.setLineWidth(1)
-        ctx.stroke(r)
-        for h in f.shelves {
-            let y = r.maxY - CGFloat(h) * s
-            line(ctx, CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y), width: 1.6, color: accent, cap: .butt)
-        }
-        // Opening labels between the lines, top first numbered from 1.
-        let edges = [Float(0)] + f.shelves + [f.height]
-        var openings: [(top: Float, bottom: Float)] = []
-        for k in 1..<edges.count where edges[k] - edges[k - 1] > 0.05 { openings.append((edges[k], edges[k - 1])) }
-        openings.reverse()
-        for (k, o) in openings.enumerated() {
-            let y = r.maxY - CGFloat((o.top + o.bottom) / 2) * s
-            let tag = "\(k + 1)  \(units.fine(o.top - o.bottom))"
-            let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .semibold)]
-            let sz = (tag as NSString).size(withAttributes: attrs)
-            let at = CGPoint(x: r.maxX - sz.width - 6, y: y)
-            ctx.setFillColor(UIColor.white.withAlphaComponent(0.85).cgColor)
-            ctx.fill(CGRect(x: at.x - 3, y: y - sz.height / 2 - 1, width: sz.width + 6, height: sz.height + 2))
-            text(tag, at: at, size: 9, weight: .semibold, color: accent, anchor: .left)
-        }
-        let wy = r.maxY + 14
-        line(ctx, CGPoint(x: r.minX, y: wy), CGPoint(x: r.maxX, y: wy), width: 0.6, color: ink)
-        text(units.fine(f.width), at: CGPoint(x: r.midX, y: wy + 9), size: 9, weight: .medium)
-        let hx = r.minX - 14
-        line(ctx, CGPoint(x: hx, y: r.minY), CGPoint(x: hx, y: r.maxY), width: 0.6, color: ink)
-        text(units.fine(f.height), at: CGPoint(x: hx - 9, y: r.midY), size: 9, weight: .medium, angle: -.pi / 2)
-
-        // The table: estimate, then a blank for the tape.
         let tx = page.width - margin - tableW
-        var y = cell.minY
+        let left = CGRect(x: margin + 24, y: margin + 56, width: tx - margin - 60, height: page.height - 2 * margin - 56 - 36)
+
+        // Left: the front with its shelves, or the photos when there's no front.
+        var openings: [(top: Float, bottom: Float)] = []
+        if let fr = front, let image = UIImage(contentsOfFile: fr.1.path) {
+            let f = fr.0
+            let s = Swift.min(left.width / CGFloat(f.width), left.height / CGFloat(f.height))
+            let r = CGRect(x: left.minX, y: left.minY, width: CGFloat(f.width) * s, height: CGFloat(f.height) * s)
+            image.draw(in: r)
+            ctx.setStrokeColor(ink.cgColor)
+            ctx.setLineWidth(1)
+            ctx.stroke(r)
+            for h in f.shelves {
+                let y = r.maxY - CGFloat(h) * s
+                line(ctx, CGPoint(x: r.minX, y: y), CGPoint(x: r.maxX, y: y), width: 1.6, color: accent, cap: .butt)
+            }
+            let edges = [Float(0)] + f.shelves + [f.height]
+            for k in 1..<edges.count where edges[k] - edges[k - 1] > 0.05 { openings.append((edges[k], edges[k - 1])) }
+            openings.reverse()
+            for (k, o) in openings.enumerated() where openings.count > 1 {
+                let y = r.maxY - CGFloat((o.top + o.bottom) / 2) * s
+                let tag = "\(k + 1)  \(units.fine(o.top - o.bottom))"
+                let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .semibold)]
+                let sz = (tag as NSString).size(withAttributes: attrs)
+                let at = CGPoint(x: r.maxX - sz.width - 6, y: y)
+                ctx.setFillColor(UIColor.white.withAlphaComponent(0.85).cgColor)
+                ctx.fill(CGRect(x: at.x - 3, y: y - sz.height / 2 - 1, width: sz.width + 6, height: sz.height + 2))
+                text(tag, at: at, size: 9, weight: .semibold, color: accent, anchor: .left)
+            }
+            let wy = r.maxY + 14
+            line(ctx, CGPoint(x: r.minX, y: wy), CGPoint(x: r.maxX, y: wy), width: 0.6, color: ink)
+            text(units.fine(f.width), at: CGPoint(x: r.midX, y: wy + 9), size: 9, weight: .medium)
+            let hx = r.minX - 14
+            line(ctx, CGPoint(x: hx, y: r.minY), CGPoint(x: hx, y: r.maxY), width: 0.6, color: ink)
+            text(units.fine(f.height), at: CGPoint(x: hx - 9, y: r.midY), size: 9, weight: .medium, angle: -.pi / 2)
+        } else if !photos.isEmpty {
+            photoGrid(photos, in: left, columns: photos.count > 2 ? 2 : 1)
+        } else {
+            text("No photo of this spot: take one with Photo next time, or see the wall pages.",
+                 at: CGPoint(x: left.minX, y: left.minY + 10), size: 9, color: faint, anchor: .left)
+        }
+
+        // Right: size and shelves, estimate then tape.
+        var y = left.minY
         text("Estimate", at: CGPoint(x: tx + 110, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
         text("Measured", at: CGPoint(x: tx + 175, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
         y += 18
-        func row(_ what: String, _ estimate: String, field: String, color: UIColor = ink) {
+        func row(_ what: String, _ estimate: Float, field: String, color: UIColor = ink) {
             text(what, at: CGPoint(x: tx, y: y), size: 10, color: color, anchor: .left)
-            text(estimate, at: CGPoint(x: tx + 110, y: y), size: 10, weight: .medium, color: color, anchor: .left)
+            text(units.fine(estimate), at: CGPoint(x: tx + 110, y: y), size: 10, weight: .medium, color: color, anchor: .left)
             if let tape = measured.confirmed["\(key)|\(field)"] {
-                text("✓ \(units.fine(tape))", at: CGPoint(x: tx + 175, y: y), size: 10, weight: .semibold,
-                     color: UIColor(red: 0.1, green: 0.5, blue: 0.25, alpha: 1), anchor: .left)
+                text("✓ \(units.fine(tape))", at: CGPoint(x: tx + 175, y: y), size: 10, weight: .semibold, color: green,
+                     anchor: .left)
             } else {
                 line(ctx, CGPoint(x: tx + 175, y: y + 6), CGPoint(x: tx + tableW, y: y + 6), width: 0.6, color: faint)
             }
-            y += 22
+            y += 20
         }
-        row("Width", units.fine(f.width), field: "width")
-        row("Depth", units.fine(f.depth), field: "depth")
-        row("Height", units.fine(f.height), field: "height")
-        y += 6
+        row("Width", size.x, field: "width")
+        row("Depth", size.z, field: "depth")
+        row("Height", size.y, field: "height")
         if openings.count > 1 {
+            y += 4
             for (k, o) in openings.enumerated() {
-                row("Opening \(k + 1)\(k == 0 ? " (top)" : "")", units.fine(o.top - o.bottom),
-                    field: "opening \(k + 1)", color: accent)
+                row("Opening \(k + 1)\(k == 0 ? " (top)" : "")", o.top - o.bottom, field: "opening \(k + 1)", color: accent)
             }
-        } else {
-            text("No shelves found in the photos: measure inside.", at: CGPoint(x: tx, y: y), size: 9,
-                 color: faint, anchor: .left)
         }
-        text("Openings are between shelf edges as seen from the front; take off shelf thickness.",
-             at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
+
+        // Then what goes here.
+        y += 14
+        text("Products here", at: CGPoint(x: tx, y: y), size: 11, weight: .semibold, anchor: .left)
+        y += 16
+        if products.isEmpty {
+            text("None yet (Products, on the scan).", at: CGPoint(x: tx, y: y), size: 9, color: faint, anchor: .left)
+            y += 16
+        } else {
+            let room = Int((page.height - margin - 40 - y - (photos.isEmpty || front == nil ? 0 : 110)) / 15)
+            for (k, p) in products.enumerated() {
+                if k >= Swift.max(1, room) - 1, products.count > room {
+                    text("+ \(products.count - k) more on the product list", at: CGPoint(x: tx, y: y), size: 9,
+                         color: faint, anchor: .left)
+                    y += 15
+                    break
+                }
+                textBox("\(p.qty) × \(p.product)", in: CGRect(x: tx, y: y - 7, width: tableW, height: 14), size: 9)
+                y += 15
+            }
+        }
+
+        // And its photos, under the products, when the front took the left side.
+        if front != nil, !photos.isEmpty {
+            let box = CGRect(x: tx, y: y + 8, width: tableW, height: page.height - margin - 30 - y - 8)
+            if box.height > 60 { photoGrid(photos, in: box, columns: 2) }
+        }
+        if !openings.isEmpty {
+            text("Openings are between shelf edges as seen from the front; take off shelf thickness.",
+                 at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
+        }
+    }
+
+    /// Photos in a grid, each captioned with its pin number.
+    private static func photoGrid(_ photos: [(Int, URL)], in box: CGRect, columns: Int) {
+        let gutter: CGFloat = 8, caption: CGFloat = 12
+        let rows = Int(ceil(Double(photos.count) / Double(columns)))
+        let cw = (box.width - gutter * CGFloat(columns - 1)) / CGFloat(columns)
+        let ch = Swift.min(cw * 1.4, (box.height - gutter * CGFloat(rows - 1)) / CGFloat(rows))
+        guard ch > caption + 20 else { return }
+        for (n, (index, url)) in photos.enumerated() {
+            let col = CGFloat(n % columns), row = CGFloat(n / columns)
+            let cell = CGRect(x: box.minX + col * (cw + gutter), y: box.minY + row * (ch + gutter), width: cw, height: ch - caption)
+            guard cell.maxY <= box.maxY else { break }
+            if let image = UIImage(contentsOfFile: url.path), image.size.width > 0 {
+                let k = Swift.min(cell.width / image.size.width, cell.height / image.size.height)
+                let sz = CGSize(width: image.size.width * k, height: image.size.height * k)
+                image.draw(in: CGRect(x: cell.minX, y: cell.minY, width: sz.width, height: sz.height))
+            }
+            text("P\(index + 1)", at: CGPoint(x: cell.minX, y: cell.maxY + caption / 2), size: 8, color: photoColor, anchor: .left)
+        }
+    }
+
+    /// One line of text cut to fit its box.
+    private static func textBox(_ s: String, in rect: CGRect, size: CGFloat, color: UIColor = ink) {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        (s as NSString).draw(in: rect, withAttributes: [.font: UIFont.systemFont(ofSize: size), .foregroundColor: color,
+                                                        .paragraphStyle: style])
     }
 
     // MARK: elevation pages
@@ -440,8 +513,8 @@ enum FloorPlanPDF {
     /// One wall per page: the projected photo to scale, its width and height, and the
     /// doors, windows and objects on or against it, labelled as on the plan.
     private static func drawElevation(_ e: Elevation, image url: URL, room: CapturedRoom, units: Units,
-                                      name: String, names: [String: String], page: CGRect,
-                                      pdf: UIGraphicsPDFRendererContext) {
+                                      name: String, names: [String: String], products: [ProductLine] = [],
+                                      photos: [(Int, URL)] = [], page: CGRect, pdf: UIGraphicsPDFRendererContext) {
         guard let image = UIImage(contentsOfFile: url.path) else { return }
         let wall = room.walls[e.wall]
         let f = WallFrame(wall, flipped: e.flipped)
@@ -454,8 +527,29 @@ enum FloorPlanPDF {
         text("\(units.length(f.width)) wide × \(units.length(f.height)) high, seen from inside the room",
              at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
 
+        // Leave a strip at the bottom for this wall's photos and products, when it has any.
+        let strip: CGFloat = (products.isEmpty && photos.isEmpty) ? 0 : 120
         let cell = CGRect(x: margin + 30, y: margin + 50, width: page.width - 2 * margin - 40,
-                          height: page.height - 2 * margin - 50 - 56)
+                          height: page.height - 2 * margin - 50 - 56 - strip)
+        if strip > 0 {
+            let top = page.height - margin - 20 - strip
+            let photoBox = CGRect(x: margin, y: top, width: products.isEmpty ? page.width - 2 * margin : (page.width - 2 * margin) * 0.55,
+                                  height: strip - 10)
+            if !photos.isEmpty { photoGrid(Array(photos.prefix(6)), in: photoBox, columns: Swift.min(6, Swift.max(1, photos.count))) }
+            if !products.isEmpty {
+                let px = photos.isEmpty ? margin : photoBox.maxX + 16
+                var py = top + 6
+                text("Products on this wall", at: CGPoint(x: px, y: py), size: 10, weight: .semibold, anchor: .left)
+                py += 15
+                for p in products.prefix(6) {
+                    textBox("\(p.qty) × \(p.product)", in: CGRect(x: px, y: py - 7, width: page.width - margin - px, height: 14), size: 9)
+                    py += 14
+                }
+                if products.count > 6 {
+                    text("+ \(products.count - 6) more on the product list", at: CGPoint(x: px, y: py), size: 8, color: faint, anchor: .left)
+                }
+            }
+        }
         let s = Swift.min(cell.width / CGFloat(f.width), cell.height / CGFloat(f.height))  // points per metre
         let r = CGRect(x: cell.minX, y: cell.minY, width: CGFloat(f.width) * s, height: CGFloat(f.height) * s)
         image.draw(in: r)
