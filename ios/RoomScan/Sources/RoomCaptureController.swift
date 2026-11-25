@@ -67,6 +67,10 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private var preSwitchPose: simd_float4x4?
     private var switchTime: TimeInterval = 0
     private var meshJump: simd_float4x4?
+    /// From the AR session's current world to the room's (RoomPlan's) coordinates: identity until a
+    /// photo-real pass has moved the origin, then that pass's jump. A second pass measures its own
+    /// jump from a pose already in room coordinates, so its frames land in the room too.
+    private var sessionToRoom = matrix_identity_float4x4
     private var arSession: ARSession { captureView.captureSession.arSession }
 
     override func viewDidLoad() {
@@ -143,6 +147,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         lastKey = nil
         lastPoll = nil
         stops.reset()
+        sessionToRoom = matrix_identity_float4x4  // the next room is in whatever coordinates RoomPlan gives it
         start()
     }
 
@@ -153,7 +158,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         guard !running, !meshPass, ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else { return false }
         let config = ARWorldTrackingConfiguration()
         config.sceneReconstruction = .mesh
-        preSwitchPose = arSession.currentFrame?.camera.transform
+        preSwitchPose = arSession.currentFrame.map { sessionToRoom * $0.camera.transform }
         switchTime = ProcessInfo.processInfo.systemUptime
         meshJump = nil
         arSession.run(config)
@@ -182,7 +187,10 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     func finishMeshPass() -> LiDARMesh? {
         guard meshPass else { return nil }
         var mesh = LiDARMesh.harvest(arSession)
-        if let jump = meshJump { mesh?.apply(jump) }
+        if let jump = meshJump {
+            mesh?.apply(jump)
+            sessionToRoom = jump
+        }
         meshPass = false
         pollTask?.cancel()
         pollTask = nil
@@ -327,8 +335,9 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         blurrySkipTimes.removeAll { Date().timeIntervalSince($0) > 4 }
         var stopHint: String? = nil
         if meshPass {
-            if case .normal = frame.camera.trackingState {
-                stops.update(pose: frame.camera.transform, time: frame.timestamp)
+            // In room coordinates, so a spot revisited in a later pass keeps its stop id.
+            if case .normal = frame.camera.trackingState, let jump = meshJump {
+                stops.update(pose: jump * frame.camera.transform, time: frame.timestamp)
             }
             stopHint = stops.message(time: frame.timestamp)
         }

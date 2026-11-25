@@ -90,6 +90,12 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   its twelve 30-degree sectors going green as you turn, with Floor and Ceiling marks that tick
   once you have tilted down and up. A spot is done at 300 degrees round *and* both tilts; until the
   tilts, the hint asks for whichever is missing.
+- **360 preview:** when the photo-real pass finishes, each stop gets a small 360 picture made on the
+  phone from the frames kept within 1 m of it (each direction from the frame that sees it most
+  centrally, no depth), gray where no frame looked: what the twin's 360 view there will have to make
+  up. Under it, the share photographed and what's missing (*Gray: the ceiling, the floor round your
+  feet, part of the way round*), and **Fill the gaps** to go back into the pass. A later pass lands
+  in the room's coordinates too, and a spot revisited keeps its stop id.
 - **Shelves:** RoomPlan gives a storage unit as one box. The elevation pass also projects the frames onto
   each storage unit's front face, to scale, where every shelf edge is a horizontal line at its true
   height; rows where brightness jumps across a quarter of the width or more, 8 cm apart, are taken as

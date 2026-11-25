@@ -58,6 +58,8 @@ final class ScanSession: ObservableObject, Identifiable {
     @Published private(set) var hint: String?
     /// The photo-real pass's stop of the moment, for the ring (nil when not at one).
     @Published private(set) var stop: StopProgress?
+    /// After the photo-real pass: a 360 preview per stop, gray where nothing was photographed.
+    @Published private(set) var previews: [SpotPreview] = []
     /// Storage units of the room just saved, with what still needs a close-up or a tape.
     @Published private(set) var checklist: [UnitCheck] = []
 
@@ -119,6 +121,7 @@ final class ScanSession: ObservableObject, Identifiable {
         photos = []
         photoCount = 0
         checklist = []
+        previews = []
         coverage = nil
         counts = Counts()
         serverScanID = nil
@@ -135,6 +138,7 @@ final class ScanSession: ObservableObject, Identifiable {
         guard case .done = phase, !meshPassRunning else { return }
         if controller.startMeshPass() {
             meshPassRunning = true
+            previews = []
             coverage = nil  // the pass reports its own, from the mesh
             serverStatus = "Photo-real pass: sweep the room slowly, close to things you care about, until the "
                 + "blue mesh covers them. Then tap Finish."
@@ -157,6 +161,11 @@ final class ScanSession: ObservableObject, Identifiable {
         serverStatus = "Photo-real model saved: \(mesh.triangleCount) triangles, \(frames.count) more frames. Open 3D."
         let current = library.scans.first { $0.id == saved.id } ?? saved
         checklist = buildChecklist(current)  // the mesh may have confirmed more shelf edges
+        let all = controller.keyframes
+        Task {
+            let made = await Task.detached(priority: .userInitiated) { SpotPreview.make(frames: all) }.value
+            if !meshPassRunning { previews = made }
+        }
     }
 
     /// One-tap start for a unit's missing close-up: brings the camera back up (the photo-real pass is the

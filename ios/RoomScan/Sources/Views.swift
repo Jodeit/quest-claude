@@ -274,6 +274,9 @@ struct ScanScreen: View {
                 if session.phase.isDone, !session.meshPassRunning, !session.checklist.isEmpty {
                     BeforeYouLeave(session: session)
                 }
+                if session.phase.isDone, !session.meshPassRunning, !session.previews.isEmpty {
+                    SpotPreviews(session: session)
+                }
                 HStack(spacing: 12) {
                     switch session.phase {
                     case .scanning:
