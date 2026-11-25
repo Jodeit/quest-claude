@@ -181,19 +181,24 @@ function fine(m) {
   const halves = Math.round(m / 0.0254 * 2), whole = Math.floor(halves / 2), half = halves % 2 ? "½" : "";
   return whole >= 36 ? `${Math.floor(whole / 12)}' ${whole % 12}${half}"` : `${whole}${half}"`;
 }
-// Reads 15, 15.25, 15 1/4, 15¼, 1' 3¼" (inches) into metres; null if it isn't one.
+// Reads 15, 15.25, 15 1/4, 1-1/2, 15¼, 15in, 15 inches, 1' 3¼", 38 cm (inches by default) into metres; null if it isn't one.
 function parseLength(text) {
   let t = String(text).trim().toLowerCase();
   if (!t) return null;
   for (const [g, f] of [["½", " 1/2"], ["¼", " 1/4"], ["¾", " 3/4"], ["⅛", " 1/8"], ["⅜", " 3/8"], ["⅝", " 5/8"], ["⅞", " 7/8"]]) t = t.split(g).join(f);
+  const cm = t.match(/^(\d*\.?\d+)\s*cm$/);
+  if (cm) { const v = parseFloat(cm[1]); return v > 0 ? v / 100 : null; }
   let feet = 0;
-  const fm = t.match(/^\s*([\d.]+)\s*(?:'|ft)/);
+  const fm = t.match(/^\s*(\d*\.?\d+)\s*(?:'|ft\.?|feet|foot)/);
   if (fm) { feet = parseFloat(fm[1]); t = t.slice(fm[0].length); }
-  t = t.replace(/"|in/g, " ");
-  let inches = 0;
-  for (const p of t.split(/\s+/).filter(Boolean)) {
-    if (p.includes("/")) { const [n, d] = p.split("/").map(Number); if (!d) return null; inches += n / d; }
-    else { const v = Number(p); if (!isFinite(v)) return null; inches += v; }
+  t = t.replace(/(\d)\s*-\s*(\d+\/\d+)/g, "$1 $2").replace(/inches|inch|in\.?|"/g, " ");
+  const parts = t.split(/\s+/).filter(Boolean);
+  if (parts.length > 2) return null;
+  let inches = 0, whole = 0, frac = 0;
+  for (const p of parts) {
+    if (/^\d+\/\d+$/.test(p)) { const [n, d] = p.split("/").map(Number); if (!d || frac++) return null; inches += n / d; }
+    else if (/^\d*\.?\d+$/.test(p)) { if (whole++) return null; inches += Number(p); }
+    else return null;
   }
   const total = feet * 12 + inches;
   return total > 0 ? total * 0.0254 : null;
@@ -217,7 +222,15 @@ if (scanId !== "builtin") {
   try { const d = db0 ? await db0.doc(`scans/${scanId}`).get() : null; files = d?.exists ? (d.data().files || null) : null; } catch {}
   if (!files) { location.hash = ""; }
 }
-const R = (path) => (path && files ? (files[path] || path) : path);
+// Paths come from an uploaded twin.json: only relative paths, https and data:image URLs may reach href/src.
+const safeUrl = (u) => {
+  if (typeof u !== "string") return "";
+  const c = u.replace(/[\u0000-\u0020]/g, "");
+  if (/^https:\/\//i.test(c) || /^data:image\//i.test(c)) return u;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(c) || /^[\\/]{2}/.test(c) || c.startsWith("\\")) return "";
+  return u;
+};
+const R = (path) => safeUrl(path && files && Object.hasOwn(files, path) && files[path] ? files[path] : path);
 const T = `twins/${files ? scanId : "builtin"}/`;  // where this scan's team data lives
 
 // Shared state, read by the 3D view from its first frame.
@@ -647,8 +660,15 @@ function drawDims(i) {
   }
 }
 
+let lastView = null, deferred = false;
+const busyTape = () => { const a = document.activeElement; return (a?.classList?.contains("tape") && $("panel").contains(a)) || !!$("panel").querySelector("input.tape[data-dirty='1']"); };
+$("panel").addEventListener("focusout", () => setTimeout(() => { if (deferred && !busyTape()) render(); }, 0));
 function render() {
-  const p = $("panel"); p.replaceChildren();
+  const p = $("panel");
+  const view = tab + "|" + selected;
+  // Don't rebuild the table under a box being typed in; catch up once it loses focus.
+  if (view === lastView && busyTape()) { deferred = true; return; }
+  deferred = false; lastView = view; p.replaceChildren();
   if (tab === "spots") selected == null ? spotList(p) : spotPage(p, selected);
   else if (tab === "plan") planView(p);
   else if (tab === "measures") measuresView(p);
@@ -739,18 +759,19 @@ function spotPage(p, i) {
     const cell = el("td", { class: have ? "num ok" : "num" });
     if (canEdit) {
       const inp = el("input", { class: "tape", id: idOf(field), inputmode: "text", enterkeyhint: "next", placeholder: "e.g. 15¼", value: have ? fine(have) : "", "aria-label": `${label} tape measurement` });
-      inp.addEventListener("input", () => showDelta(parseLength(inp.value)));
+      inp.addEventListener("input", () => { inp.dataset.dirty = "1"; showDelta(parseLength(inp.value)); });
       inp.addEventListener("keydown", (e) => { if (e.key !== "Enter") return; e.preventDefault();
         const nx = rows[r + 1]; pendingFocus = nx ? idOf(nx[0]) : null; const el2 = nx && $(idOf(nx[0])); inp.blur(); if (el2) el2.focus(); });
       inp.addEventListener("change", async () => {
         const v = inp.value.trim() ? parseLength(inp.value) : null;
         if (inp.value.trim() && v == null) { inp.setCustomValidity("Type inches, like 15¼ or 1' 3¼\""); inp.reportValidity(); return; }
         inp.setCustomValidity("");
-        await write(T + `spots/${slug(key)}`, { confirmed: { ...confirmed, [field]: v } });
+        inp.dataset.dirty = "";
+        await writeField(T + `spots/${slug(key)}`, field, v);
       });
       cell.append(inp);
       if (!have) dcell.append(el("button", { class: "small use", text: "= scan", title: "The tape agrees with the scan", "aria-label": `${label}: tape agrees with the scan`,
-        onclick: () => write(T + `spots/${slug(key)}`, { confirmed: { ...confirmed, [field]: est } }) }));
+        onclick: () => writeField(T + `spots/${slug(key)}`, field, est) }));
     } else cell.textContent = have ? "✓ " + fine(have) : "–";
     if (have) showDelta(have);
     table.append(el("tr", {}, el("td", { text: label }), el("td", { class: "num" }, fine(est), tol(field) ? el("div", { class: "muted", style: "font-size:11px", text: tol(field) }) : null), cell, dcell));
@@ -922,6 +943,23 @@ function aboutView(p) {
     "Shelf edges found by projecting the frames onto each unit's front at its real size. Sizes are estimates: confirm with a tape.",
   ].filter(Boolean);
   const ul = el("ul", { class: "small" }); for (const t of items) ul.append(el("li", { text: t })); p.append(ul);
+  p.append(el("h3", { text: "Private home scan" }),
+    el("p", { class: "small", text: "This is a scan of a real home. Who can open this page is set by its owner with Share, so share it only with people who should see the inside of the house." }));
+  if (files && team.canWrite && db) {
+    p.append(el("p", { class: "small", text: "Finished with this scan? Removing it deletes it and its team data (tape readings, products, notes, measurements) for everyone." }),
+      el("button", { class: "small", text: "Remove this scan", onclick: removeScan }));
+  }
+}
+async function removeScan() {
+  if (!confirm("Remove this scan and all its tape readings, products, notes and measurements? This can't be undone.")) return;
+  try {
+    for (const c of ["spots", "products", "notes", "measures"]) {
+      const s = await db.collection(T + c).get();
+      for (const d of s.docs) await db.doc(T + c + "/" + d.id).delete();
+    }
+    await db.doc(`scans/${scanId}`).delete();
+    location.hash = ""; location.reload();
+  } catch (e) { fail(e); }
 }
 
 // ---------- scans: the one published with the page, and any the team adds ----------
@@ -989,6 +1027,19 @@ async function write(path, body) {
   const ref = db.doc(path);
   try { const s = await ref.get(); s.exists ? await ref.update(body) : await ref.set(body); }
   catch (e) { fail(e); }
+}
+// One tape field at a time, merged into the latest saved doc so typing width then depth never drops either.
+let writeChain = Promise.resolve();
+function writeField(path, field, v) {
+  if (!db) return Promise.resolve();
+  return writeChain = writeChain.then(async () => {
+    const ref = db.doc(path);
+    try {
+      const s = await ref.get();
+      const conf = { ...((s.exists && s.data().confirmed) || {}), [field]: v };
+      s.exists ? await ref.update({ confirmed: conf }) : await ref.set({ confirmed: conf });
+    } catch (e) { fail(e); }
+  });
 }
 async function add(path, body) { if (!db) return; try { await db.collection(path).add(body); } catch (e) { fail(e); } }
 function fail(e) { team.error = e?.code === "invalid_argument" ? "You can view this but not change it." : "That didn't save. Try again in a moment."; render(); }
