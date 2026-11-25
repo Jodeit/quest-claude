@@ -1,6 +1,7 @@
 import Foundation
 import RoomPlan
 import UIKit
+import simd
 
 /// One scan from start to saved: streams interim rooms to the server while scanning (at most one
 /// every couple of seconds, always the newest), then saves and sends the processed room.
@@ -12,6 +13,11 @@ final class ScanSession: ObservableObject, Identifiable {
         case done(SavedScan)
         case failed(String)
         case cancelled
+
+        var isDone: Bool {
+            if case .done = self { return true }
+            return false
+        }
     }
 
     struct Counts: Equatable {
@@ -24,6 +30,15 @@ final class ScanSession: ObservableObject, Identifiable {
             windows = room.windows.count
             objects = room.objects.count
         }
+    }
+
+    /// One storage unit in the "Before you leave" checklist.
+    struct UnitCheck: Identifiable, Equatable {
+        var id: Int { object }
+        var object: Int          // index into the room's objects
+        var label: String
+        var hasPhoto: Bool       // a pinned photo was taken close to its front, facing it
+        var unconfirmedShelves: Int  // shelf edges the LiDAR mesh did not confirm (all of them without a mesh)
     }
 
     nonisolated let id = UUID()
@@ -41,6 +56,8 @@ final class ScanSession: ObservableObject, Identifiable {
     @Published private(set) var coverage: CoverageSnapshot?
     /// The capture hint of the moment (CaptureHints), before the coverage one.
     @Published private(set) var hint: String?
+    /// Storage units of the room just saved, with what still needs a close-up or a tape.
+    @Published private(set) var checklist: [UnitCheck] = []
 
     /// Photos taken during this scan, kept in memory until the scan is saved with them.
     private var photos: [(ScanPhoto, Data)] = []
@@ -96,6 +113,7 @@ final class ScanSession: ObservableObject, Identifiable {
         name = next
         photos = []
         photoCount = 0
+        checklist = []
         coverage = nil
         counts = Counts()
         serverScanID = nil
@@ -132,6 +150,62 @@ final class ScanSession: ObservableObject, Identifiable {
         let frames = controller.keyframes.filter { $0.0.file.hasPrefix("M") && !known.contains($0.0.file) }
         library.addMesh(mesh, frames: frames, to: saved)
         serverStatus = "Photo-real model saved: \(mesh.triangleCount) triangles, \(frames.count) more frames. Open 3D."
+        let current = library.scans.first { $0.id == saved.id } ?? saved
+        checklist = buildChecklist(current)  // the mesh may have confirmed more shelf edges
+    }
+
+    /// One-tap start for a unit's missing close-up: brings the camera back up (the photo-real pass is the
+    /// existing way to have it live after a save) and says which unit to go to.
+    func startCloseUp(of unit: UnitCheck) {
+        if !meshPassRunning { startMeshPass() }
+        if meshPassRunning {
+            serverStatus = "Go to \(unit.label), stand about a metre from its front and keep it in view."
+        }
+    }
+
+    /// Storage units of a saved room: which have a pinned photo close to their front, and how many of
+    /// their shelf edges the LiDAR mesh did not confirm.
+    private func buildChecklist(_ saved: SavedScan) -> [UnitCheck] {
+        guard let data = try? library.json(for: saved),
+              let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) else { return [] }
+        let fronts = library.storageFronts(for: saved).map { $0.0 }
+        let poses = library.photos(for: saved).map { $0.0.pose }
+        var out: [UnitCheck] = []
+        var number = 0
+        for (index, o) in room.objects.enumerated() where o.category == .storage {
+            number += 1
+            let front = fronts.first { $0.object == index }
+            let t = o.transform
+            let center = simd_make_float3(t.columns.3)
+            let zAxis = simd_normalize(simd_make_float3(t.columns.2))
+            let flipped = front?.flipped ?? false
+            let normal: SIMD3<Float> = flipped ? -zAxis : zAxis
+            let target = center + normal * (o.dimensions.z / 2)
+            var covered = false
+            for pose in poses {
+                let cam = simd_make_float3(pose.columns.3)
+                let forward = -simd_normalize(simd_make_float3(pose.columns.2))
+                let toUnit = target - cam
+                let dist = simd_length(toUnit)
+                guard dist > 0.01, dist < 2.0 else { continue }
+                if simd_dot(toUnit / dist, forward) > 0.7 && simd_dot(-toUnit / dist, normal) > 0.3 {
+                    covered = true
+                    break
+                }
+            }
+            var unsure = 0
+            if let front {
+                if let sure = front.confirmed {
+                    unsure = sure.filter { !$0 }.count
+                } else {
+                    unsure = front.shelves.count
+                }
+            }
+            let size = front.map { " (\(FloorPlanPDF.fine($0.width)) wide, \(FloorPlanPDF.fine($0.height)) high)" } ?? ""
+            out.append(UnitCheck(object: index, label: "Storage \(number)\(size)", hasPhoto: covered,
+                                 unconfirmedShelves: unsure))
+        }
+        return out
     }
 
     /// Take a photo from the scanning camera; it's pinned on the plan where it was taken.
@@ -239,6 +313,7 @@ final class ScanSession: ObservableObject, Identifiable {
         library.update(saved)
         if let mesh = controller.roomMesh { library.addMesh(mesh, to: saved) }
         saved = library.scans.first { $0.id == saved.id } ?? saved
+        checklist = buildChecklist(saved)
         roomsSaved += 1
         phase = .done(saved)
     }

@@ -265,6 +265,9 @@ struct ScanScreen: View {
                 }
                 Text(session.serverStatus).font(.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                if session.phase.isDone, !session.meshPassRunning, !session.checklist.isEmpty {
+                    BeforeYouLeave(session: session)
+                }
                 HStack(spacing: 12) {
                     switch session.phase {
                     case .scanning:
@@ -355,6 +358,42 @@ struct ScanScreen: View {
         case let .failed(message): return message
         case .cancelled: return "Cancelled"
         }
+    }
+}
+
+/// After a scan: the storage units that still need a close-up photo, and the ones whose shelf edges
+/// the LiDAR mesh could not confirm.
+struct BeforeYouLeave: View {
+    @ObservedObject var session: ScanSession
+
+    var body: some View {
+        let unsure = session.checklist.filter { $0.unconfirmedShelves > 0 }
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Before you leave").font(.subheadline.weight(.semibold))
+            ForEach(session.checklist) { unit in
+                HStack(spacing: 8) {
+                    Image(systemName: unit.hasPhoto ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(unit.hasPhoto ? Color.green : Color.orange)
+                    Text(unit.label).font(.caption).lineLimit(2)
+                    Spacer()
+                    if unit.hasPhoto {
+                        Text("close-up taken").font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        Button("Take photo") { session.startCloseUp(of: unit) }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                    }
+                }
+            }
+            if !unsure.isEmpty {
+                let names = unsure.map { $0.label.components(separatedBy: " (").first ?? $0.label }
+                Label("Confirm shelf heights with a tape: " + names.joined(separator: ", ")
+                      + " (LiDAR did not confirm \(unsure.map { $0.unconfirmedShelves }.reduce(0, +)) shelf edges).",
+                      systemImage: "ruler")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
