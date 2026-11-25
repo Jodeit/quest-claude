@@ -26,7 +26,12 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private static let maxKeyframes = 150
     private static let keyframeWidth: CGFloat = 960
     /// The photo-real pass keeps bigger frames: they paint the mesh, close up.
-    private static let meshFrameWidth: CGFloat = 1440
+    private static let meshFrameWidth: CGFloat = 1920
+    /// Most photo-real frames kept in the end (the sharpest per stop and 15-degree heading).
+    private static let meshFrameBudget = 120
+    /// Standing-spot detection and spin guidance for the photo-real pass.
+    private var stops = StopTracker()
+    private var lastPollTime: TimeInterval = 0
     /// Recent frames' sharpness, to judge a new one against.
     private var recentSharpness: [Float] = []
     private(set) var blurryFramesSkipped = 0
@@ -135,6 +140,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         latestRoom = nil
         lastKey = nil
         lastPoll = nil
+        stops.reset()
         start()
     }
 
@@ -157,6 +163,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         meshPass = true
         lastKey = nil
         lastPoll = nil
+        stops.endStop()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 self?.pollKeyframe()
@@ -180,7 +187,47 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         overlay.stop()
         meshView?.removeFromSuperview()
         meshView = nil
+        stops.endStop()
+        pruneMeshFrames()
         return mesh
+    }
+
+    /// Over budget: keep the sharpest frame per stop and 15-degree heading (frames taken while
+    /// walking are grouped by half-metre cell instead), then drop the blurriest until it fits.
+    private func pruneMeshFrames() {
+        let budget = Self.meshFrameBudget
+        let mesh = keyframes.filter { $0.0.file.hasPrefix("M") }
+        guard mesh.count > budget else { return }
+        var best: [String: Int] = [:]  // group -> index into `mesh`
+        for (i, item) in mesh.enumerated() {
+            let k = item.0
+            let p = k.pose
+            let yaw = StopTracker.yawPitch(p).yaw
+            let bucket = Int(floor((yaw + Float.pi) / (Float.pi / 12)))
+            var group = "s\(k.stop ?? -1)h\(bucket)"
+            if k.stop == nil {
+                group += "x\(Int(floor(p.columns.3.x * 2)))z\(Int(floor(p.columns.3.z * 2)))"
+            }
+            if let j = best[group], (mesh[j].0.sharpness ?? 0) >= (k.sharpness ?? 0) { continue }
+            best[group] = i
+        }
+        var kept = best.values.sorted()
+        if kept.count > budget {
+            kept.sort { (mesh[$0].0.sharpness ?? 0) > (mesh[$1].0.sharpness ?? 0) }
+            kept = Array(kept.prefix(budget)).sorted()
+        }
+        let keepFiles = Set(kept.map { mesh[$0].0.file })
+        keyframes = keyframes.filter { !$0.0.file.hasPrefix("M") || keepFiles.contains($0.0.file) }
+    }
+
+    /// The next free file name for a frame, so names stay unique after the photo-real pass drops some.
+    private func nextFrameFile(prefix: String) -> String {
+        var top = 0
+        for item in keyframes where item.0.file.hasPrefix(prefix) {
+            let digits = item.0.file.dropFirst(prefix.count).prefix(while: { $0.isNumber })
+            top = Swift.max(top, Int(digits) ?? 0)
+        }
+        return prefix + String(format: "%03d.jpg", top + 1)
     }
 
     private func stopKeyframes() {
@@ -204,9 +251,19 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         }
         let pose = meshPass ? (meshJump ?? matrix_identity_float4x4) * frame.camera.transform : frame.camera.transform
         let previous = lastPoll
+        let previousTime = lastPollTime
         lastPoll = pose
-        guard let previous, Self.turn(previous, pose) < 0.07,
-              simd_distance(previous.columns.3, pose.columns.3) < 0.06 else { return }
+        lastPollTime = frame.timestamp
+        if meshPass {
+            // Photo-real pass: a slow spin on the spot is wanted, so judge the turn as a rate
+            // (skip above 0.9 rad/s), not as a fixed step between polls.
+            let dt = Float(frame.timestamp - previousTime)
+            guard let previous, dt > 0.05, Self.turn(previous, pose) / dt < 0.9,
+                  simd_distance(previous.columns.3, pose.columns.3) < 0.06 else { return }
+        } else {
+            guard let previous, Self.turn(previous, pose) < 0.07,
+                  simd_distance(previous.columns.3, pose.columns.3) < 0.06 else { return }
+        }
         if let k = lastKey, simd_distance(k.columns.3, pose.columns.3) < 0.2, Self.turn(k, pose) < 0.17 { return }
         lastKey = pose
 
@@ -214,10 +271,12 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         let fullW = CGFloat(CVPixelBufferGetWidth(buffer)), fullH = CGFloat(CVPixelBufferGetHeight(buffer))
         let scale = (meshPass ? Self.meshFrameWidth : Self.keyframeWidth) / fullW
         let k = frame.camera.intrinsics
-        let key = Keyframe(file: String(format: meshPass ? "M%03d.jpg" : "F%03d.jpg", keyframes.count + 1), transform: pose.packed,
+        var key = Keyframe(file: nextFrameFile(prefix: meshPass ? "M" : "F"), transform: pose.packed,
                            fx: k.columns.0.x * Float(scale), fy: k.columns.1.y * Float(scale),
                            cx: k.columns.2.x * Float(scale), cy: k.columns.2.y * Float(scale),
                            width: Int((fullW * scale).rounded()), height: Int((fullH * scale).rounded()))
+        if meshPass, stops.inStop { key.stop = stops.stopId }
+        let frameKey = key
         let context = ciContext
         encoding = true
         let previousKey = lastKey
@@ -241,7 +300,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                 blurrySkipTimes.append(Date())
                 lastKey = previousKey
             } else if let jpeg = result.0 {
-                var k = key
+                var k = frameKey
                 k.sharpness = result.1
                 keyframes.append((k, jpeg))
             }
@@ -263,8 +322,16 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             }
         }
         blurrySkipTimes.removeAll { Date().timeIntervalSince($0) > 4 }
+        var stopHint: String? = nil
+        if meshPass {
+            if case .normal = frame.camera.trackingState {
+                stops.update(pose: frame.camera.transform, time: frame.timestamp)
+            }
+            stopHint = stops.message(time: frame.timestamp)
+        }
         let text = hints.hint(frame: frame, look: look, blurrySkipsRecently: blurrySkipTimes.count,
-                              room: meshPass ? nil : latestRoom, keyframes: keyframes.map { $0.0 }, meshPass: meshPass)
+                              room: meshPass ? nil : latestRoom, keyframes: keyframes.map { $0.0 }, meshPass: meshPass,
+                              inStop: meshPass && stops.inStop, stopHint: stopHint)
         onHint?(text)
     }
 

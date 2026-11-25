@@ -16,7 +16,7 @@ struct CaptureHints {
 
     /// Called about four times a second.
     mutating func hint(frame: ARFrame, look: Look?, blurrySkipsRecently: Int, room: CapturedRoom?,
-                       keyframes: [Keyframe], meshPass: Bool) -> String? {
+                       keyframes: [Keyframe], meshPass: Bool, inStop: Bool = false, stopHint: String? = nil) -> String? {
         let pose = frame.camera.transform
         if let last = lastPose, frame.timestamp > lastTime {
             let dt = Float(frame.timestamp - lastTime)
@@ -40,7 +40,11 @@ struct CaptureHints {
             if look.fingertip { return "Your finger is over the camera: hold the phone by its edges." }
             if look.brightness < 45 { return "It's dark here: turn on a light for better photos." }
         }
-        if speed > 0.7 || turnRate > 1.2 || blurrySkipsRecently >= 3 { return "Slow down: photos are blurring." }
+        // A deliberate slow spin on the spot (up to about 0.6 rad/s) is fine; only flag it above 1.0.
+        let slowSpin = inStop && turnRate <= 0.7
+        let tooFast = speed > 0.7 || turnRate > (inStop ? 1.0 : 1.2) || (blurrySkipsRecently >= 3 && !slowSpin)
+        if tooFast { return "Slow down: photos are blurring." }
+        if let stopHint { return stopHint }
         if let room, let missing = storageWithoutFront(room: room, keyframes: keyframes, from: pose) {
             return "Stand about a metre in front of the storage \(missing) and hold still: that's what gives shelf sizes."
         }
@@ -111,5 +115,96 @@ struct CaptureHints {
         let bw = w / 5, bh = h / 5
         let finger = skin(0, bw, 0, h) || skin(w - bw, w, 0, h) || skin(0, w, 0, bh) || skin(0, w, h - bh, h)
         return Look(brightness: sum / Float(w * h), fingertip: finger)
+    }
+}
+
+/// Matterport-style stops for the photo-real pass: standing still (under 25 cm for 1.5 s) starts a
+/// stop with the next id; while it lasts, the heading is tracked in 30-degree sectors so the person
+/// can be told how far round they have turned. Frames kept during a stop carry its id.
+struct StopTracker {
+    private(set) var stopId = 0
+    private(set) var inStop = false
+    private var anchor: SIMD3<Float>?
+    private var anchorTime: TimeInterval = 0
+    private var sectors = Set<Int>()
+    private var sweptUp = false
+    private var sweptDown = false
+    private var offLevel = 0
+    private var tiltHintShown = false
+    private var tiltHintUntil: TimeInterval = 0
+
+    static let sectorCount = 12
+    static let levelLimit: Float = 35 * Float.pi / 180
+
+    /// Share of the full turn covered so far, 0...100.
+    var percent: Int { Swift.min(100, sectors.count * 100 / StopTracker.sectorCount) }
+    /// 300 degrees (ten sectors) covered.
+    var complete: Bool { sectors.count >= 10 }
+
+    mutating func reset() {
+        stopId = 0
+        endStop()
+        anchor = nil
+    }
+
+    mutating func endStop() {
+        inStop = false
+        sectors = Set<Int>()
+        sweptUp = false
+        sweptDown = false
+        offLevel = 0
+        tiltHintShown = false
+        tiltHintUntil = 0
+    }
+
+    /// Camera yaw (radians, any consistent zero) and pitch (up positive) from a pose.
+    static func yawPitch(_ pose: simd_float4x4) -> (yaw: Float, pitch: Float) {
+        let f = simd_normalize(-simd_make_float3(pose.columns.2))
+        return (atan2(f.x, f.z), asin(Swift.min(1, Swift.max(-1, f.y))))
+    }
+
+    /// Called about four times a second with the camera pose and the frame's timestamp.
+    mutating func update(pose: simd_float4x4, time: TimeInterval) {
+        let pos = simd_make_float3(pose.columns.3)
+        guard let a = anchor else {
+            anchor = pos
+            anchorTime = time
+            return
+        }
+        if simd_distance(a, pos) > 0.25 {
+            if inStop { endStop() }
+            anchor = pos
+            anchorTime = time
+            return
+        }
+        if !inStop {
+            guard time - anchorTime >= 1.5 else { return }
+            stopId += 1
+            inStop = true
+        }
+        let yp = StopTracker.yawPitch(pose)
+        if yp.pitch > StopTracker.levelLimit {
+            sweptUp = true
+            offLevel += 1
+        } else if yp.pitch < -StopTracker.levelLimit {
+            sweptDown = true
+            offLevel += 1
+        } else {
+            // Only roughly level frames count toward the turn.
+            let sector = Int(floor((yp.yaw + Float.pi) / (2 * Float.pi) * Float(StopTracker.sectorCount)))
+            sectors.insert(((sector % StopTracker.sectorCount) + StopTracker.sectorCount) % StopTracker.sectorCount)
+        }
+        if !tiltHintShown, !(sweptUp && sweptDown), sectors.count >= 6 || offLevel >= 12 {
+            tiltHintShown = true
+            tiltHintUntil = time + 4
+        }
+    }
+
+    /// What to say now, or nil when not at a stop.
+    func message(time: TimeInterval) -> String? {
+        guard inStop else { return nil }
+        if complete { return "Good. Walk to the next spot, about 4 steps" }
+        if time < tiltHintUntil { return "Tilt up a little to catch the ceiling and down for the floor." }
+        return "Turn slowly on the spot: \(percent)% around"
     }
 }

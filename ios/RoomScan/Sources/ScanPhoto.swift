@@ -26,6 +26,9 @@ struct Keyframe: Codable, Hashable {
     var width, height: Int
     /// Variance of the Laplacian of a small grayscale copy: higher is sharper (blur flattens it).
     var sharpness: Float? = nil
+    /// Photo-real pass only: which stop (standing spot, 1, 2, ...) this frame was taken at; the JSON key
+    /// is `stop`, absent for frames taken while walking and for room-pass frames.
+    var stop: Int? = nil
 
     var pose: simd_float4x4 { simd_float4x4(packed: transform) }
 }
