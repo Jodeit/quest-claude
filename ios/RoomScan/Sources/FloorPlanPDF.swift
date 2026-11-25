@@ -12,9 +12,10 @@ enum FloorPlanPDF {
     static func write(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
                       names: [String: String] = [:], fronts: [(StorageFront, URL)] = [],
-                      measured: ScanMeasurements = ScanMeasurements(), to url: URL) throws {
+                      measured: ScanMeasurements = ScanMeasurements(), prices: [String: Double]? = nil,
+                      to url: URL) throws {
         try render(room, name: name, date: date, photos: photos, elevations: elevations, products: products,
-                   names: names, fronts: fronts, measured: measured).write(to: url, options: .atomic)
+                   names: names, fronts: fronts, measured: measured, prices: prices).write(to: url, options: .atomic)
     }
 
     /// To the nearest half inch (or centimetre), as estimates and tape measurements are shown.
@@ -39,9 +40,21 @@ enum FloorPlanPDF {
     static func objectLabel(_ c: CapturedRoom.Object.Category) -> String { Plan.label(c) }
 
     static func render(_ room: CapturedRoom, name: String, date: Date, photos: [(ScanPhoto, URL)] = [],
-                       elevations: [(Elevation, URL)] = [], products: [ProductLine] = [],
+                       elevations: [(Elevation, URL)] = [], products productsIn: [ProductLine] = [],
                        names: [String: String] = [:], fronts: [(StorageFront, URL)] = [],
-                       measured: ScanMeasurements = ScanMeasurements()) -> Data {
+                       measured: ScanMeasurements = ScanMeasurements(), prices: [String: Double]? = nil) -> Data {
+        // One price source for every total: the catalog's price table (Catalog.priceTable), as the
+        // product screen and CSV use. Callers without a catalog fall back to the prices saved on the
+        // lines, so totals can differ from the app until they pass `prices`.
+        var table: [String: Double] = [:]
+        if let given = prices {
+            table = given
+        } else {
+            for l in productsIn {
+                if let p = l.price, table[l.product] == nil { table[l.product] = p }
+            }
+        }
+        let products: [ProductLine] = ProductExport.repriced(productsIn, prices: table)
         var plan = Plan(room, photos: photos.map { $0.0 })
         plan.names = names
         let units = Units(imperial: Locale.current.measurementSystem == .us)
@@ -91,7 +104,7 @@ enum FloorPlanPDF {
                                            qty: here.reduce(0) { $0 + $1.qty }, subtotal: subtotal(here)))
             }
             drawSummary(plan, units: units, name: name, date: date, room: room, rows: summary,
-                        spotCount: spotIndexes.count, products: products, photoCount: photos.count,
+                        spotCount: spotIndexes.count, products: products, prices: table, photoCount: photos.count,
                         page: page, pdf: pdf, pager: pager)
             for i in spotIndexes {
                 let o = room.objects[i]
@@ -155,11 +168,11 @@ enum FloorPlanPDF {
 
     /// Price times quantity over the lines that have a price.
     private static func subtotal(_ lines: [ProductLine]) -> Double {
-        var t: Double = 0
+        var table: [String: Double] = [:]
         for l in lines {
-            if let p = l.price { t += p * Double(l.qty) }
+            if let p = l.price { table[l.product] = p }
         }
-        return t
+        return ProductExport.subtotal(lines, prices: table)
     }
 
     private static func drawPlan(_ plan: Plan, units: Units, name: String, date: Date,
@@ -299,7 +312,8 @@ enum FloorPlanPDF {
     // MARK: summary page
 
     private static func drawSummary(_ plan: Plan, units: Units, name: String, date: Date, room: CapturedRoom,
-                                    rows: [SpotSummary], spotCount: Int, products: [ProductLine], photoCount: Int,
+                                    rows: [SpotSummary], spotCount: Int, products: [ProductLine], prices: [String: Double],
+                                    photoCount: Int,
                                     page: CGRect, pdf: UIGraphicsPDFRendererContext, pager: Pager) {
         begin(pdf, pager, page)
         let ctx = pdf.cgContext
@@ -372,7 +386,7 @@ enum FloorPlanPDF {
         text("\(items)", at: CGPoint(x: xr - 80, y: y), size: 10.5, weight: .semibold, anchor: .right)
         text(money(total), at: CGPoint(x: xr - 4, y: y), size: 10.5, weight: .semibold, anchor: .right)
         y += 20
-        let unpriced: Int = products.filter { $0.price == nil }.count
+        let unpriced: Int = ProductExport.unpricedCount(products, prices: prices)
         var notes: [String] = []
         if unpriced > 0 { notes.append("\(unpriced) product line\(unpriced == 1 ? "" : "s") without a price left out of subtotals.") }
         if photoCount > 0 { notes.append("\(photoCount) photo\(photoCount == 1 ? "" : "s") taken while scanning, pinned on the plan.") }
@@ -701,21 +715,31 @@ enum FloorPlanPDF {
             text("None yet (Products, on the scan).", at: CGPoint(x: tx, y: y), size: 9, color: faint, anchor: .left)
             y += 16
         } else {
-            let room = Int((page.height - margin - 60 - y - (photos.isEmpty || front == nil ? 0 : 110)) / 15)
-            for (k, p) in products.enumerated() {
-                if k >= Swift.max(1, room) - 1, products.count > room {
-                    text("+ \(products.count - k) more on the product list", at: CGPoint(x: tx, y: y), size: 9,
-                         color: faint, anchor: .left)
-                    y += 15
-                    break
-                }
+            // Rows run down the page; when they reach the footer the list continues on a new page
+            // under the spot's name, so nothing runs off the page.
+            let bottom: CGFloat = page.height - margin - 40
+            var limit: CGFloat = bottom - (photos.isEmpty || front == nil ? 0 : 110)
+            func continuePage() {
+                begin(pdf, pager, page)
+                text(name.uppercased(), at: CGPoint(x: margin, y: margin), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+                text("\(label) (continued)", at: CGPoint(x: margin, y: margin + 13), size: 20, anchor: .topLeft, serif: true)
+                line(pdf.cgContext, CGPoint(x: margin, y: margin + 46), CGPoint(x: margin + 40, y: margin + 46), width: 1.5,
+                     color: gold, cap: .butt)
+                y = margin + 76
+                text("PRODUCTS", at: CGPoint(x: tx, y: y), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+                y += 18
+                limit = bottom
+            }
+            for p in products {
+                if y + 15 > limit { continuePage() }
                 textBox("\(p.qty) × \(p.product)", in: CGRect(x: tx, y: y - 7, width: tableW - 62, height: 14), size: 9)
                 if let price = p.price {
                     text(money(price * Double(p.qty)), at: CGPoint(x: tx + tableW, y: y), size: 9, anchor: .right)
                 }
                 y += 15
             }
-            line(ctx, CGPoint(x: tx, y: y - 4), CGPoint(x: tx + tableW, y: y - 4), width: 0.6, color: gold, cap: .butt)
+            if y + 30 > limit { continuePage() }
+            line(pdf.cgContext, CGPoint(x: tx, y: y - 4), CGPoint(x: tx + tableW, y: y - 4), width: 0.6, color: gold, cap: .butt)
             y += 6
             let items: Int = products.reduce(0) { $0 + $1.qty }
             text("Subtotal  (\(items) item\(items == 1 ? "" : "s"))", at: CGPoint(x: tx, y: y), size: 9.5,

@@ -379,9 +379,8 @@ struct BeforeYouLeave: View {
                     if unit.hasPhoto {
                         Text("close-up taken").font(.caption2).foregroundStyle(.secondary)
                     } else {
-                        Button("Take photo") { session.startCloseUp(of: unit) }
-                            .buttonStyle(.bordered)
-                            .font(.caption)
+                        // A saved scan can't take a new pinned photo; the photos come from scanning.
+                        Text("Scan again to add photos").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }

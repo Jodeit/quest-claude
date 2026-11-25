@@ -170,16 +170,29 @@ final class ScanSession: ObservableObject, Identifiable {
               let room = try? JSONDecoder().decode(CapturedRoom.self, from: data) else { return [] }
         let fronts = library.storageFronts(for: saved).map { $0.0 }
         let poses = library.photos(for: saved).map { $0.0.pose }
+        let names: [String: String] = library.names(for: saved)
+        // The room's middle, from its walls: a unit with no scanned front is taken to face it.
+        var centre = SIMD3<Float>(0, 0, 0)
+        if !room.walls.isEmpty {
+            for w in room.walls { centre += simd_make_float3(w.transform.columns.3) }
+            centre /= Float(room.walls.count)
+        }
         var out: [UnitCheck] = []
-        var number = 0
         for (index, o) in room.objects.enumerated() where o.category == .storage {
-            number += 1
             let front = fronts.first { $0.object == index }
             let t = o.transform
             let center = simd_make_float3(t.columns.3)
-            let zAxis = simd_normalize(simd_make_float3(t.columns.2))
-            let flipped = front?.flipped ?? false
-            let normal: SIMD3<Float> = flipped ? -zAxis : zAxis
+            var zAxis = simd_make_float3(t.columns.2)
+            zAxis.y = 0
+            zAxis = simd_length(zAxis) > 1e-6 ? simd_normalize(zAxis) : SIMD3<Float>(0, 0, 1)
+            var normal: SIMD3<Float> = zAxis
+            if let front {
+                if front.flipped { normal = -zAxis }
+            } else {
+                var toRoom = centre - center
+                toRoom.y = 0
+                if simd_dot(toRoom, zAxis) < 0 { normal = -zAxis }
+            }
             let target = center + normal * (o.dimensions.z / 2)
             var covered = false
             for pose in poses {
@@ -201,8 +214,10 @@ final class ScanSession: ObservableObject, Identifiable {
                     unsure = front.shelves.count
                 }
             }
+            // The plan's own label for it ("3 Storage", or "3 Coffee station" when named).
+            let key = "\(index + 1) \(FloorPlanPDF.objectLabel(o.category))"
             let size = front.map { " (\(FloorPlanPDF.fine($0.width)) wide, \(FloorPlanPDF.fine($0.height)) high)" } ?? ""
-            out.append(UnitCheck(object: index, label: "Storage \(number)\(size)", hasPhoto: covered,
+            out.append(UnitCheck(object: index, label: "\(FloorPlanPDF.shown(key, names))\(size)", hasPhoto: covered,
                                  unconfirmedShelves: unsure))
         }
         return out

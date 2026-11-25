@@ -185,7 +185,7 @@ struct ProductsView: View {
     }
 
     private var unpricedCount: Int {
-        catalog.products.isEmpty ? 0 : lines.filter { priceTable[$0.product] == nil }.count
+        ProductExport.unpricedCount(lines, prices: priceTable)
     }
 
     private func money(_ v: Double) -> String { String(format: "$%.2f", v) }

@@ -88,9 +88,7 @@ final class Catalog: ObservableObject {
                 let v = row[c].trimmingCharacters(in: .whitespaces)
                 return v.isEmpty ? nil : v
             }
-            let price = cell(priceCol).flatMap {
-                Double($0.replacingOccurrences(of: "$", with: "").replacingOccurrences(of: ",", with: ""))
-            }
+            let price: Double? = cell(priceCol).flatMap { ProductExport.parsePrice($0) }
             list.append(CatalogProduct(name: name, price: price, store: cell(storeCol)))
         }
         guard !list.isEmpty else { throw ImportError.empty }
@@ -193,8 +191,69 @@ enum ProductExport {
             .joined(separator: "\n")
     }
 
+    /// A price typed or exported in either convention: "$1,234.50", "1.234,50", "12,50" (decimal
+    /// comma), "1,234" (thousands). nil when it isn't a number.
+    static func parsePrice(_ raw: String) -> Double? {
+        var allowed: String = ""
+        for ch in raw {
+            if ch.isNumber || ch == "," || ch == "." || ch == "-" { allowed.append(ch) }
+        }
+        guard !allowed.isEmpty else { return nil }
+        let lastComma: String.Index? = allowed.lastIndex(of: ",")
+        let lastDot: String.Index? = allowed.lastIndex(of: ".")
+        var cleaned: String = allowed
+        if let c = lastComma, let d = lastDot {
+            if c > d {
+                // "1.234,50": comma is the decimal mark.
+                cleaned = allowed.replacingOccurrences(of: ".", with: "").replacingOccurrences(of: ",", with: ".")
+            } else {
+                cleaned = allowed.replacingOccurrences(of: ",", with: "")
+            }
+        } else if let c = lastComma {
+            let commas: Int = allowed.filter { $0 == "," }.count
+            let after: Int = allowed.distance(from: c, to: allowed.endIndex) - 1
+            if commas == 1 && after >= 1 && after <= 2 {
+                cleaned = allowed.replacingOccurrences(of: ",", with: ".")   // "12,50"
+            } else {
+                cleaned = allowed.replacingOccurrences(of: ",", with: "")    // "1,234" or "1,234,567"
+            }
+        } else if lastDot != nil {
+            let dots: Int = allowed.filter { $0 == "." }.count
+            if dots > 1 { cleaned = allowed.replacingOccurrences(of: ".", with: "") }  // "1.234.567"
+        }
+        return Double(cleaned)
+    }
+
+    /// The one price source for every total (screen, CSV, PDF): the catalog's price for the exact
+    /// product name, nil when the name isn't priced.
+    static func price(of line: ProductLine, prices: [String: Double]) -> Double? { prices[line.product] }
+
+    /// Lines whose product has no catalog price. With no priced products at all (no catalog loaded)
+    /// nothing is flagged, as the product screen does, since every name would be.
+    static func unpricedCount(_ lines: [ProductLine], prices: [String: Double]) -> Int {
+        if prices.isEmpty { return 0 }
+        return lines.filter { prices[$0.product] == nil }.count
+    }
+
+    /// The lines with `price` set from the shared price table (nil where unpriced), for drawing.
+    static func repriced(_ lines: [ProductLine], prices: [String: Double]) -> [ProductLine] {
+        lines.map { l in
+            var c = l
+            c.price = prices[l.product]
+            return c
+        }
+    }
+
+    /// A cell a spreadsheet would run as a formula starts with = + - @ (or tab/CR): prefix a quote.
+    static func neutralised(_ s: String) -> String {
+        guard let f = s.unicodeScalars.first else { return s }
+        if "=+-@\t\r".unicodeScalars.contains(f) { return "'" + s }
+        return s
+    }
+
     /// RFC 4180 field: quoted only when it holds a comma, quote, or line break; quotes doubled.
-    static func csvField(_ s: String) -> String {
+    static func csvField(_ raw: String) -> String {
+        let s = neutralised(raw)
         let needs = s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")
         guard needs else { return s }
         return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
@@ -219,7 +278,8 @@ enum ProductExport {
         for r in rows {
             out.append([csvField(r.0), csvField(r.1), r.2, String(r.3)].joined(separator: ","))
         }
-        return out.joined(separator: "\r\n") + "\r\n"
+        // A UTF-8 byte order mark first, so Excel reads accents and inch marks right.
+        return "\u{FEFF}" + out.joined(separator: "\r\n") + "\r\n"
     }
 
     /// Subtotal of lines with a catalog price (price x qty); unpriced names add nothing.
@@ -232,7 +292,7 @@ enum ProductExport {
     }
 
     static func csv(_ lines: [ProductLine], room: String, names: [String: String] = [:]) -> String {
-        func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        func q(_ raw: String) -> String { let s = neutralised(raw); return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
         let rows = lines.map { l in
             [q(l.calculatorLocation(room: room, names: names)), q(l.product), l.price.map { String(format: "%.2f", $0) } ?? "",
              String(l.qty), q(l.store ?? "")].joined(separator: ",")

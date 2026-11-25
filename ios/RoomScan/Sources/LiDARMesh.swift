@@ -135,8 +135,22 @@ struct LiDARMesh {
         }
         guard let f = peak(ups, lowest: true) else { return 0 }
         let df = floorY - f
-        if let c = peak(downs, lowest: false), abs(df - (ceilingY - c)) < 0.06 { return (df + ceilingY - c) / 2 }
-        return df
+        var off: Float = df
+        if let c = peak(downs, lowest: false) {
+            let dc = ceilingY - c
+            if abs(df - dc) < 0.06 {
+                off = (df + dc) / 2
+            } else {
+                // Floor and ceiling disagree by more than 6 cm: trust the floor alone only when its
+                // peak is solid (at least 1 m2 of upward-facing area within 3 cm of it, and the
+                // shift is plausible). Same rule as twin.py.
+                var floorArea: Float = 0
+                for (y, area) in ups where abs(y - f) < 0.03 { floorArea += area }
+                if !(abs(df) <= 0.8 && floorArea >= 1.0) { return 0 }
+            }
+        }
+        // Never move the mesh more than 0.8 m: past that the "floor" is more likely a table or stair.
+        return abs(off) > 0.8 ? 0 : off
     }
 
     mutating func fit(to room: CapturedRoom) -> simd_float4x4 {
