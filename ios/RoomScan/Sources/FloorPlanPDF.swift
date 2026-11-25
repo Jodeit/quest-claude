@@ -2,9 +2,10 @@ import RoomPlan
 import UIKit
 import simd
 
-/// A dimensioned floor plan of a scan, drawn on the phone (no server): page 1 is the plan to scale
-/// (walls with their lengths, doors, windows, furniture footprints, floor area, ceiling height),
-/// then an elevation of each wall (when the scan kept frames), a list of every measurement, and the
+/// A dimensioned floor plan of a scan, drawn on the phone (no server), in Graceful Spaces colours:
+/// page 1 is the plan to scale (walls with their lengths, doors, windows, furniture footprints, floor
+/// area, ceiling height), page 2 a summary (spots, products, subtotals), a page per spot (front photo,
+/// Scan / Tape table with blank tape boxes, products), then an elevation of each wall (when the scan kept frames), a list of every measurement, and the
 /// photos taken while scanning, each pinned on the plan where it was taken. Feet and inches where
 /// the phone's region uses them.
 enum FloorPlanPDF {
@@ -49,58 +50,132 @@ enum FloorPlanPDF {
             : CGRect(x: 0, y: 0, width: 612, height: 792)
         let format = UIGraphicsPDFRendererFormat()
         format.documentInfo = [kCGPDFContextTitle as String: "\(name) floor plan",
-                               kCGPDFContextCreator as String: "RoomScan"]
+                               kCGPDFContextCreator as String: "RoomScan",
+                               kCGPDFContextAuthor as String: "Graceful Spaces"]
+        let pager = Pager(room: name)
         return UIGraphicsPDFRenderer(bounds: page, format: format).pdfData { pdf in
-            pdf.beginPage()
+            begin(pdf, pager, page)
             drawPlan(plan, units: units, name: name, date: date, page: page, ctx: pdf.cgContext)
             let photoFiles = photos.map { $0.1 }
             func photosOf(_ subject: Plan.Subject) -> [(Int, URL)] {
                 plan.pins.indices.filter { plan.pins[$0].subject == subject && $0 < photoFiles.count }.map { ($0, photoFiles[$0]) }
             }
             // A page per spot that matters: storage, or named, or with products or photos.
+            func keyOf(_ i: Int) -> String { "\(i + 1) \(Plan.label(room.objects[i].category))" }
+            var spotIndexes: [Int] = []
             for (i, o) in room.objects.enumerated() {
-                let key = "\(i + 1) \(Plan.label(o.category))"
+                let key = keyOf(i)
+                let hasFront: Bool = fronts.contains { $0.0.object == i }
+                let hasProducts: Bool = products.contains { $0.location == key }
+                let hasPhotos: Bool = !photosOf(.item(i)).isEmpty
+                guard hasFront || hasProducts || hasPhotos || names[key] != nil || o.category == .storage else { continue }
+                spotIndexes.append(i)
+            }
+            // The summary page: totals, then each spot and other location with its products.
+            var summary: [SpotSummary] = []
+            var seen: [String] = []
+            for i in spotIndexes {
+                let key = keyOf(i)
+                let here: [ProductLine] = products.filter { $0.location == key }
+                let d = room.objects[i].dimensions
+                summary.append(SpotSummary(label: shown(key, names),
+                                           size: "\(units.ftIn(d.x)) × \(units.ftIn(d.z)) × \(units.ftIn(d.y))",
+                                           qty: here.reduce(0) { $0 + $1.qty }, subtotal: subtotal(here)))
+                seen.append(key)
+            }
+            var others: [String] = []
+            for l in products where !seen.contains(l.location) && !others.contains(l.location) { others.append(l.location) }
+            for loc in others {
+                let here: [ProductLine] = products.filter { $0.location == loc }
+                summary.append(SpotSummary(label: shown(loc, names), size: "",
+                                           qty: here.reduce(0) { $0 + $1.qty }, subtotal: subtotal(here)))
+            }
+            drawSummary(plan, units: units, name: name, date: date, room: room, rows: summary,
+                        spotCount: spotIndexes.count, products: products, photoCount: photos.count,
+                        page: page, pdf: pdf, pager: pager)
+            for i in spotIndexes {
+                let o = room.objects[i]
+                let key = keyOf(i)
                 let front = fronts.first { $0.0.object == i }
-                let here = products.filter { $0.location == key }
-                let pics = photosOf(.item(i))
-                guard front != nil || !here.isEmpty || !pics.isEmpty || names[key] != nil || o.category == .storage else { continue }
-                drawSpot(key: key, label: shown(key, names), size: o.dimensions, front: front, products: here, photos: pics,
-                         units: units, name: name, measured: measured, page: page, pdf: pdf)
+                let here: [ProductLine] = products.filter { $0.location == key }
+                drawSpot(key: key, label: shown(key, names), size: o.dimensions, front: front, products: here,
+                         photos: photosOf(.item(i)), units: units, name: name, measured: measured, page: page,
+                         pdf: pdf, pager: pager)
             }
             for (e, url) in elevations.sorted(by: { $0.0.wall < $1.0.wall }) where e.wall < room.walls.count {
                 let key = "Wall W\(e.wall + 1)"
                 drawElevation(e, image: url, room: room, units: units, name: name, names: names,
                               products: products.filter { $0.location == key }, photos: photosOf(.wall(e.wall)),
-                              page: page, pdf: pdf)
+                              page: page, pdf: pdf, pager: pager)
             }
-            drawList(plan, units: units, name: name, page: page, pdf: pdf, fronts: fronts.map { $0.0 },
+            drawList(plan, units: units, name: name, page: page, pdf: pdf, pager: pager, fronts: fronts.map { $0.0 },
                      measured: measured)
-            drawProducts(products, name: name, names: names, page: page, pdf: pdf)
-            drawPhotos(plan, files: photos.map { $0.1 }, name: name, page: page, pdf: pdf)
+            drawProducts(products, name: name, names: names, page: page, pdf: pdf, pager: pager)
+            drawPhotos(plan, files: photos.map { $0.1 }, name: name, page: page, pdf: pdf, pager: pager)
         }
     }
 
     // MARK: page 1, the plan
 
     private static let margin: CGFloat = 40
-    private static let ink = UIColor.black
-    private static let faint = UIColor(white: 0.45, alpha: 1)
+    // Graceful Spaces: warm gold (#A6884F), grey (#7B7C7C), soft charcoal ink, a warm paper tint.
+    private static let ink = UIColor(red: 0.13, green: 0.13, blue: 0.13, alpha: 1)
+    private static let faint = UIColor(red: 0.482, green: 0.486, blue: 0.486, alpha: 1)
+    private static let gold = UIColor(red: 0.651, green: 0.533, blue: 0.310, alpha: 1)
+    private static let paper = UIColor(red: 0.973, green: 0.961, blue: 0.941, alpha: 1)
     private static let doorColor = UIColor(red: 0.55, green: 0.33, blue: 0.15, alpha: 1)
     private static let windowColor = UIColor(red: 0.15, green: 0.4, blue: 0.75, alpha: 1)
     private static let photoColor = UIColor(red: 0.6, green: 0.2, blue: 0.45, alpha: 1)
 
+    /// Starts a page and puts the brand footer on it: the room's name and the page number.
+    private static func begin(_ pdf: UIGraphicsPDFRendererContext, _ pager: Pager, _ page: CGRect) {
+        pdf.beginPage()
+        pager.number += 1
+        let y: CGFloat = page.height - 24
+        line(pdf.cgContext, CGPoint(x: margin, y: y - 9), CGPoint(x: page.width - margin, y: y - 9),
+             width: 0.5, color: gold, cap: .butt)
+        text("GRACEFUL SPACES  ·  \(pager.room)", at: CGPoint(x: margin, y: y), size: 7, color: faint, anchor: .left)
+        text("\(pager.number)", at: CGPoint(x: page.width - margin, y: y), size: 8, color: faint, anchor: .right)
+    }
+
+    /// A big figure over a small gold label.
+    private static func stat(_ label: String, _ value: String, in r: CGRect) {
+        text(value, at: CGPoint(x: r.minX, y: r.minY), size: 20, anchor: .topLeft, serif: true)
+        text(label.uppercased(), at: CGPoint(x: r.minX, y: r.minY + 30), size: 7.5, weight: .semibold,
+             color: gold, anchor: .topLeft)
+    }
+
+    private static func money(_ v: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = "USD"
+        f.locale = Locale(identifier: "en_US")
+        return f.string(from: NSNumber(value: v)) ?? String(format: "$%.2f", v)
+    }
+
+    /// Price times quantity over the lines that have a price.
+    private static func subtotal(_ lines: [ProductLine]) -> Double {
+        var t: Double = 0
+        for l in lines {
+            if let p = l.price { t += p * Double(l.qty) }
+        }
+        return t
+    }
+
     private static func drawPlan(_ plan: Plan, units: Units, name: String, date: Date,
                                  page: CGRect, ctx: CGContext) {
         // Title block.
-        text(name, at: CGPoint(x: margin, y: margin), size: 18, weight: .semibold, anchor: .topLeft)
+        text(name, at: CGPoint(x: margin, y: margin), size: 20, anchor: .topLeft, serif: true)
+        line(ctx, CGPoint(x: margin, y: margin + 44), CGPoint(x: margin + 40, y: margin + 44), width: 1.5,
+             color: gold, cap: .butt)
         var facts = [date.formatted(date: .long, time: .omitted)]
         if let a = plan.area { facts.append("Floor area \(units.area(a))") }
         if let h = plan.ceiling { facts.append("Ceiling \(units.length(h))") }
-        text(facts.joined(separator: "  ·  "), at: CGPoint(x: margin, y: margin + 24), size: 10,
+        text(facts.joined(separator: "  ·  "), at: CGPoint(x: margin, y: margin + 27), size: 10,
              color: faint, anchor: .topLeft)
 
         // Drawing area, leaving room around the walls for the dimension lines.
-        let header: CGFloat = 56, footer: CGFloat = 48
+        let header: CGFloat = 60, footer: CGFloat = 48
         let box = CGRect(x: margin, y: margin + header, width: page.width - 2 * margin,
                          height: page.height - 2 * margin - header - footer).insetBy(dx: 34, dy: 34)
         let size = SIMD2<Float>(Swift.max(plan.size.x, 0.5), Swift.max(plan.size.y, 0.5))
@@ -115,7 +190,7 @@ enum FloorPlanPDF {
             ctx.beginPath()
             ctx.addLines(between: poly.map(pt))
             ctx.closePath()
-            ctx.setFillColor(UIColor(white: 0.95, alpha: 1).cgColor)
+            ctx.setFillColor(paper.cgColor)
             ctx.fillPath()
         }
 
@@ -221,10 +296,96 @@ enum FloorPlanPDF {
              at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
     }
 
+    // MARK: summary page
+
+    private static func drawSummary(_ plan: Plan, units: Units, name: String, date: Date, room: CapturedRoom,
+                                    rows: [SpotSummary], spotCount: Int, products: [ProductLine], photoCount: Int,
+                                    page: CGRect, pdf: UIGraphicsPDFRendererContext, pager: Pager) {
+        begin(pdf, pager, page)
+        let ctx = pdf.cgContext
+        text("ROOM SUMMARY", at: CGPoint(x: margin, y: margin), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+        text(name, at: CGPoint(x: margin, y: margin + 14), size: 24, anchor: .topLeft, serif: true)
+        line(ctx, CGPoint(x: margin, y: margin + 52), CGPoint(x: margin + 48, y: margin + 52), width: 1.5,
+             color: gold, cap: .butt)
+        text(date.formatted(date: .long, time: .omitted), at: CGPoint(x: margin, y: margin + 62), size: 10,
+             color: faint, anchor: .topLeft)
+
+        let items: Int = products.reduce(0) { $0 + $1.qty }
+        let total: Double = subtotal(products)
+        var tiles: [(String, String)] = []
+        tiles.append(("Floor area", plan.area.map { units.area($0) } ?? "n/a"))
+        tiles.append(("Ceiling", plan.ceiling.map { units.length($0) } ?? "n/a"))
+        tiles.append(("Spots", "\(spotCount)"))
+        tiles.append(("Doors · windows", "\(room.doors.count) · \(room.windows.count)"))
+        tiles.append(("Products", "\(items)"))
+        tiles.append(("Subtotal", items == 0 ? "n/a" : money(total)))
+        let top: CGFloat = margin + 92
+        let colW: CGFloat = (page.width - 2 * margin) / 3
+        for (k, t) in tiles.enumerated() {
+            let col = CGFloat(k % 3), r = CGFloat(k / 3)
+            stat(t.0, t.1, in: CGRect(x: margin + col * colW, y: top + r * 60, width: colW, height: 52))
+        }
+
+        let xr: CGFloat = page.width - margin
+        var y: CGFloat = top + 2 * 60 + 14
+        func header() {
+            text("SPOT OR LOCATION", at: CGPoint(x: margin + 4, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .left)
+            text("SIZE (W × D × H)", at: CGPoint(x: margin + 210, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .left)
+            text("ITEMS", at: CGPoint(x: xr - 80, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .right)
+            text("SUBTOTAL", at: CGPoint(x: xr - 4, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .right)
+            y += 10
+            line(pdf.cgContext, CGPoint(x: margin, y: y), CGPoint(x: xr, y: y), width: 0.6, color: gold, cap: .butt)
+            y += 3
+        }
+        header()
+        let rowH: CGFloat = 19
+        for (k, r) in rows.enumerated() {
+            if y + rowH > page.height - margin - 24 {
+                begin(pdf, pager, page)
+                y = margin + 10
+                header()
+            }
+            if k % 2 == 0 {
+                pdf.cgContext.setFillColor(paper.cgColor)
+                pdf.cgContext.fill(CGRect(x: margin, y: y, width: xr - margin, height: rowH))
+            }
+            let cy = y + rowH / 2
+            textBox(r.label, in: CGRect(x: margin + 4, y: cy - 7, width: 196, height: 14), size: 9.5)
+            textBox(r.size, in: CGRect(x: margin + 210, y: cy - 7, width: xr - 80 - 40 - (margin + 210), height: 14),
+                    size: 9, color: faint)
+            text(r.qty == 0 ? "" : "\(r.qty)", at: CGPoint(x: xr - 80, y: cy), size: 9.5, anchor: .right)
+            text(r.qty == 0 ? "" : money(r.subtotal), at: CGPoint(x: xr - 4, y: cy), size: 9.5, anchor: .right)
+            y += rowH
+        }
+        if rows.isEmpty {
+            text("No spots or products yet.", at: CGPoint(x: margin + 4, y: y + 10), size: 9, color: faint, anchor: .left)
+            y += rowH
+        }
+        if y + 40 > page.height - margin - 24 {
+            begin(pdf, pager, page)
+            y = margin + 10
+        }
+        y += 6
+        line(pdf.cgContext, CGPoint(x: margin, y: y), CGPoint(x: xr, y: y), width: 0.8, color: gold, cap: .butt)
+        y += 14
+        text("Room total", at: CGPoint(x: margin + 4, y: y), size: 11, weight: .semibold, anchor: .left, serif: true)
+        text("\(items)", at: CGPoint(x: xr - 80, y: y), size: 10.5, weight: .semibold, anchor: .right)
+        text(money(total), at: CGPoint(x: xr - 4, y: y), size: 10.5, weight: .semibold, anchor: .right)
+        y += 20
+        let unpriced: Int = products.filter { $0.price == nil }.count
+        var notes: [String] = []
+        if unpriced > 0 { notes.append("\(unpriced) product line\(unpriced == 1 ? "" : "s") without a price left out of subtotals.") }
+        if photoCount > 0 { notes.append("\(photoCount) photo\(photoCount == 1 ? "" : "s") taken while scanning, pinned on the plan.") }
+        for n in notes {
+            text(n, at: CGPoint(x: margin + 4, y: y), size: 8.5, color: faint, anchor: .left)
+            y += 13
+        }
+    }
+
     // MARK: page 2+, the measurements
 
     private static func drawList(_ plan: Plan, units: Units, name: String, page: CGRect,
-                                 pdf: UIGraphicsPDFRendererContext, fronts: [StorageFront] = [],
+                                 pdf: UIGraphicsPDFRendererContext, pager: Pager, fronts: [StorageFront] = [],
                                  measured: ScanMeasurements = ScanMeasurements()) {
         func tape(_ key: String) -> String {
             measured.confirmed[key].map { "; ✓ measured \(units.fine($0))" } ?? ""
@@ -249,14 +410,14 @@ enum FloorPlanPDF {
                          + tape("Wall W\(i + 1)") + seenIn(.wall(i))))
         }
         for (i, d) in plan.doors.enumerated() {
-            rows.append(("D\(i + 1)", "Door", "\(units.length(d.width)) wide, \(units.length(d.height)) high"))
+            rows.append(("D\(i + 1)", "Door", "\(units.ftIn(d.width)) wide, \(units.ftIn(d.height)) high"))
         }
         for (i, w) in plan.windows.enumerated() {
-            rows.append(("Win\(i + 1)", "Window", "\(units.length(w.width)) wide, \(units.length(w.height)) high, "
-                         + "sill \(units.length(w.sill)) above the floor"))
+            rows.append(("Win\(i + 1)", "Window", "\(units.ftIn(w.width)) wide, \(units.ftIn(w.height)) high, "
+                         + "sill \(units.ftIn(w.sill)) above the floor"))
         }
         for o in plan.openings {
-            rows.append(("", "Opening", "\(units.length(o.width)) wide, \(units.length(o.height)) high"))
+            rows.append(("", "Opening", "\(units.ftIn(o.width)) wide, \(units.ftIn(o.height)) high"))
         }
         for (i, item) in plan.items.enumerated() {
             rows.append(("\(i + 1)", plan.names["\(i + 1) \(item.name)"].map { "\($0) (\(item.name))" } ?? item.name, "\(units.length(item.width)) wide × "
@@ -273,13 +434,13 @@ enum FloorPlanPDF {
         var y = page.height  // forces a new page on the first row
         for (i, row) in rows.enumerated() {
             if y + rowH > page.height - margin {
-                pdf.beginPage()
-                text("\(name): measurements", at: CGPoint(x: margin, y: margin), size: 14, weight: .semibold,
-                     anchor: .topLeft)
+                begin(pdf, pager, page)
+                text("\(name): measurements", at: CGPoint(x: margin, y: margin), size: 16, anchor: .topLeft,
+                     serif: true)
                 y = margin + 34
             }
             if i % 2 == 0 {
-                pdf.cgContext.setFillColor(UIColor(white: 0.96, alpha: 1).cgColor)
+                pdf.cgContext.setFillColor(paper.cgColor)
                 pdf.cgContext.fill(CGRect(x: margin - 4, y: y, width: page.width - 2 * margin + 8, height: rowH))
             }
             let cy = y + rowH / 2
@@ -307,17 +468,21 @@ enum FloorPlanPDF {
             : CGRect(x: 0, y: 0, width: 612, height: 792)
         let units = Units(imperial: Locale.current.measurementSystem == .us)
         let format = UIGraphicsPDFRendererFormat()
-        format.documentInfo = [kCGPDFContextTitle as String: "\(title) plan", kCGPDFContextCreator as String: "RoomScan"]
+        format.documentInfo = [kCGPDFContextTitle as String: "\(title) plan", kCGPDFContextCreator as String: "RoomScan",
+                               kCGPDFContextAuthor as String: "Graceful Spaces"]
+        let pager = Pager(room: title)
         return UIGraphicsPDFRenderer(bounds: page, format: format).pdfData { pdf in
-            pdf.beginPage()
+            drawHomeCover(rooms: rooms, plans: plans, title: title, date: date, units: units, page: page, pdf: pdf,
+                          pager: pager)
+            begin(pdf, pager, page)
             let ctx = pdf.cgContext
             let total = plans.compactMap { $0.plan.area }.reduce(0, +)
-            text(title, at: CGPoint(x: margin, y: margin), size: 18, weight: .semibold, anchor: .topLeft)
+            text(title, at: CGPoint(x: margin, y: margin), size: 20, anchor: .topLeft, serif: true)
             text("\(date.formatted(date: .long, time: .omitted))  ·  \(rooms.count) rooms  ·  "
-                 + "\(units.area(total)) scanned", at: CGPoint(x: margin, y: margin + 24), size: 10,
+                 + "\(units.area(total)) scanned", at: CGPoint(x: margin, y: margin + 27), size: 10,
                  color: faint, anchor: .topLeft)
-            let box = CGRect(x: margin, y: margin + 56, width: page.width - 2 * margin,
-                             height: page.height - 2 * margin - 56 - 30).insetBy(dx: 10, dy: 10)
+            let box = CGRect(x: margin, y: margin + 60, width: page.width - 2 * margin,
+                             height: page.height - 2 * margin - 60 - 30).insetBy(dx: 10, dy: 10)
             let scale = CGFloat(Swift.min(Float(box.width) / size.x, Float(box.height) / size.y))
             let mid = (lo + hi) / 2
             func pt(_ p: SIMD2<Float>) -> CGPoint {
@@ -361,26 +526,90 @@ enum FloorPlanPDF {
         }
     }
 
+    /// The home's cover: its name, the totals, and each room with its floor area.
+    private static func drawHomeCover(rooms: [(name: String, room: CapturedRoom)],
+                                      plans: [(name: String, plan: Plan)], title: String, date: Date, units: Units,
+                                      page: CGRect, pdf: UIGraphicsPDFRendererContext, pager: Pager) {
+        begin(pdf, pager, page)
+        let ctx = pdf.cgContext
+        text("GRACEFUL SPACES", at: CGPoint(x: margin, y: margin), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+        text(title, at: CGPoint(x: margin, y: margin + 16), size: 28, anchor: .topLeft, serif: true)
+        line(ctx, CGPoint(x: margin, y: margin + 62), CGPoint(x: margin + 48, y: margin + 62), width: 1.5,
+             color: gold, cap: .butt)
+        text(date.formatted(date: .long, time: .omitted), at: CGPoint(x: margin, y: margin + 72), size: 10,
+             color: faint, anchor: .topLeft)
+
+        let area: Float = plans.compactMap { $0.plan.area }.reduce(0, +)
+        let storage: Int = rooms.reduce(0) { $0 + $1.room.objects.filter { $0.category == .storage }.count }
+        var tiles: [(String, String)] = []
+        tiles.append(("Rooms", "\(rooms.count)"))
+        tiles.append(("Floor area", units.area(area)))
+        tiles.append(("Storage spots", "\(storage)"))
+        let top: CGFloat = margin + 108
+        let colW: CGFloat = (page.width - 2 * margin) / 3
+        for (k, t) in tiles.enumerated() {
+            stat(t.0, t.1, in: CGRect(x: margin + CGFloat(k) * colW, y: top, width: colW, height: 52))
+        }
+
+        let xr: CGFloat = page.width - margin
+        var y: CGFloat = top + 76
+        func header() {
+            text("ROOM", at: CGPoint(x: margin + 4, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .left)
+            text("FLOOR AREA", at: CGPoint(x: margin + 210, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .left)
+            text("STORAGE", at: CGPoint(x: xr - 90, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .right)
+            text("DOORS · WINDOWS", at: CGPoint(x: xr - 4, y: y), size: 7.5, weight: .semibold, color: gold, anchor: .right)
+            y += 10
+            line(pdf.cgContext, CGPoint(x: margin, y: y), CGPoint(x: xr, y: y), width: 0.6, color: gold, cap: .butt)
+            y += 3
+        }
+        header()
+        let rowH: CGFloat = 20
+        for (k, entry) in rooms.enumerated() {
+            if y + rowH > page.height - margin - 24 {
+                begin(pdf, pager, page)
+                y = margin + 10
+                header()
+            }
+            if k % 2 == 0 {
+                pdf.cgContext.setFillColor(paper.cgColor)
+                pdf.cgContext.fill(CGRect(x: margin, y: y, width: xr - margin, height: rowH))
+            }
+            let cy = y + rowH / 2
+            let a: String = k < plans.count ? (plans[k].plan.area.map { units.area($0) } ?? "") : ""
+            let n: Int = entry.room.objects.filter { $0.category == .storage }.count
+            textBox(entry.name, in: CGRect(x: margin + 4, y: cy - 7, width: 196, height: 14), size: 10)
+            text(a, at: CGPoint(x: margin + 210, y: cy), size: 10, anchor: .left)
+            text("\(n)", at: CGPoint(x: xr - 90, y: cy), size: 10, anchor: .right)
+            text("\(entry.room.doors.count) · \(entry.room.windows.count)", at: CGPoint(x: xr - 4, y: cy), size: 10,
+                 anchor: .right)
+            y += rowH
+        }
+    }
+
     // MARK: spot pages
 
     /// Everything about one spot (a storage unit, or anything named, holding products or photographed)
-    /// on one page: its front to scale with the shelves found, its size and shelf openings as
-    /// estimates beside the tape measurements, the products that go there and the photos of it.
+    /// on one page, leading with its front: the front to scale with the shelves found, then a Scan /
+    /// Tape table (the scan's estimates beside empty boxes for the tape measurement), the products
+    /// that go there with quantities and a subtotal, and the photos of it.
     private static func drawSpot(key: String, label: String, size: SIMD3<Float>, front: (StorageFront, URL)?,
                                  products: [ProductLine], photos: [(Int, URL)], units: Units, name: String,
-                                 measured: ScanMeasurements, page: CGRect, pdf: UIGraphicsPDFRendererContext) {
-        pdf.beginPage()
+                                 measured: ScanMeasurements, page: CGRect, pdf: UIGraphicsPDFRendererContext,
+                                 pager: Pager) {
+        begin(pdf, pager, page)
         let ctx = pdf.cgContext
         let accent = UIColor(red: 0.85, green: 0.1, blue: 0.35, alpha: 1)
         let green = UIColor(red: 0.1, green: 0.5, blue: 0.25, alpha: 1)
-        text("\(name): \(label)", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold, anchor: .topLeft)
-        text("Sizes are estimates from the scan (about ±1\"); ✓ marks a tape measurement. "
-             + "Confirm before ordering product.", at: CGPoint(x: margin, y: margin + 22), size: 9, color: faint,
-             anchor: .topLeft)
+        text(name.uppercased(), at: CGPoint(x: margin, y: margin), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+        text(label, at: CGPoint(x: margin, y: margin + 13), size: 20, anchor: .topLeft, serif: true)
+        line(ctx, CGPoint(x: margin, y: margin + 46), CGPoint(x: margin + 40, y: margin + 46), width: 1.5,
+             color: gold, cap: .butt)
+        text("Scan sizes are estimates (about ±1\"). Write the tape measurement in each box; ✓ marks one already entered.",
+             at: CGPoint(x: margin, y: margin + 54), size: 8.5, color: faint, anchor: .topLeft)
 
         let tableW: CGFloat = 250
         let tx = page.width - margin - tableW
-        let left = CGRect(x: margin + 24, y: margin + 56, width: tx - margin - 60, height: page.height - 2 * margin - 56 - 36)
+        let left = CGRect(x: margin + 24, y: margin + 76, width: tx - margin - 60, height: page.height - 2 * margin - 76 - 36)
 
         // Left: the front with its shelves, or the photos when there's no front.
         var openings: [(top: Float, bottom: Float)] = []
@@ -409,7 +638,7 @@ enum FloorPlanPDF {
             openings.reverse()
             for (k, o) in openings.enumerated() where openings.count > 1 {
                 let y = r.maxY - CGFloat((o.top + o.bottom) / 2) * s
-                let tag = "\(k + 1)  \(units.fine(o.top - o.bottom))"
+                let tag = "\(k + 1)  \(units.ftIn(o.top - o.bottom))"
                 let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .semibold)]
                 let sz = (tag as NSString).size(withAttributes: attrs)
                 let at = CGPoint(x: r.maxX - sz.width - 6, y: y)
@@ -419,10 +648,10 @@ enum FloorPlanPDF {
             }
             let wy = r.maxY + 14
             line(ctx, CGPoint(x: r.minX, y: wy), CGPoint(x: r.maxX, y: wy), width: 0.6, color: ink)
-            text(units.fine(f.width), at: CGPoint(x: r.midX, y: wy + 9), size: 9, weight: .medium)
+            text(units.ftIn(f.width), at: CGPoint(x: r.midX, y: wy + 9), size: 9, weight: .medium)
             let hx = r.minX - 14
             line(ctx, CGPoint(x: hx, y: r.minY), CGPoint(x: hx, y: r.maxY), width: 0.6, color: ink)
-            text(units.fine(f.height), at: CGPoint(x: hx - 9, y: r.midY), size: 9, weight: .medium, angle: -.pi / 2)
+            text(units.ftIn(f.height), at: CGPoint(x: hx - 9, y: r.midY), size: 9, weight: .medium, angle: -.pi / 2)
         } else if !photos.isEmpty {
             photoGrid(photos, in: left, columns: photos.count > 2 ? 2 : 1)
         } else {
@@ -430,21 +659,29 @@ enum FloorPlanPDF {
                  at: CGPoint(x: left.minX, y: left.minY + 10), size: 9, color: faint, anchor: .left)
         }
 
-        // Right: size and shelves, estimate then tape.
-        var y = left.minY
-        text("Estimate", at: CGPoint(x: tx + 110, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
-        text("Measured", at: CGPoint(x: tx + 175, y: y), size: 9, weight: .semibold, color: faint, anchor: .left)
-        y += 18
+        // Right: the Scan / Tape table. Scan is the estimate; Tape is a box to fill in (or the entered value).
+        var y: CGFloat = left.minY
+        text("SCAN / TAPE", at: CGPoint(x: tx, y: y), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+        y += 16
+        text("Scan", at: CGPoint(x: tx + 96, y: y + 5), size: 8, weight: .semibold, color: faint, anchor: .left)
+        text("Tape", at: CGPoint(x: tx + 160, y: y + 5), size: 8, weight: .semibold, color: faint, anchor: .left)
+        y += 13
+        line(ctx, CGPoint(x: tx, y: y), CGPoint(x: tx + tableW, y: y), width: 0.6, color: gold, cap: .butt)
+        y += 3
+        let rowH: CGFloat = 24
         func row(_ what: String, _ estimate: Float, field: String, color: UIColor = ink) {
-            text(what, at: CGPoint(x: tx, y: y), size: 10, color: color, anchor: .left)
-            text(units.fine(estimate), at: CGPoint(x: tx + 110, y: y), size: 10, weight: .medium, color: color, anchor: .left)
+            let cy = y + rowH / 2
+            text(what, at: CGPoint(x: tx + 4, y: cy), size: 10, color: color, anchor: .left)
+            text(units.ftIn(estimate), at: CGPoint(x: tx + 96, y: cy), size: 10, weight: .medium, color: color, anchor: .left)
+            let tapeBox = CGRect(x: tx + 160, y: y + 3, width: tableW - 160, height: rowH - 6)
+            ctx.setStrokeColor(faint.cgColor)
+            ctx.setLineWidth(0.6)
+            ctx.stroke(tapeBox)
             if let tape = measured.confirmed["\(key)|\(field)"] {
-                text("✓ \(units.fine(tape))", at: CGPoint(x: tx + 175, y: y), size: 10, weight: .semibold, color: green,
-                     anchor: .left)
-            } else {
-                line(ctx, CGPoint(x: tx + 175, y: y + 6), CGPoint(x: tx + tableW, y: y + 6), width: 0.6, color: faint)
+                text("✓ \(units.ftIn(tape))", at: CGPoint(x: tapeBox.minX + 6, y: cy), size: 10, weight: .semibold,
+                     color: green, anchor: .left)
             }
-            y += 20
+            y += rowH
         }
         row("Width", size.x, field: "width")
         row("Depth", size.z, field: "depth")
@@ -456,15 +693,15 @@ enum FloorPlanPDF {
             }
         }
 
-        // Then what goes here.
-        y += 14
-        text("Products here", at: CGPoint(x: tx, y: y), size: 11, weight: .semibold, anchor: .left)
+        // Then what goes here, with quantities and a subtotal.
         y += 16
+        text("PRODUCTS", at: CGPoint(x: tx, y: y), size: 8, weight: .semibold, color: gold, anchor: .topLeft)
+        y += 18
         if products.isEmpty {
             text("None yet (Products, on the scan).", at: CGPoint(x: tx, y: y), size: 9, color: faint, anchor: .left)
             y += 16
         } else {
-            let room = Int((page.height - margin - 40 - y - (photos.isEmpty || front == nil ? 0 : 110)) / 15)
+            let room = Int((page.height - margin - 60 - y - (photos.isEmpty || front == nil ? 0 : 110)) / 15)
             for (k, p) in products.enumerated() {
                 if k >= Swift.max(1, room) - 1, products.count > room {
                     text("+ \(products.count - k) more on the product list", at: CGPoint(x: tx, y: y), size: 9,
@@ -472,9 +709,19 @@ enum FloorPlanPDF {
                     y += 15
                     break
                 }
-                textBox("\(p.qty) × \(p.product)", in: CGRect(x: tx, y: y - 7, width: tableW, height: 14), size: 9)
+                textBox("\(p.qty) × \(p.product)", in: CGRect(x: tx, y: y - 7, width: tableW - 62, height: 14), size: 9)
+                if let price = p.price {
+                    text(money(price * Double(p.qty)), at: CGPoint(x: tx + tableW, y: y), size: 9, anchor: .right)
+                }
                 y += 15
             }
+            line(ctx, CGPoint(x: tx, y: y - 4), CGPoint(x: tx + tableW, y: y - 4), width: 0.6, color: gold, cap: .butt)
+            y += 6
+            let items: Int = products.reduce(0) { $0 + $1.qty }
+            text("Subtotal  (\(items) item\(items == 1 ? "" : "s"))", at: CGPoint(x: tx, y: y), size: 9.5,
+                 weight: .semibold, anchor: .left)
+            text(money(subtotal(products)), at: CGPoint(x: tx + tableW, y: y), size: 9.5, weight: .semibold, anchor: .right)
+            y += 18
         }
 
         // And its photos, under the products, when the front took the left side.
@@ -482,10 +729,9 @@ enum FloorPlanPDF {
             let box = CGRect(x: tx, y: y + 8, width: tableW, height: page.height - margin - 30 - y - 8)
             if box.height > 60 { photoGrid(photos, in: box, columns: 2) }
         }
-        if !openings.isEmpty {
-            text("Openings are between shelf edges as seen from the front; take off shelf thickness.",
-                 at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
-        }
+        let note: String = (openings.isEmpty ? "" : "Openings are between shelf edges as seen from the front; take off shelf thickness. ")
+            + "Check critical dimensions with a tape before ordering product."
+        text(note, at: CGPoint(x: margin, y: page.height - margin - 6), size: 7, color: faint, anchor: .left)
     }
 
     /// Photos in a grid, each captioned with its pin number.
@@ -522,16 +768,17 @@ enum FloorPlanPDF {
     /// doors, windows and objects on or against it, labelled as on the plan.
     private static func drawElevation(_ e: Elevation, image url: URL, room: CapturedRoom, units: Units,
                                       name: String, names: [String: String], products: [ProductLine] = [],
-                                      photos: [(Int, URL)] = [], page: CGRect, pdf: UIGraphicsPDFRendererContext) {
+                                      photos: [(Int, URL)] = [], page: CGRect, pdf: UIGraphicsPDFRendererContext,
+                                      pager: Pager) {
         guard let image = UIImage(contentsOfFile: url.path) else { return }
         let wall = room.walls[e.wall]
         let f = WallFrame(wall, flipped: e.flipped)
         // Every page is the document's own size: UIKit lays pages out for the renderer's bounds, so a
         // page of another size gets cut off.
-        pdf.beginPage()
+        begin(pdf, pager, page)
         let ctx = pdf.cgContext
-        text("\(name): \(shown("Wall W\(e.wall + 1)", names).replacingOccurrences(of: "W\(e.wall + 1) ", with: "Wall W\(e.wall + 1) · "))", at: CGPoint(x: margin, y: margin), size: 16, weight: .semibold,
-             anchor: .topLeft)
+        text("\(name): \(shown("Wall W\(e.wall + 1)", names).replacingOccurrences(of: "W\(e.wall + 1) ", with: "Wall W\(e.wall + 1) · "))", at: CGPoint(x: margin, y: margin), size: 16,
+             anchor: .topLeft, serif: true)
         text("\(units.length(f.width)) wide × \(units.length(f.height)) high, seen from inside the room",
              at: CGPoint(x: margin, y: margin + 22), size: 10, color: faint, anchor: .topLeft)
 
@@ -633,34 +880,60 @@ enum FloorPlanPDF {
 
     // MARK: products page
 
-    /// What went where: each location as on the plan, its products and quantities.
+    /// What went where: each location as on the plan, its products with quantities and prices, a
+    /// subtotal per location and the room's total.
     private static func drawProducts(_ lines: [ProductLine], name: String, names: [String: String], page: CGRect,
-                                     pdf: UIGraphicsPDFRendererContext) {
+                                     pdf: UIGraphicsPDFRendererContext, pager: Pager) {
         guard !lines.isEmpty else { return }
+        struct Row { var kind: Int; var left: String; var unit: String; var right: String }  // kind: 0 heading, 1 item, 2 subtotal, 3 total
         var order: [String] = []
         for l in lines where !order.contains(l.location) { order.append(l.location) }
-        var rows: [(String, Bool)] = []  // text, is a heading
+        var rows: [Row] = []
         for loc in order {
-            rows.append((shown(loc, names), true))
-            for l in lines where l.location == loc { rows.append(("\(l.qty) × \(l.product)", false)) }
+            let here: [ProductLine] = lines.filter { $0.location == loc }
+            rows.append(Row(kind: 0, left: shown(loc, names), unit: "", right: ""))
+            for l in here {
+                let unit: String = l.price.map { "@ " + money($0) } ?? ""
+                let right: String = l.price.map { money($0 * Double(l.qty)) } ?? ""
+                rows.append(Row(kind: 1, left: "\(l.qty) × \(l.product)", unit: unit, right: right))
+            }
+            rows.append(Row(kind: 2, left: "Subtotal", unit: "", right: money(subtotal(here))))
         }
+        rows.append(Row(kind: 3, left: "Room total", unit: "", right: money(subtotal(lines))))
         let rowH: CGFloat = 16
-        var y = page.height
+        let xr: CGFloat = page.width - margin
+        var y: CGFloat = page.height
         for row in rows {
-            let need = row.1 ? rowH * 2.5 : rowH
+            let need: CGFloat = row.kind == 0 ? rowH * 2.5 : (row.kind == 3 ? rowH * 2 : rowH)
             if y + need > page.height - margin {
-                pdf.beginPage()
-                text("\(name): products by location", at: CGPoint(x: margin, y: margin), size: 14,
-                     weight: .semibold, anchor: .topLeft)
-                y = margin + 34
+                begin(pdf, pager, page)
+                text("\(name): products by location", at: CGPoint(x: margin, y: margin), size: 16, anchor: .topLeft,
+                     serif: true)
+                y = margin + 38
             }
-            if row.1 {
+            let cy = y + rowH / 2
+            switch row.kind {
+            case 0:
                 y += 6
-                text(row.0, at: CGPoint(x: margin, y: y + rowH / 2), size: 10.5, weight: .semibold, anchor: .left)
-            } else {
-                text(row.0, at: CGPoint(x: margin + 14, y: y + rowH / 2), size: 9, anchor: .left)
+                text(row.left, at: CGPoint(x: margin, y: y + rowH / 2), size: 11, weight: .semibold, anchor: .left, serif: true)
+                line(pdf.cgContext, CGPoint(x: margin, y: y + rowH), CGPoint(x: xr, y: y + rowH), width: 0.5, color: gold, cap: .butt)
+                y += rowH + 2
+            case 1:
+                textBox(row.left, in: CGRect(x: margin + 14, y: cy - 7, width: xr - 150 - (margin + 14), height: 14), size: 9)
+                text(row.unit, at: CGPoint(x: xr - 70, y: cy), size: 8.5, color: faint, anchor: .right)
+                text(row.right, at: CGPoint(x: xr, y: cy), size: 9, anchor: .right)
+                y += rowH
+            case 2:
+                text(row.left, at: CGPoint(x: margin + 14, y: cy), size: 9, weight: .semibold, color: gold, anchor: .left)
+                text(row.right, at: CGPoint(x: xr, y: cy), size: 9, weight: .semibold, anchor: .right)
+                y += rowH + 4
+            default:
+                y += 4
+                line(pdf.cgContext, CGPoint(x: margin, y: y), CGPoint(x: xr, y: y), width: 0.8, color: gold, cap: .butt)
+                text(row.left, at: CGPoint(x: margin, y: y + rowH / 2 + 4), size: 11, weight: .semibold, anchor: .left, serif: true)
+                text(row.right, at: CGPoint(x: xr, y: y + rowH / 2 + 4), size: 11, weight: .semibold, anchor: .right)
+                y += rowH + 4
             }
-            y += rowH
         }
     }
 
@@ -669,18 +942,17 @@ enum FloorPlanPDF {
     /// Six to a page (three across on landscape pages, two on portrait), each captioned with its pin
     /// number and what it faces.
     private static func drawPhotos(_ plan: Plan, files: [URL], name: String, page: CGRect,
-                                   pdf: UIGraphicsPDFRendererContext) {
+                                   pdf: UIGraphicsPDFRendererContext, pager: Pager) {
         guard !files.isEmpty else { return }
         let cols = page.width > page.height ? 3 : 2, rows = page.width > page.height ? 2 : 3
         let perPage = cols * rows
-        let top = margin + 30, gutter: CGFloat = 16, caption: CGFloat = 18
+        let top = margin + 34, gutter: CGFloat = 16, caption: CGFloat = 18
         let cellW = (page.width - 2 * margin - gutter * CGFloat(cols - 1)) / CGFloat(cols)
-        let cellH = (page.height - top - margin - gutter * CGFloat(rows - 1)) / CGFloat(rows)
+        let cellH = (page.height - top - margin - 8 - gutter * CGFloat(rows - 1)) / CGFloat(rows)
         for (i, url) in files.enumerated() {
             if i % perPage == 0 {
-                pdf.beginPage()
-                text("\(name): photos", at: CGPoint(x: margin, y: margin), size: 14, weight: .semibold,
-                     anchor: .topLeft)
+                begin(pdf, pager, page)
+                text("\(name): photos", at: CGPoint(x: margin, y: margin), size: 16, anchor: .topLeft, serif: true)
             }
             let col = CGFloat(i % cols), row = CGFloat((i % perPage) / cols)
             let cell = CGRect(x: margin + col * (cellW + gutter), y: top + row * (cellH + gutter),
@@ -700,12 +972,21 @@ enum FloorPlanPDF {
 
     // MARK: drawing helpers
 
-    private enum Anchor { case center, left, topLeft }
+    private enum Anchor { case center, left, topLeft, right }
+
+    /// Georgia stands in for the brand serif in headings; everything else is the system sans.
+    private static func font(_ size: CGFloat, _ weight: UIFont.Weight, serif: Bool) -> UIFont {
+        if serif {
+            let bold: Bool = weight.rawValue >= UIFont.Weight.semibold.rawValue
+            if let f = UIFont(name: bold ? "Georgia-Bold" : "Georgia", size: size) { return f }
+        }
+        return UIFont.systemFont(ofSize: size, weight: weight)
+    }
 
     private static func text(_ s: String, at p: CGPoint, size: CGFloat, weight: UIFont.Weight = .regular,
-                             color: UIColor = .black, angle: CGFloat = 0, anchor: Anchor = .center) {
+                             color: UIColor = ink, angle: CGFloat = 0, anchor: Anchor = .center, serif: Bool = false) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: size, weight: weight),
+        let attrs: [NSAttributedString.Key: Any] = [.font: font(size, weight, serif: serif),
                                                     .foregroundColor: color]
         let str = s as NSString
         let sz = str.size(withAttributes: attrs)
@@ -713,6 +994,7 @@ enum FloorPlanPDF {
         switch anchor {
         case .center: origin = CGPoint(x: -sz.width / 2, y: -sz.height / 2)
         case .left: origin = CGPoint(x: 0, y: -sz.height / 2)
+        case .right: origin = CGPoint(x: -sz.width, y: -sz.height / 2)
         case .topLeft: origin = .zero
         }
         ctx.saveGState()
@@ -753,6 +1035,23 @@ private func + (a: CGPoint, b: CGPoint) -> CGPoint { CGPoint(x: a.x + b.x, y: a.
 private func - (a: CGPoint, b: CGPoint) -> CGPoint { CGPoint(x: a.x - b.x, y: a.y - b.y) }
 private func * (a: CGPoint, k: CGFloat) -> CGPoint { CGPoint(x: a.x * k, y: a.y * k) }
 
+// MARK: page bookkeeping
+
+/// Counts a document's pages so each can carry its number in the footer.
+private final class Pager {
+    let room: String
+    var number: Int = 0
+    init(room: String) { self.room = room }
+}
+
+/// One line of the summary page: a spot (or other location) with what goes in it.
+private struct SpotSummary {
+    var label: String
+    var size: String
+    var qty: Int
+    var subtotal: Double
+}
+
 // MARK: units
 
 private struct Units {
@@ -775,6 +1074,17 @@ private struct Units {
             let halves = Int((Double(m) / 0.0254 * 2).rounded())
             let whole = halves / 2, half = halves % 2 == 1 ? "½" : ""
             if whole >= 36 { return "\(whole / 12)' \(whole % 12)\(half)\"" }
+            return "\(whole)\(half)\""
+        }
+        return "\(Int((m * 100).rounded())) cm"
+    }
+
+    /// Feet and inches to the half inch ("2' 3½\""), or centimetres: for openings and tape boxes.
+    func ftIn(_ m: Float) -> String {
+        if imperial {
+            let halves = Int((Double(m) / 0.0254 * 2).rounded())
+            let whole = halves / 2, half = halves % 2 == 1 ? "½" : ""
+            if whole >= 12 { return "\(whole / 12)' \(whole % 12)\(half)\"" }
             return "\(whole)\(half)\""
         }
         return "\(Int((m * 100).rounded())) cm"
