@@ -93,7 +93,7 @@ def _nonneg(x, default):
 
 def unit_products(o: dict, seed: dict) -> list[dict]:
     rows = list(o.get("products") or []) + [p for p in (seed.get("products") or [])
-                                            if isinstance(p, dict) and str(p.get("spot")) == o["key"]]
+                                            if isinstance(p, dict) and o["key"] in (str(p.get("spot")), str(p.get("location")))]
     out = []
     for p in rows:
         if not isinstance(p, dict):
@@ -169,6 +169,25 @@ def _positive(x) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0
 
 
+def app_tape(measured) -> dict:
+    """The app's measurements.json as {unit key: {width, depth, height}} in inches. Its shape is
+    {"confirmed": {"3 Storage|width": metres, ...}, "custom": [...]}; the flat tape.json shape
+    ({key: {width, ...}}, inches) is accepted too. Only finite positive numbers are kept."""
+    out: dict = {}
+    if not isinstance(measured, dict):
+        return out
+    for k, v in (measured.get("confirmed") or {}).items() if isinstance(measured.get("confirmed"), dict) else []:
+        key, _, field = str(k).partition("|")
+        if field in ("width", "depth", "height") and _positive(v):
+            out.setdefault(key, {})[field] = float(v) * M_TO_IN
+    for k, v in measured.items():
+        if k not in ("confirmed", "custom") and isinstance(v, dict):
+            good = {d: v[d] for d in ("width", "depth", "height") if _positive(v.get(d))}
+            if good:
+                out.setdefault(k, {}).update(good)
+    return out
+
+
 def load_tape(tape_path: Path | None) -> tuple[dict, list[str]]:
     """tape.json -> {key: {width, depth, height}} keeping only entries whose three numbers are finite and > 0."""
     if not tape_path:
@@ -196,9 +215,8 @@ def build_report(twin_path: Path, out: Path, tape_path: Path | None = None) -> d
     tape, warnings = load_tape(tape_path)
     tape_keys = list(tape)
     seed = t.get("seed") or {}
-    for k, v in (seed.get("measured") or {}).items():  # tape taken in the app, unless tape.json overrides
-        if isinstance(v, dict) and all(_positive(v.get(d)) for d in ("width", "depth", "height")):
-            tape.setdefault(k, v)
+    for k, v in app_tape(seed.get("measured")).items():  # tape taken in the app, unless tape.json overrides
+        tape.setdefault(k, v)
     names = seed.get("names") or {}
     name = t.get("name") or "Room"
     units = [dict(o, key=str(o["key"]) if o.get("key") not in (None, "") else str(i + 1))

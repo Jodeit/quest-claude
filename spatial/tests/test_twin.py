@@ -209,3 +209,49 @@ def test_zip_with_several_scans(tmp_path):
     assert t["name"] == "b-scan" and not any("scans in the bundle" in w for w in t["processing"]["warnings"])
     with pytest.raises(FileNotFoundError, match="found: a-scan, b-scan"):
         build_twin(z, tmp_path / "t3", only="nope")
+
+
+def _floor_ceiling_mesh(floor_y, ceil_y, fsize=1.8):
+    import numpy as np
+    P, F = [], []
+    for y, flip, size in ((floor_y, False, fsize), (ceil_y, True, 1.8)):
+        n = len(P)
+        P += [[-size, y, -size], [size, y, -size], [size, y, size], [-size, y, size]]
+        F += [[n, n + 2, n + 1], [n, n + 3, n + 2]] if not flip else [[n, n + 1, n + 2], [n, n + 2, n + 3]]
+    return np.array(P, float), np.array(F)
+
+
+def test_level_offset_caps_and_disagreement():
+    from roomscan.twin import level_offset
+    room = _box_room()
+    info = {}
+    P, F = _floor_ceiling_mesh(1.2, 3.7)  # 1.2 m off, both agree: beyond the cap
+    assert level_offset(P, F, room, info) == 0.0 and not info["confident"] and info["notes"]
+    info = {}
+    P, F = _floor_ceiling_mesh(0.3, 2.9)  # floor wants -0.3, ceiling -0.4: disagree, floor 12 m2 -> trust floor
+    assert abs(level_offset(P, F, room, info) + 0.3) < 0.02 and info["confident"]
+    info = {}
+    P, F = _floor_ceiling_mesh(0.3, 2.9, fsize=0.4)  # floor only 0.64 m2: prefer 0
+    assert level_offset(P, F, room, info) == 0.0 and "disagree" in info["notes"][0]
+
+
+def test_room_inside_unions_floors_and_margin():
+    import numpy as np
+    from roomscan.twin import Room
+    def floor(cx):
+        return {"transform": [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, cx, 0, 0, 1],
+                "polygonCorners": [[-1, 1, 0], [1, 1, 0], [1, -1, 0], [-1, -1, 0]]}
+    room = Room({"walls": [], "floors": [floor(-3), floor(3)]})
+    pts = np.array([[-3, 0], [3, 0], [0, 0], [3.2, 0], [4.4, 0]], float)
+    assert room.inside(pts).tolist() == [True, True, False, True, False]
+
+
+def test_stale_closeups_removed(tmp_path):
+    import numpy as np
+    from roomscan.twin import spot_closeups
+    room = _box_room()
+    out = tmp_path / "out"
+    (out / "img" / "spots").mkdir(parents=True)
+    (out / "img" / "spots" / "7.jpg").write_bytes(b"old")
+    spot_closeups(out, np.zeros((3, 3)), np.zeros((0, 3), int), [], {"objects": []}, room, [])
+    assert not (out / "img" / "spots" / "7.jpg").exists()

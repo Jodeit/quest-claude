@@ -97,3 +97,18 @@ def test_tape_validation(tmp_path):
 
 def test_fmt_in_guards():
     assert fmt_in(float("inf")) == "–" and fmt_in(float("nan")) == "–"
+
+
+def test_app_measurements_shape_and_location_products(tmp_path):
+    def edit(t):
+        t["seed"]["measured"] = {"confirmed": {"2 Storage|width": 0.762, "2 Storage|depth": 0.3556,
+                                               "Wall W1": 3.0, "2 Storage|height": -1, "9 Ghost|width": 1},
+                                 "custom": []}
+        t["seed"]["products"] = [dict(location="2 Storage", product="Basket", qty=2, price=5)]
+    r, h = _report(tmp_path, edit)
+    assert "$10.00" in h and "Basket" in h
+    assert "2' 6\"" in h  # 0.762 m is 30 in, shown as tape, not read as inches
+    assert h.count("Confirmed with tape") >= 2 and "Please confirm with tape" in h  # height still unmeasured
+    from roomscan.report import app_tape
+    t = app_tape({"confirmed": {"3 Storage|width": 1.0}, "4 Chair": {"width": 10, "depth": 0}})
+    assert abs(t["3 Storage"]["width"] - 39.37) < 0.01 and t["4 Chair"] == {"width": 10}

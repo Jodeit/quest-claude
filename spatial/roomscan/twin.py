@@ -94,23 +94,29 @@ class Room:
         self.hi = np.max(ends, 0) if ends else np.zeros(3)
         self.centre = np.mean([w["c"] for w in self.walls], 0) if self.walls else np.zeros(3)
         # RoomPlan's floor outline (iOS 17+), in world x, z: the room's true shape, for cropping.
-        self.outline = None
+        self.outlines = []  # several floors (an L-shaped or split room): the room is their union
         for f in d.get("floors", []):
             corners = f.get("polygonCorners") or []
             if len(corners) >= 3:
                 t = _m(f["transform"])
                 c = np.array(corners, dtype=np.float64)[:, :2]
                 world = t[:3, 3] + c[:, :1] * t[:3, 0] + c[:, 1:2] * t[:3, 1]
-                self.outline = world[:, [0, 2]]
-                break
+                self.outlines.append(world[:, [0, 2]])
+        self.outline = self.outlines[0] if self.outlines else None
 
-    def inside(self, xz: np.ndarray, margin: float = 0.12) -> np.ndarray:
+    def inside(self, xz: np.ndarray, margin: float = 0.25) -> np.ndarray:
         """Which points (x, z) lie inside the floor outline or within `margin` of it. Without an
         outline, the walls' bounding box grown by `margin`."""
-        if self.outline is None:
+        if not self.outlines:
             lo, hi = self.lo - margin, self.hi + margin
             return (xz[:, 0] > lo[0]) & (xz[:, 0] < hi[0]) & (xz[:, 1] > lo[2]) & (xz[:, 1] < hi[2])
-        poly = self.outline
+        out = np.zeros(len(xz), bool)
+        for poly in self.outlines:
+            out |= self._in_poly(xz, poly, margin)
+        return out
+
+    @staticmethod
+    def _in_poly(xz: np.ndarray, poly: np.ndarray, margin: float) -> np.ndarray:
         x, z = xz[:, 0:1], xz[:, 1:2]
         a, b = poly[None, :, :], np.roll(poly, -1, 0)[None, :, :]
         ax, az, bx, bz = a[..., 0], a[..., 1], b[..., 0], b[..., 1]
@@ -122,11 +128,19 @@ class Room:
         return inside | (dist < margin)
 
 
-def level_offset(P: np.ndarray, F: np.ndarray, room: Room) -> float:
+MAX_LEVEL = 0.8  # metres: a bigger vertical correction means the floor was misread
+
+
+def level_offset(P: np.ndarray, F: np.ndarray, room: Room, info: dict | None = None) -> float:
     """How far to move the mesh up to put its floor on RoomPlan's (the ceiling cross-checks). The
     switch into the LiDAR pass can shift the world by tens of centimetres vertically, more than the
     fit's search band. The floor is the lowest strong peak of upward-facing area by height, the
-    ceiling the highest of downward-facing area. 0 when there's no clear floor."""
+    ceiling the highest of downward-facing area. 0 when there's no clear floor, when the shift would
+    exceed MAX_LEVEL, or when floor and ceiling disagree and the floor alone isn't solid. `info`
+    gets "notes" (for the processing warnings) and "confident" (a floor was found)."""
+    info = info if info is not None else {}
+    info.setdefault("notes", [])
+    info["confident"] = False
     if len(F) == 0:
         return 0.0
     A, B = P[F[:, 1]] - P[F[:, 0]], P[F[:, 2]] - P[F[:, 0]]
@@ -148,26 +162,38 @@ def level_offset(P: np.ndarray, F: np.ndarray, room: Room) -> float:
             return None
         i = strong[0] if lowest else strong[-1]
         near = mask & (np.abs(y - (edges[i] + 0.01)) < 0.03)
-        return float(np.median(y[near]))
+        return float(np.median(y[near])), float(area[near].sum())
 
     f, c = peak(ny > 0.9, True), peak(ny < -0.9, False)
-    df = room.floor_y - f if f is not None else None
-    dc = room.ceiling_y - c if c is not None else None
+    df = room.floor_y - f[0] if f is not None else None
+    dc = room.ceiling_y - c[0] if c is not None else None
     if df is None:
+        info["notes"].append("no clear floor in the mesh; not levelled")
         return 0.0
     if dc is not None and abs(df - dc) < 0.06:
-        return (df + dc) / 2
-    return df
+        off = (df + dc) / 2
+    elif dc is None:
+        off = df
+    elif abs(df) <= MAX_LEVEL and f[1] >= 1.0:
+        off = df
+    else:
+        info["notes"].append(f"mesh floor ({df:+.2f} m) and ceiling ({dc:+.2f} m) disagree; not levelled")
+        return 0.0
+    if abs(off) > MAX_LEVEL:
+        info["notes"].append(f"level offset {off:+.2f} m beyond {MAX_LEVEL} m; treated as no clear floor, not levelled")
+        return 0.0
+    info["confident"] = True
+    return off
 
 
-def fit_mesh(P: np.ndarray, room: Room, iterations: int = 10, F: np.ndarray | None = None) -> np.ndarray:
+def fit_mesh(P: np.ndarray, room: Room, iterations: int = 10, F: np.ndarray | None = None, info: dict | None = None) -> np.ndarray:
     """Point-to-plane least squares on yaw and shift, onto the walls and floor. Returns the 4x4.
     With the faces, it first levels the mesh's floor onto RoomPlan's."""
     rng = np.random.default_rng(1)
     Q = P[rng.choice(len(P), min(len(P), 80000), replace=False)]
     yaw, t = 0.0, np.zeros(3)
     if F is not None:
-        t[1] = level_offset(P, F, room)
+        t[1] = level_offset(P, F, room, info)
     for it in range(iterations):
         R = _rot_y(yaw, t)
         X = Q @ R[:3, :3].T + t
@@ -616,7 +642,10 @@ def spot_closeups(out: Path, P, F, frames: list, rd: dict, room: Room, objects: 
                 continue
             u["cands"].append(dict(fi=fi, geo=vis * facing ** 2 / dist * rel[fi], vis=vis, facing=facing, dist=dist,
                                    box=(x_[seen].min(), y_[seen].min(), x_[seen].max(), y_[seen].max())))
-    (out / "img" / "spots").mkdir(parents=True, exist_ok=True)
+    spots = out / "img" / "spots"
+    spots.mkdir(parents=True, exist_ok=True)
+    for old in spots.glob("*.jpg"):  # stale closeups from an earlier build of this folder
+        old.unlink()
     done = 0
     for i, u in enumerate(units):
         cands = sorted(u["cands"], key=lambda q: -q["geo"])[:6]
@@ -883,7 +912,9 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
                 fix = _yaw_translation(a @ np.linalg.inv(b))
                 report["undid_world_jump_m"] = round(float(np.linalg.norm(fix[:3, 3])), 2)
         P = P @ fix[:3, :3].T + fix[:3, 3]
-        fit = fit_mesh(P, room, F=F)
+        level: dict = {}
+        fit = fit_mesh(P, room, F=F, info=level)
+        warnings.extend(level.get("notes", []))
         P = P @ fit[:3, :3].T + fit[:3, 3]
         report["fit"] = {"yaw_deg": round(math.degrees(math.atan2(fit[0, 2], fit[0, 0])), 2),
                          "shift_m": [round(float(v), 3) for v in fit[:3, 3]]}
@@ -900,7 +931,7 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
             warnings.append("no usable frames (frames/ missing, empty, or all too dark): mesh written untextured")
         # Trim to the room.
         cen = P[F].mean(1)
-        keep = room.inside(cen[:, [0, 2]]) & (cen[:, 1] > room.floor_y - 0.1) & (cen[:, 1] < room.ceiling_y + 0.15)
+        keep = room.inside(cen[:, [0, 2]]) & (cen[:, 1] > room.floor_y - (0.1 if level.get("confident", True) else 0.3)) & (cen[:, 1] < room.ceiling_y + 0.15)
         report["outside_room_dropped"] = int((~keep).sum())
         F = F[keep]
         report["shelf_edges_confirmed_by_depth"] = confirm_shelves(P, F, rd, objects)
