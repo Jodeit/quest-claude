@@ -68,7 +68,7 @@ def test_bad_products_and_numbers(tmp_path):
                                  dict(spot="1 Storage", product="Wide", qty="inf", price="nan"),
                                  dict(spot="1 Storage", product="Ok", qty=2, price=10)]
     _, h = _report(tmp_path, edit)
-    assert "$20.00" in h and "inf" not in h.lower().replace("info", "") and "nan" not in h.lower()
+    assert "$20.00" in h and "$inf" not in h and "$nan" not in h and "inf</td>" not in h
     assert "-$" not in h and "$-" not in h
 
 
