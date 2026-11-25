@@ -56,6 +56,8 @@ final class ScanSession: ObservableObject, Identifiable {
     @Published private(set) var coverage: CoverageSnapshot?
     /// The capture hint of the moment (CaptureHints), before the coverage one.
     @Published private(set) var hint: String?
+    /// The photo-real pass's stop of the moment, for the ring (nil when not at one).
+    @Published private(set) var stop: StopProgress?
     /// Storage units of the room just saved, with what still needs a close-up or a tape.
     @Published private(set) var checklist: [UnitCheck] = []
 
@@ -86,6 +88,9 @@ final class ScanSession: ObservableObject, Identifiable {
         }
         controller.onHint = { [weak self] text in
             Task { @MainActor in if self?.hint != text { self?.hint = text } }
+        }
+        controller.onStop = { [weak self] progress in
+            Task { @MainActor in if self?.stop != progress { self?.stop = progress } }
         }
         controller.onCoverage = { [weak self] snapshot in
             Task { @MainActor in self?.coverage = snapshot }

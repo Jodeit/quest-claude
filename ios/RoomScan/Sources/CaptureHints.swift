@@ -123,6 +123,19 @@ struct CaptureHints {
 /// the stop) starts a stop with the next id, or the earlier id when it is back within 60 cm of an
 /// earlier stop; while it lasts, the heading is tracked in 30-degree sectors so the person
 /// can be told how far round they have turned. Frames kept during a stop carry its id.
+/// Where a stop stands, for the ring on the scan screen: the 30-degree sectors turned through (of
+/// `StopTracker.sectorCount`), whether the floor and the ceiling have been looked at, and the
+/// phone's heading now (radians, the same zero as the sectors).
+struct StopProgress: Equatable {
+    var id: Int
+    var sectors: Set<Int>
+    var up: Bool
+    var down: Bool
+    var yaw: Float
+    var percent: Int
+    var complete: Bool
+}
+
 struct StopTracker {
     private(set) var stopId = 0
     private(set) var inStop = false
@@ -132,6 +145,7 @@ struct StopTracker {
     private var sectors = Set<Int>()
     private var sweptUp = false
     private var sweptDown = false
+    private var yaw: Float = 0
     private var offLevel = 0
     private var tiltHintShown = false
     private var tiltHintUntil: TimeInterval = 0
@@ -141,8 +155,17 @@ struct StopTracker {
 
     /// Share of the full turn covered so far, 0...100.
     var percent: Int { Swift.min(100, sectors.count * 100 / StopTracker.sectorCount) }
-    /// 300 degrees (ten sectors) covered.
-    var complete: Bool { sectors.count >= 10 }
+    /// 300 degrees (ten sectors) turned through, and the floor and ceiling looked at: the 360 view
+    /// at a spot invents whatever its photos missed, and the floor around the feet is the usual gap.
+    var turned: Bool { sectors.count >= 10 }
+    var complete: Bool { turned && sweptUp && sweptDown }
+
+    /// The ring's state, nil when not at a stop.
+    var progress: StopProgress? {
+        guard inStop else { return nil }
+        return StopProgress(id: stopId, sectors: sectors, up: sweptUp, down: sweptDown, yaw: yaw, percent: percent,
+                            complete: complete)
+    }
 
     mutating func reset() {
         stopId = 0
@@ -193,6 +216,7 @@ struct StopTracker {
             inStop = true
         }
         let yp = StopTracker.yawPitch(pose)
+        yaw = yp.yaw
         if yp.pitch > StopTracker.levelLimit {
             sweptUp = true
             offLevel += 1
@@ -214,6 +238,11 @@ struct StopTracker {
     func message(time: TimeInterval) -> String? {
         guard inStop else { return nil }
         if complete { return "Good. Walk to the next spot, about 4 steps" }
+        if turned {
+            let missing = [sweptDown ? nil : "down at the floor round your feet", sweptUp ? nil : "up at the ceiling"]
+                .compactMap { $0 }.joined(separator: " and ")
+            return "All the way round. Now tilt \(missing)."
+        }
         if time < tiltHintUntil { return "Tilt up a little to catch the ceiling and down for the floor." }
         return "Turn slowly on the spot: \(percent)% around"
     }

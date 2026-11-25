@@ -81,7 +81,15 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
 - **Coloring in:** while scanning, the parts of the walls no kept frame has photographed yet show in
   black and white over the live camera, and colour in as frames cover them (about 15 times a second:
   the uncovered 30 cm cells from the coverage, projected onto the screen as a mask over a grayscale
-  copy of the camera frame). The half-circle button on the scan screen turns it off.
+  copy of the camera frame). The floor within 2 m of the phone colours in the same way, once a kept
+  photo has seen it from above: the twin's 360 views make up any floor no photo saw by copying
+  floor that was seen, which is where they go wrong (a seated scan left most of the floor round the
+  chair unseen). Under 60% seen, the hint says to tip the phone down and sweep it. The half-circle
+  button on the scan screen turns it off.
+- **Stop ring:** in the photo-real pass, standing at a spot shows a ring that turns with the phone,
+  its twelve 30-degree sectors going green as you turn, with Floor and Ceiling marks that tick
+  once you have tilted down and up. A spot is done at 300 degrees round *and* both tilts; until the
+  tilts, the hint asks for whichever is missing.
 - **Shelves:** RoomPlan gives a storage unit as one box. The elevation pass also projects the frames onto
   each storage unit's front face, to scale, where every shelf edge is a horizontal line at its true
   height; rows where brightness jumps across a quarter of the width or more, 8 cm apart, are taken as

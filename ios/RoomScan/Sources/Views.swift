@@ -252,6 +252,12 @@ struct ScanScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .allowsHitTesting(false)
             }
+            if session.meshPassRunning, let stop = session.stop {
+                StopRing(progress: stop)
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .allowsHitTesting(false)
+            }
             VStack(spacing: 10) {
                 Text(title).font(.headline)
                 Text("\(session.counts.walls) walls · \(session.counts.doors) doors · "

@@ -15,6 +15,8 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     var onShutter: (() -> Void)?
     var onCoverage: ((CoverageSnapshot) -> Void)?
     var onHint: ((String?) -> Void)?
+    /// The photo-real pass's stop of the moment (nil when not at one), for the ring.
+    var onStop: ((StopProgress?) -> Void)?
     private var hints = CaptureHints()
     private var look: CaptureHints.Look?
     private var lookTime = Date.distantPast
@@ -188,6 +190,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         meshView?.removeFromSuperview()
         meshView = nil
         stops.endStop()
+        onStop?(nil)
         pruneMeshFrames()
         return mesh
     }
@@ -329,6 +332,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
             }
             stopHint = stops.message(time: frame.timestamp)
         }
+        onStop?(meshPass ? stops.progress : nil)
         let text = hints.hint(frame: frame, look: look, blurrySkipsRecently: blurrySkipTimes.count,
                               room: meshPass ? nil : latestRoom, keyframes: keyframes.map { $0.0 }, meshPass: meshPass,
                               inStop: meshPass && stops.inStop, stopHint: stopHint)
@@ -362,6 +366,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
               let room = latestRoom, let pose = lastPoll, let jump = meshJump, let mesh = LiDARMesh.harvest(arSession) else { return }
         computingCoverage = true
         lastCoverage = Date()
+        let frames = keyframes.map { $0.0 }
         Task {
             let snapshot = await Task.detached(priority: .utility) { () -> CoverageSnapshot in
                 // Undo the switch's jump, then level the floor onto RoomPlan's: the jump can leave
@@ -373,7 +378,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                 let dy = m.levelOffset(floorY: floorY, ceilingY: ceilingY)
                 let stride = Swift.max(1, m.positions.count / 120_000)
                 let points = Swift.stride(from: 0, to: m.positions.count, by: stride).map { m.positions[$0] + SIMD3<Float>(0, dy, 0) }
-                return Coverage.fromMesh(room: room, points: points, camera: pose)
+                return Coverage.fromMesh(room: room, points: points, frames: frames, camera: pose)
             }.value
             computingCoverage = false
             if meshPass {

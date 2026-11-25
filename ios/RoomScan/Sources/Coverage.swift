@@ -27,6 +27,9 @@ struct CoverageSnapshot {
     var hint: String?
     var weakWalls: Int         // longer than 60 cm and under 70% covered
     var label = "Wall photos"  // what the percentage is of
+    /// Share of the floor within 2 m of the phone that some kept photo has seen, nil before any floor
+    /// is known. The 360 views fill unseen floor by copying seen floor, which is where they go wrong.
+    var floorNear: Float?
 }
 
 enum Coverage {
@@ -70,6 +73,9 @@ enum Coverage {
                                fraction: Float(covered) / Float(nu * nv)))
         }
 
+        let floor = floorCells(room: room, cams: cams, around: camPos)
+        cells += floor.cells
+
         let total = walls.reduce(Float(0)) { $0 + $1.length }
         let overall = total > 0 ? walls.reduce(Float(0)) { $0 + $1.fraction * $1.length } / total : 0
         // Tuned on a real scan: walls about 70% covered already showed clear gray gaps.
@@ -78,18 +84,21 @@ enum Coverage {
         if let worst = walls.filter({ $0.length > 0.6 && $0.fraction < 0.85 }).min(by: { $0.fraction < $1.fraction }) {
             hint = "Point at the red wall \(direction(of: (worst.a + worst.b) / 2, from: flatCam, heading: heading)) "
                 + "(\(Int(worst.fraction * 100))%)"
+        } else if let f = floor.fraction, f < floorHintBelow {
+            hint = floorHint
         } else if !walls.isEmpty {
             hint = "Every wall is well covered."
         }
         return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
-                                weakWalls: weak.count)
+                                weakWalls: weak.count, floorNear: floor.fraction)
     }
 
     /// For the photo-real pass: how much of each RoomPlan wall the LiDAR mesh has reached, on a 10 cm
     /// grid (a cell counts once a mesh vertex lies within 6 cm of the wall there; doors, windows and
     /// openings left out). On a real scan the closet walls came out 66-83% covered while the main walls
     /// were 86-100%: this is what points the scanner back at them. `points` in RoomPlan's coordinates.
-    static func fromMesh(room: CapturedRoom, points: [SIMD3<Float>], camera: simd_float4x4) -> CoverageSnapshot {
+    /// The floor around the phone is judged from the kept photos (`frames`), as in `compute`.
+    static func fromMesh(room: CapturedRoom, points: [SIMD3<Float>], frames: [Keyframe], camera: simd_float4x4) -> CoverageSnapshot {
         let camPos = simd_make_float3(camera.columns.3)
         let flatCam = SIMD2(camPos.x, camPos.z)
         var heading = SIMD2(-camera.columns.2.x, -camera.columns.2.z)
@@ -133,17 +142,84 @@ enum Coverage {
             walls.append(.init(id: i, a: SIMD2(left.x, left.z), b: SIMD2(right.x, right.z), length: f.width,
                                fraction: counted > 0 ? Float(covered) / Float(counted) : 1))
         }
+        let floor = floorCells(room: room, cams: frames.map(Cam.init), around: camPos)
+        cells += floor.cells
         let total = walls.reduce(Float(0)) { $0 + $1.length }
         let overall = total > 0 ? walls.reduce(Float(0)) { $0 + $1.fraction * $1.length } / total : 0
         var hint: String?
         if let worst = walls.filter({ $0.length > 0.6 && $0.fraction < 0.85 }).min(by: { $0.fraction < $1.fraction }) {
             hint = "Fill in the wall \(direction(of: (worst.a + worst.b) / 2, from: flatCam, heading: heading)): "
                 + "the 3D scan has gaps there (\(Int(worst.fraction * 100))%). Go closer, into corners and shelves."
+        } else if let f = floor.fraction, f < floorHintBelow {
+            hint = floorHint
         } else if !walls.isEmpty {
             hint = "The walls are well covered. Sweep any shelves and furniture you'll want to measure, then Finish."
         }
         return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
-                                weakWalls: walls.filter { $0.length > 0.6 && $0.fraction < 0.7 }.count, label: "3D scan")
+                                weakWalls: walls.filter { $0.length > 0.6 && $0.fraction < 0.7 }.count, label: "3D scan",
+                                floorNear: floor.fraction)
+    }
+
+    private static let floorReach: Float = 2
+    private static let floorHintBelow: Float = 0.6
+    private static let floorHint = "Tip the phone down and sweep the floor around you: it stays gray until a photo has seen it."
+
+    /// 30 cm floor cells within `floorReach` of the phone (inside RoomPlan's floor outline, or the
+    /// walls' box when there is none), each covered once a kept frame saw it from above; and the
+    /// covered share, nil when there are no cells.
+    private static func floorCells(room: CapturedRoom, cams: [Cam], around camPos: SIMD3<Float>)
+        -> (cells: [CoverageSnapshot.Cell], fraction: Float?) {
+        guard !room.walls.isEmpty else { return ([], nil) }
+        let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
+        var outlines: [[SIMD2<Float>]] = []
+        for f in room.floors where f.polygonCorners.count >= 3 {
+            let t = f.transform
+            let o = simd_make_float3(t.columns.3), ax = simd_make_float3(t.columns.0), ay = simd_make_float3(t.columns.1)
+            outlines.append(f.polygonCorners.map { c in
+                let w = o + c.x * ax + c.y * ay
+                return SIMD2(w.x, w.z)
+            })
+        }
+        var lo = SIMD2<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = -lo
+        for w in room.walls {
+            let c = simd_make_float3(w.transform.columns.3), x = simd_make_float3(w.transform.columns.0)
+            for e in [c - x * w.dimensions.x / 2, c + x * w.dimensions.x / 2] {
+                lo = simd_min(lo, SIMD2(e.x, e.z)); hi = simd_max(hi, SIMD2(e.x, e.z))
+            }
+        }
+        func inside(_ p: SIMD2<Float>) -> Bool {
+            if outlines.isEmpty { return p.x > lo.x && p.x < hi.x && p.y > lo.y && p.y < hi.y }
+            return outlines.contains { poly in
+                var inPoly = false
+                var j = poly.count - 1
+                for i in 0..<poly.count {
+                    let a = poly[i], b = poly[j]
+                    if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x { inPoly.toggle() }
+                    j = i
+                }
+                return inPoly
+            }
+        }
+        let up = SIMD3<Float>(0, 1, 0)
+        let n = Int(ceil(floorReach / cell))
+        let gx = (camPos.x / cell).rounded(.down), gz = (camPos.z / cell).rounded(.down)
+        var cells: [CoverageSnapshot.Cell] = []
+        var covered = 0
+        for i in -n...n {
+            for j in -n...n {
+                let x0 = (gx + Float(i)) * cell, z0 = (gz + Float(j)) * cell
+                let mid = SIMD2(x0 + cell / 2, z0 + cell / 2)
+                guard simd_distance(mid, SIMD2(camPos.x, camPos.z)) < floorReach, inside(mid) else { continue }
+                let p = SIMD3(mid.x, floorY, mid.y)
+                let seen = cams.contains { $0.sees(p, normal: up) }
+                if seen { covered += 1 }
+                let y = floorY + 0.01  // a hair above the floor, so it's drawn over it
+                cells.append(.init(corners: [SIMD3(x0, y, z0), SIMD3(x0 + cell, y, z0),
+                                             SIMD3(x0 + cell, y, z0 + cell), SIMD3(x0, y, z0 + cell)], covered: seen))
+            }
+        }
+        return (cells, cells.isEmpty ? nil : Float(covered) / Float(cells.count))
     }
 
     /// "ahead", "to your left", "to your right" or "behind you", as the phone points now.
@@ -229,5 +305,66 @@ struct CoverageMap: View {
         }
         .padding(8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+/// The photo-real pass's stop as a ring that turns with the phone (the way it points is up): the
+/// 30-degree sectors already photographed in green, and whether the floor and ceiling have been
+/// looked at. Done only when all three are.
+struct StopRing: View {
+    let progress: StopProgress
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Canvas { ctx, size in
+                    let n = StopTracker.sectorCount
+                    let mid = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let radius = Swift.min(size.width, size.height) / 2 - 7
+                    // Same top view as the coverage map (x right, z down the screen), turned so the
+                    // phone's heading points up. A yaw of y faces (sin y, cos y) there.
+                    let h = SIMD2(sin(progress.yaw), cos(progress.yaw))
+                    let phi = -Float.pi / 2 - atan2(h.y, h.x)
+                    let cs = cos(phi), sn = sin(phi)
+                    let half = Angle.degrees(180 / Double(n) - 2)
+                    for s in 0..<n {
+                        let yaw = (Float(s) + 0.5) / Float(n) * 2 * Float.pi - Float.pi
+                        let d = SIMD2(sin(yaw), cos(yaw))
+                        let r = SIMD2(cs * d.x - sn * d.y, sn * d.x + cs * d.y)
+                        let a = Angle.radians(Double(atan2(r.y, r.x)))
+                        var arc = Path()
+                        arc.addArc(center: mid, radius: radius, startAngle: a - half, endAngle: a + half, clockwise: false)
+                        let done = progress.sectors.contains(s)
+                        ctx.stroke(arc, with: .color(done ? .green : .white.opacity(0.3)),
+                                   style: StrokeStyle(lineWidth: 10, lineCap: .butt))
+                    }
+                    var wedge = Path()
+                    wedge.move(to: CGPoint(x: mid.x, y: mid.y - radius + 9))
+                    wedge.addLine(to: CGPoint(x: mid.x - 7, y: mid.y - radius + 22))
+                    wedge.addLine(to: CGPoint(x: mid.x + 7, y: mid.y - radius + 22))
+                    wedge.closeSubpath()
+                    ctx.fill(wedge, with: .color(.white))
+                }
+                VStack(spacing: 0) {
+                    Text("Spot \(progress.id)").font(.caption2.weight(.semibold))
+                    Text(progress.complete ? "Done" : "\(progress.percent)%").font(.caption.weight(.bold))
+                        .foregroundStyle(progress.complete ? Color.green : Color.primary)
+                }
+            }
+            .frame(width: 110, height: 110)
+            HStack(spacing: 8) {
+                Label("Floor", systemImage: progress.down ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .foregroundStyle(progress.down ? Color.green : Color.primary)
+                Label("Ceiling", systemImage: progress.up ? "checkmark.circle.fill" : "arrow.up.circle")
+                    .foregroundStyle(progress.up ? Color.green : Color.primary)
+            }
+            .font(.caption2.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+        }
+        .padding(8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Spot \(progress.id): \(progress.percent)% of the way round, floor \(progress.down ? "done" : "not yet"), "
+                            + "ceiling \(progress.up ? "done" : "not yet")")
     }
 }
