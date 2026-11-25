@@ -214,6 +214,10 @@ def test_select_nodes_clusters_spacing_stops_and_cap():
     nodes = select_nodes(frames, room)
     assert nodes[0]["stop"] == 7 and np.allclose(nodes[0]["position"], (0, 1.6, -1.0))
     assert len(select_nodes(frames, room, max_nodes=1)) == 1
+    # Stops a few tens of centimetres apart (one seated spot, the phone moved about) are one node.
+    seated = [_Stub((0.1 * (s % 3), 1.2 + 0.2 * (s % 2), 0.1 * (s % 2)), s, stop=s) for s in range(1, 6)]
+    nodes = select_nodes(seated, room)
+    assert len(nodes) == 1 and nodes[0]["stop"] == 1 and len(nodes[0]["frames"]) == 5
     # No frames: no nodes; one lone frame: one node.
     assert select_nodes([], room) == []
     assert len(select_nodes([_Stub((0, 1.5, 0), 0)], room)) == 1

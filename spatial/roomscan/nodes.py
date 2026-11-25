@@ -360,9 +360,18 @@ def select_nodes(frames: list, room, spacing: float = 1.2, max_nodes: int = 8, r
         s = f.k.get("stop")
         if isinstance(s, (int, np.integer)) and not isinstance(s, bool):
             stops.setdefault(int(s), []).append(i)
-    for s in sorted(stops)[:max_nodes]:
+    # Stops closer than half the spacing are one spot: sitting or standing still while raising,
+    # lowering or swinging the phone round at arm's length ends and restarts stops in the app.
+    for s in sorted(stops):
         idx = stops[s]
-        nodes.append(dict(position=np.median(pos[idx], 0), frames=idx, stop=s))
+        p = np.median(pos[idx], 0)
+        near = [n for n in nodes if np.linalg.norm(n["position"][[0, 2]] - p[[0, 2]]) < spacing / 2]
+        if near:
+            n = near[0]
+            n["frames"] = n["frames"] + idx
+            n["position"] = np.median(pos[n["frames"]], 0)
+        elif len(nodes) < max_nodes:
+            nodes.append(dict(position=p, frames=idx, stop=s))
     free = np.array([not isinstance(f.k.get("stop"), (int, np.integer)) or isinstance(f.k.get("stop"), bool) for f in frames])
     score = np.zeros(len(frames))
     for i in range(len(frames)):

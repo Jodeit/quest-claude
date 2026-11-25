@@ -118,13 +118,16 @@ struct CaptureHints {
     }
 }
 
-/// Matterport-style stops for the photo-real pass: standing still (under 25 cm for 1.5 s) starts a
-/// stop with the next id; while it lasts, the heading is tracked in 30-degree sectors so the person
+/// Matterport-style stops for the photo-real pass: staying put (under 45 cm across the floor for
+/// 1.5 s; height is ignored, so raising, lowering or swinging the phone round at arm's length keeps
+/// the stop) starts a stop with the next id, or the earlier id when it is back within 60 cm of an
+/// earlier stop; while it lasts, the heading is tracked in 30-degree sectors so the person
 /// can be told how far round they have turned. Frames kept during a stop carry its id.
 struct StopTracker {
     private(set) var stopId = 0
     private(set) var inStop = false
     private var anchor: SIMD3<Float>?
+    private var stopSpots: [(id: Int, at: SIMD2<Float>)] = []
     private var anchorTime: TimeInterval = 0
     private var sectors = Set<Int>()
     private var sweptUp = false
@@ -145,6 +148,7 @@ struct StopTracker {
         stopId = 0
         endStop()
         anchor = nil
+        stopSpots = []
     }
 
     mutating func endStop() {
@@ -171,7 +175,7 @@ struct StopTracker {
             anchorTime = time
             return
         }
-        if simd_distance(a, pos) > 0.25 {
+        if simd_distance(SIMD2(a.x, a.z), SIMD2(pos.x, pos.z)) > 0.45 {
             if inStop { endStop() }
             anchor = pos
             anchorTime = time
@@ -179,7 +183,13 @@ struct StopTracker {
         }
         if !inStop {
             guard time - anchorTime >= 1.5 else { return }
-            stopId += 1
+            let here = SIMD2(a.x, a.z)
+            if let back = stopSpots.first(where: { simd_distance($0.at, here) < 0.6 }) {
+                stopId = back.id
+            } else {
+                stopId = (stopSpots.map(\.id).max() ?? 0) + 1
+                stopSpots.append((stopId, here))
+            }
             inStop = true
         }
         let yp = StopTracker.yawPitch(pose)
