@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from roomscan.nodes import SLOTS, build_nodes, face_dirs, select_nodes
+from roomscan.nodes import SLOTS, build_nodes, face_dirs, fill_texture, select_nodes
 from roomscan.twin import Frame, Room, build_twin, publish_files
 
 LO, HI = np.array([-2.0, 0.0, -1.5]), np.array([2.0, 2.5, 1.5])
@@ -312,3 +312,20 @@ def test_operator_feet_are_not_used_and_quality_is_reported(tmp_path):
     _, nodes, summary = _build(tmp_path, ks, face_px=64, depth_px=32)
     q = summary["quality"][0]
     assert q["id"] == nodes[0]["id"] and set(q) >= {"seam_ratio", "ghost_risk", "blended", "depth_risk"}
+
+
+def test_floor_fill_copies_floor_not_objects_standing_on_it():
+    # A checker floor, an unseen hole at the top and a dark table foot at floor depth lower down:
+    # the hole gets checker, never the foot.
+    N = 128
+    yy, xx = np.mgrid[0:N, 0:N]
+    img = np.where(((yy // 8 + xx // 8) % 2)[..., None] == 0, [235.0, 190.0, 110.0], [245.0, 245.0, 240.0]).astype(np.float32)
+    foot = (np.hypot(yy - 100, xx - 64) < 10)
+    img[foot] = (60.0, 50.0, 45.0)
+    seen = yy >= 48
+    cls = np.ones((N, N), np.int8)
+    smooth = np.full((N, N, 3), 200.0, np.float32)
+    out = fill_texture(img, seen, cls, smooth)
+    hole = out[:40]
+    assert (hole.sum(-1) > 400).all()  # nothing dark copied up
+    assert hole.std() > 20  # and texture, not a flat fill

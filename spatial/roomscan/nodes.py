@@ -523,6 +523,33 @@ def _resize(a, n: int) -> np.ndarray:
     return a[:, i0] * (1 - w).reshape(sh) + a[:, i1] * w.reshape(sh)
 
 
+def _floor_like(img: np.ndarray, floor: np.ndarray) -> np.ndarray:
+    """Which floor pixels look like the floor around them, judged over a window (N/16 px) wide enough
+    that a tile or plank pattern averages out: local mean colour and detail (luminance spread) near
+    the seen floor's typical values. Depth alone calls anything standing on the floor and missed by
+    the mesh (a table's foot, a thin pole, the scanner's own shoes) floor, and copying it into the
+    holes repeats it across the face."""
+    if floor.sum() < 64:
+        return floor.copy()
+    r = max(2, img.shape[0] // 16)
+    w = _box(floor.astype(np.float32), r)
+    wd = np.maximum(w, 1e-6)
+    m = _box(img * floor[..., None], r) / wd[..., None]
+    Y = img @ np.array([0.299, 0.587, 0.114], np.float32)
+    sd = np.sqrt(np.maximum(_box(Y * Y * floor, r) / wd - (_box(Y * floor, r) / wd) ** 2, 0))
+    good = floor & (w > 0.3)
+    if good.sum() < 64:
+        return floor.copy()
+    med = np.median(m[good], 0)
+    dc = np.linalg.norm(m - med, axis=-1)
+    tol_c = max(3 * 1.4826 * float(np.median(dc[good])), 14.0)
+    sm = float(np.median(sd[good]))
+    tol_s = max(3 * 1.4826 * float(np.median(np.abs(sd[good] - sm))), 8.0)
+    odd = floor & ~((dc <= tol_c) & (np.abs(sd - sm) <= tol_s))
+    # Keep clear of anything odd: an object's pale parts pass the test, its dark parts don't.
+    return floor & (_box(odd.astype(np.float32), r // 2) < 1e-3)
+
+
 def fill_texture(img: np.ndarray, seen: np.ndarray, cls: np.ndarray, smooth: np.ndarray) -> np.ndarray:
     """Fill unseen pixels. Floor holes (the spot under the node nobody photographed, the floor behind
     furniture) get texture copied from seen floor, not a blur: block by block (N/32 px), the
@@ -534,7 +561,9 @@ def fill_texture(img: np.ndarray, seen: np.ndarray, cls: np.ndarray, smooth: np.
     out = np.where(seen[..., None], img, smooth)
     hole = ~seen & (cls == 1)
     # Sources well inside the seen floor: its rim is where frames disagree and skirting boards bleed.
-    src = _box(seen & (cls == 1), max(1, N // 64)) > 0.999
+    floor = seen & (cls == 1)
+    src = _box(floor, max(1, N // 64)) > 0.999
+    src &= _floor_like(img, floor)
     B = max(2, N // 32)
     if not hole.any() or not src.any() or N % B:
         return out
