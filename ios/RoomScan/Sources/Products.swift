@@ -109,6 +109,22 @@ final class Catalog: ObservableObject {
 
     var newProducts: [CatalogProduct] { products.filter { $0.isNew == true } }
 
+    /// The catalog's price for a product name, matched exactly as the calculator does (nil when the
+    /// name isn't in the catalog or has no price).
+    func price(for name: String) -> Double? {
+        for p in products where p.name == name { return p.price }
+        return nil
+    }
+
+    /// Prices by exact product name, for pricing many lines at once.
+    var priceTable: [String: Double] {
+        var table: [String: Double] = [:]
+        for p in products {
+            if let v = p.price { table[p.name] = v }
+        }
+        return table
+    }
+
     /// Rows for the calculator's master product tab: Product, Unit Price, Store, URL.
     func masterListRows(_ list: [CatalogProduct]) -> String {
         list.map { [$0.name, $0.price.map { String(format: "%.2f", $0) } ?? "", $0.store ?? "", $0.url ?? ""]
@@ -175,6 +191,44 @@ enum ProductExport {
     static func calculatorRows(_ lines: [ProductLine], room: String, names: [String: String] = [:]) -> String {
         lines.map { [$0.calculatorLocation(room: room, names: names), $0.product, "", String($0.qty)].joined(separator: "\t") }
             .joined(separator: "\n")
+    }
+
+    /// RFC 4180 field: quoted only when it holds a comma, quote, or line break; quotes doubled.
+    static func csvField(_ s: String) -> String {
+        let needs = s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")
+        guard needs else { return s }
+        return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    }
+
+    /// The calculator's four columns, exactly: Location, Product, Price, Qty in Home. One row per
+    /// product per location, sorted by location (then product). Price is the catalog's price for the
+    /// exact product name, empty when the name isn't priced. CRLF line endings per RFC 4180.
+    static func calculatorCSV(_ lines: [ProductLine], room: String, names: [String: String] = [:],
+                              prices: [String: Double]) -> String {
+        var rows: [(String, String, String, Int)] = []
+        for l in lines {
+            let loc = l.calculatorLocation(room: room, names: names)
+            let price = prices[l.product].map { String(format: "%.2f", $0) } ?? ""
+            rows.append((loc, l.product, price, l.qty))
+        }
+        rows.sort { a, b in
+            if a.0 != b.0 { return a.0.localizedStandardCompare(b.0) == .orderedAscending }
+            return a.1.localizedStandardCompare(b.1) == .orderedAscending
+        }
+        var out = ["Location,Product,Price,Qty in Home"]
+        for r in rows {
+            out.append([csvField(r.0), csvField(r.1), r.2, String(r.3)].joined(separator: ","))
+        }
+        return out.joined(separator: "\r\n") + "\r\n"
+    }
+
+    /// Subtotal of lines with a catalog price (price x qty); unpriced names add nothing.
+    static func subtotal(_ lines: [ProductLine], prices: [String: Double]) -> Double {
+        var sum = 0.0
+        for l in lines {
+            if let p = prices[l.product] { sum += p * Double(l.qty) }
+        }
+        return sum
     }
 
     static func csv(_ lines: [ProductLine], room: String, names: [String: String] = [:]) -> String {

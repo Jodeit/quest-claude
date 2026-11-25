@@ -43,7 +43,18 @@ struct ProductsView: View {
                     Section(FloorPlanPDF.shown(loc, names)) {
                         ForEach(lines.filter { $0.location == loc }) { line in
                             HStack {
-                                Text(line.product).font(.subheadline)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(line.product).font(.subheadline)
+                                    if isUnpriced(line) {
+                                        Label("No catalog price: fix the exact name", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                    } else if let p = priceTable[line.product] {
+                                        Text(money(p * Double(line.qty)))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                                 Spacer()
                                 Stepper("\(line.qty)", value: qtyBinding(line.id), in: 1...999)
                                     .fixedSize()
@@ -53,6 +64,27 @@ struct ProductsView: View {
                             let ids = offsets.map { lines.filter { $0.location == loc }[$0].id }
                             lines.removeAll { ids.contains($0.id) }
                             save()
+                        }
+                        HStack {
+                            Text("Subtotal").font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(money(ProductExport.subtotal(lines.filter { $0.location == loc }, prices: priceTable)))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                }
+                if !lines.isEmpty {
+                    Section {
+                        HStack {
+                            Text("Total").font(.headline)
+                            Spacer()
+                            Text(money(ProductExport.subtotal(lines, prices: priceTable))).font(.headline)
+                        }
+                        if unpricedCount > 0 {
+                            Text("\(unpricedCount) product\(unpricedCount == 1 ? "" : "s") without a catalog price "
+                                 + "left out of the totals.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
                         }
                     }
                 }
@@ -145,9 +177,23 @@ struct ProductsView: View {
 
     private func save() { library.setProducts(lines, for: scan) }
 
+    private var priceTable: [String: Double] { catalog.priceTable }
+
+    /// Flagged only once a catalog is loaded; with none, every name would be flagged.
+    private func isUnpriced(_ line: ProductLine) -> Bool {
+        !catalog.products.isEmpty && priceTable[line.product] == nil
+    }
+
+    private var unpricedCount: Int {
+        catalog.products.isEmpty ? 0 : lines.filter { priceTable[$0.product] == nil }.count
+    }
+
+    private func money(_ v: Double) -> String { String(format: "$%.2f", v) }
+
     private func writeCSV() -> URL? {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(scan.id)-products.csv")
-        guard (try? ProductExport.csv(lines, room: scan.name, names: names).write(to: url, atomically: true, encoding: .utf8)) != nil
+        let text = ProductExport.calculatorCSV(lines, room: scan.name, names: names, prices: priceTable)
+        guard (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil
         else { return nil }
         return url
     }
