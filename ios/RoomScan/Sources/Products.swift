@@ -114,6 +114,20 @@ final class Catalog: ObservableObject {
         return nil
     }
 
+    /// The saved catalog's prices, read straight from disk, for code that has no Catalog object (the
+    /// PDF, drawn from the library): the same table the products screen and CSV use.
+    static func storedPriceTable() -> [String: Double] {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("catalog.json")
+        guard let data = try? Data(contentsOf: url),
+              let list = try? JSONDecoder().decode([CatalogProduct].self, from: data) else { return [:] }
+        var table: [String: Double] = [:]
+        for p in list {
+            if let v = p.price { table[p.name] = v }
+        }
+        return table
+    }
+
     /// Prices by exact product name, for pricing many lines at once.
     var priceTable: [String: Double] {
         var table: [String: Double] = [:]

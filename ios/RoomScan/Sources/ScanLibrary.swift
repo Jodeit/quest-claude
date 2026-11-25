@@ -195,7 +195,8 @@ final class ScanLibrary: ObservableObject {
         guard !made.isEmpty else { return }
         try? FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
                                 elevations: elevations(for: s), products: products(for: s), names: names(for: s),
-                                fronts: storageFronts(for: s), measured: measurements(for: s), to: planURL(s))
+                                fronts: storageFronts(for: s), measured: measurements(for: s),
+                                prices: Catalog.storedPriceTable(), to: planURL(s))
     }
 
     /// The scan's photos with their files, in the order they were taken.
@@ -214,7 +215,8 @@ final class ScanLibrary: ObservableObject {
             let room = try JSONDecoder().decode(CapturedRoom.self, from: json(for: s))
             try FloorPlanPDF.write(room, name: s.name, date: s.date, photos: photos(for: s),
                                    elevations: elevations(for: s), products: products(for: s), names: names(for: s),
-                                   fronts: storageFronts(for: s), measured: measurements(for: s), to: url)
+                                   fronts: storageFronts(for: s), measured: measurements(for: s),
+                                   prices: Catalog.storedPriceTable(), to: url)
         }
         return url
     }
