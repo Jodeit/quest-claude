@@ -16,6 +16,10 @@ The LiDAR mesh, when the scan has one, is processed the way photogrammetry tools
     it's the nearest surface (a depth buffer per frame), with each frame's exposure evened out
     against the frames it overlaps (gain compensation, as in MVS texturing and panorama stitching);
   - shrunk for the web by vertex clustering, colours averaged per vertex.
+
+360 view nodes (nodes.py): standing spots picked from the frames, each with a six-face cube panorama
+re-rendered from the textured mesh (img/nodes/<id>_<slot>.jpg), listed in twin.json `nodes` for a
+photo-hop tour; processing.nodes.convention says how three.js should load them.
 """
 
 from __future__ import annotations
@@ -755,7 +759,8 @@ def write_textured_mesh(out: Path, P, F, choice, frames: list, room: "Room", wid
                 frames=len(names), groups=groups)
 
 
-def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = True, only: str | None = None) -> dict:
+def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = True, only: str | None = None,
+               node_px: int = 1024) -> dict:
     bundle, out = Path(bundle), Path(out)
     if bundle.suffix == ".zip":
         import tempfile
@@ -899,6 +904,7 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
 
     # The mesh.
     mesh_out = None
+    nodes_out: list = []
     if (bundle / "mesh.bin").exists():
         P, F = read_mesh(bundle / "mesh.bin")
         report["mesh_in"] = {"vertices": len(P), "triangles": len(F)}
@@ -962,6 +968,10 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
             mesh_out = dict(file="mesh.b64.txt", vertices=len(P2), triangles=int(len(F2)), ceiling_triangles=int(ceiling.sum()))
         report["mesh_out"] = mesh_out
         report["closeups"] = spot_closeups(out, P, F, frames, rd, room, objects)
+        if frames:  # 360 view nodes: cube panoramas from the standing spots (see nodes.py)
+            from .nodes import build_nodes
+
+            nodes_out, report["nodes"] = build_nodes(out, P2, F2, frames, room, face_px=node_px)
 
     if mesh_out is None:
         for i, o in enumerate(rd.get("objects", [])):
@@ -975,6 +985,7 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
         floor_y=room.floor_y, ceiling_y=room.ceiling_y, centre=room.centre.tolist(),
         bounds=[room.lo.tolist(), room.hi.tolist()],
         walls=walls, openings=holes, objects=objects, floor=floor_out, photos=photo_out, mesh=mesh_out,
+        nodes=nodes_out,
         seed=dict(names=names, products=products, measured=measured), processing=report,
     )
     (out / "twin.json").write_text(json.dumps(twin, separators=(",", ":"), default=float))
