@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import math
 import mimetypes
 from datetime import datetime
 from pathlib import Path
@@ -17,9 +18,12 @@ DIMS = (("width", 0), ("height", 1), ("depth", 2))  # twin size is [w, h, d] in 
 
 def fmt_in(inches: float | None) -> str:
     """Feet and inches to the half inch: 30.4 -> 2' 6½\""""
-    if inches is None:
+    if inches is None or not math.isfinite(inches):
         return "–"
-    half = round(abs(inches) * 2)
+    try:
+        half = round(abs(inches) * 2)
+    except OverflowError:
+        return "–"
     ft, rem = divmod(half, 24)
     whole, h = divmod(rem, 2)
     s = (f"{ft}' " if ft else "") + f"{whole}" + ("½" if h else "") + '"'
@@ -72,23 +76,30 @@ def _pretty_date(s) -> str:
 
 
 def unit_name(o: dict, names: dict) -> str:
-    n = str(o["key"]).split(" ", 1)
-    auto = f"{o.get('label') or n[-1]} {n[0]}" if n[0].isdigit() and len(n) > 1 else (o.get("label") or o["key"])
-    return o.get("name") or names.get(o["key"]) or auto
+    key = str(o.get("key", ""))
+    n = key.split(" ", 1)
+    auto = f"{o.get('label') or n[-1]} {n[0]}" if n[0].isdigit() and len(n) > 1 else (o.get("label") or key)
+    return o.get("name") or names.get(key) or auto
+
+
+def _nonneg(x, default):
+    """A finite number >= 0, else the default (NaN, inf, negative and junk are ignored)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return default
+    return v if math.isfinite(v) and v >= 0 else default
 
 
 def unit_products(o: dict, seed: dict) -> list[dict]:
-    rows = list(o.get("products") or []) + [p for p in (seed.get("products") or []) if str(p.get("spot")) == o["key"]]
+    rows = list(o.get("products") or []) + [p for p in (seed.get("products") or [])
+                                            if isinstance(p, dict) and str(p.get("spot")) == o["key"]]
     out = []
     for p in rows:
-        try:
-            qty = float(p.get("qty", 1) or 1)
-        except (TypeError, ValueError):
-            qty = 1.0
-        try:
-            price = float(p["price"]) if p.get("price") not in (None, "") else None
-        except (TypeError, ValueError):
-            price = None
+        if not isinstance(p, dict):
+            continue
+        qty = _nonneg(p.get("qty", 1) if p.get("qty") not in (None, "") else 1, 1.0)
+        price = _nonneg(p.get("price"), None) if p.get("price") not in (None, "") else None
         out.append(dict(name=p.get("product") or p.get("name") or "", qty=qty, price=price))
     return out
 
@@ -154,16 +165,47 @@ def _unit_html(o: dict, base: Path, names: dict, seed: dict, tape: dict) -> str:
     return "".join(out)
 
 
+def _positive(x) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0
+
+
+def load_tape(tape_path: Path | None) -> tuple[dict, list[str]]:
+    """tape.json -> {key: {width, depth, height}} keeping only entries whose three numbers are finite and > 0."""
+    if not tape_path:
+        return {}, []
+    p = Path(tape_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"tape file not found: {p}")
+    try:
+        raw = json.loads(p.read_text())
+    except ValueError as e:
+        raise ValueError(f"tape file {p} is not valid JSON: {e}") from None
+    if not isinstance(raw, dict):
+        raise ValueError(f"tape file {p} must be a JSON object of unit key -> {{width, depth, height}}")
+    tape, warns = {}, []
+    for k, v in raw.items():
+        if isinstance(v, dict) and all(_positive(v.get(d)) for d in ("width", "depth", "height")):
+            tape[k] = v
+        else:
+            warns.append(f"tape entry {k!r} ignored: needs finite positive width, depth and height")
+    return tape, warns
+
+
 def build_report(twin_path: Path, out: Path, tape_path: Path | None = None) -> dict:
     t, base = load_twin(twin_path)
-    tape = json.loads(Path(tape_path).read_text()) if tape_path else {}
+    tape, warnings = load_tape(tape_path)
+    tape_keys = list(tape)
     seed = t.get("seed") or {}
     for k, v in (seed.get("measured") or {}).items():  # tape taken in the app, unless tape.json overrides
-        if isinstance(v, dict):
+        if isinstance(v, dict) and all(_positive(v.get(d)) for d in ("width", "depth", "height")):
             tape.setdefault(k, v)
     names = seed.get("names") or {}
     name = t.get("name") or "Room"
-    units = t.get("objects") or []
+    units = [dict(o, key=str(o["key"]) if o.get("key") not in (None, "") else str(i + 1))
+             for i, o in enumerate(t.get("objects") or []) if isinstance(o, dict)]
+    for k in tape_keys:
+        if k not in {o["key"] for o in units}:
+            warnings.append(f"tape key {k!r} matches no unit")
     opens = t.get("openings") or []
     ceil = (t["ceiling_y"] - t["floor_y"]) * M_TO_IN if "ceiling_y" in t and "floor_y" in t else None
     area = _area_sqft((t.get("floor") or {}).get("polygon") or []) if (t.get("floor") or {}).get("polygon") else 0
@@ -187,7 +229,7 @@ def build_report(twin_path: Path, out: Path, tape_path: Path | None = None) -> d
     page = Template((Path(__file__).parent / "report_page.html").read_text())
     out = Path(out)
     out.write_text(page.safe_substitute(title=esc(f"{name} report · {BRAND}"), body="".join(body)))
-    return {"report": str(out), "units": len(body) - 2, "bytes": out.stat().st_size}
+    return {"report": str(out), "units": len(body) - 2, "bytes": out.stat().st_size, "warnings": warnings}
 
 
 def _is_storage(o: dict) -> bool:

@@ -62,9 +62,12 @@ def _yaw_translation(m):
 
 def read_mesh(path: Path):
     b = path.read_bytes()
-    if b[:4] != b"RSM1":
+    if b[:4] != b"RSM1" or len(b) < 12:
         raise ValueError("not a RoomScan mesh")
     nv, nf = struct.unpack("<II", b[4:12])
+    need = 12 + nv * 12 + nf * 4
+    if len(b) < need:
+        raise ValueError(f"mesh.bin truncated: expected {need} bytes, got {len(b)}")
     P = np.frombuffer(b, dtype="<f4", count=nv * 3, offset=12).reshape(nv, 3).astype(np.float64)
     F = np.frombuffer(b, dtype="<u4", count=nf, offset=12 + nv * 12).reshape(-1, 3).astype(np.int64)
     return P, F
@@ -723,7 +726,7 @@ def write_textured_mesh(out: Path, P, F, choice, frames: list, room: "Room", wid
                 frames=len(names), groups=groups)
 
 
-def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = True) -> dict:
+def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = True, only: str | None = None) -> dict:
     bundle, out = Path(bundle), Path(out)
     if bundle.suffix == ".zip":
         import tempfile
@@ -740,13 +743,33 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
         inner = sorted(p.parent for p in bundle.rglob("room.json"))
         if not inner:
             raise FileNotFoundError("no room.json in the bundle")
-        bundle = inner[0]
+        scan = None
+        if only:
+            scan = next((p for p in inner if only in (p.name, str(p.relative_to(bundle)))), None)
+            if scan is None:
+                raise FileNotFoundError(f"no scan named {only!r} in the bundle; found: {', '.join(p.name for p in inner)}")
+        multi_warning = None
+        if scan is None:
+            scan = inner[0]
+            if len(inner) > 1:
+                multi_warning = (f"{len(inner)} scans in the bundle ({', '.join(p.name for p in inner)}); "
+                                 f"built {scan.name}. Use --scan <name> to pick another.")
+        bundle = scan
+    else:
+        multi_warning = None
     out.mkdir(parents=True, exist_ok=True)
     (out / "img").mkdir(exist_ok=True)
     info = json.loads((bundle / "info.json").read_text()) if (bundle / "info.json").exists() else {}
     rd = json.loads((bundle / "room.json").read_text())
     room = Room(rd)
     report: dict = {}
+    warnings: list[str] = report.setdefault("warnings", [])
+    if multi_warning:
+        warnings.append(multi_warning)
+    if "floors" not in rd:
+        warnings.append("room.json has no floors; using the wall footprint for the floor outline")
+    if not (bundle / "elevations").is_dir():
+        warnings.append("elevations/ is missing; no wall elevations or storage fronts")
 
     def load(rel, default):
         p = bundle / rel
@@ -759,7 +782,18 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
     fronts = load("elevations/storage.json", [])
     floor = load("elevations/floor.json", None)
     photos = load("photos/photos.json", [])
-    frames_meta = load("frames/frames.json", [])
+    try:
+        frames_meta = load("frames/frames.json", [])
+    except ValueError as e:
+        warnings.append(f"frames/frames.json is not valid JSON ({e}); treated as no frames")
+        frames_meta = []
+    if not isinstance(frames_meta, list):
+        warnings.append("frames/frames.json is not a list; treated as no frames")
+        frames_meta = []
+    good = [k for k in frames_meta if isinstance(k, dict) and isinstance(k.get("file"), str) and "transform" in k]
+    if len(good) != len(frames_meta):
+        warnings.append(f"frames/frames.json: {len(frames_meta) - len(good)} invalid entries ignored")
+    frames_meta = good
 
     def copy(src: Path, name: str, max_side: int | None = None) -> str | None:
         if not src.exists():
@@ -806,6 +840,10 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
         objects.append(dict(key=key, label=label, name=names.get(key), center=t[:3, 3].tolist(),
                             axis=[t[0, 0], t[2, 0]], size=[wdt, hgt, dep], front=front))
         obj_centres.append((t[:3, 3], key))
+
+    no_front = [o["key"] for o in objects if o["label"] == "Storage" and not o["front"]]
+    if no_front:
+        warnings.append(f"storage units without fronts: {', '.join(no_front)}")
 
     floor_poly = []
     fls = rd.get("floors", [])
@@ -858,6 +896,8 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
             jumped = is_m and "undid_world_jump_m" in report and k is not m_frames[0]
             frames.append(Frame(k, bundle / "frames", fit @ fix if jumped else (fit if is_m else None)))
         frames = [f for f in frames if f.img.mean() >= 40]  # nearly black frames out
+        if not frames:
+            warnings.append("no usable frames (frames/ missing, empty, or all too dark): mesh written untextured")
         # Trim to the room.
         cen = P[F].mean(1)
         keep = room.inside(cen[:, [0, 2]]) & (cen[:, 1] > room.floor_y - 0.1) & (cen[:, 1] < room.ceiling_y + 0.15)
@@ -865,7 +905,7 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
         F = F[keep]
         report["shelf_edges_confirmed_by_depth"] = confirm_shelves(P, F, rd, objects)
         report["snapped_to_walls"] = snap_to_walls(P, room)
-        if textured:
+        if textured and frames:
             # Shrink first, then paint with real texture: each triangle mapped onto its frame's photo
             # (exposure correction baked into the photo), as photogrammetry tools texture a mesh.
             dummy = np.zeros((len(P), 3), np.uint8)
@@ -877,7 +917,10 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
             choice = report.pop("_choice")
             mesh_out = write_textured_mesh(out, P2, F2, choice, frames, room)
         else:
-            colours, F = paint(P, F, frames, report, centre=room.centre)
+            if frames:
+                colours, F = paint(P, F, frames, report, centre=room.centre)
+            else:
+                colours = np.full((len(P), 3), 190, np.uint8)
             report.pop("_choice", None)
             P2, F2, C2 = decimate(P, F, colours, cell)
             cen2 = P2[F2].mean(1)

@@ -139,3 +139,73 @@ def test_roomplan_only_twin_has_photos_and_measurement_fields(tmp_path):
     twin = build_twin(bundle, tmp_path / "twin")
     for o in twin["objects"]:
         assert o["photos"] == [] and o["measurement"]["confirm_with_tape"] is True
+
+
+def _bundle(tmp_path, name="scan"):
+    b = tmp_path / name
+    b.mkdir(parents=True)
+    shutil.copyfile(SAMPLE, b / "room.json")
+    return b
+
+
+def _mesh_bytes(cut=0):
+    import struct
+    import numpy as np
+    P = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], "<f4")
+    F = np.array([[0, 1, 2]], "<u4")
+    b = b"RSM1" + struct.pack("<II", 3, 3) + P.tobytes() + F.tobytes()
+    return b[:len(b) - cut]
+
+
+def test_read_mesh_truncated(tmp_path):
+    import pytest
+    from roomscan.twin import read_mesh
+    f = tmp_path / "mesh.bin"
+    f.write_bytes(_mesh_bytes())
+    assert len(read_mesh(f)[0]) == 3
+    full = len(_mesh_bytes())
+    f.write_bytes(_mesh_bytes(cut=5))
+    with pytest.raises(ValueError, match=rf"mesh.bin truncated: expected {full} bytes, got {full - 5}"):
+        read_mesh(f)
+
+
+def test_mesh_without_frames_is_untextured(tmp_path):
+    b = _bundle(tmp_path)
+    (b / "mesh.bin").write_bytes(_mesh_bytes())
+    for frames in (None, "{not json", "{}", "[1, {\"x\": 1}]"):
+        if frames is not None:
+            (b / "frames").mkdir(exist_ok=True)
+            (b / "frames" / "frames.json").write_text(frames)
+        twin = build_twin(b, tmp_path / "t")
+        w = " ".join(twin["processing"]["warnings"])
+        assert "untextured" in w
+        assert twin["mesh"] is not None and twin["mesh"]["file"] == "mesh.b64.txt"
+        if frames == "{not json":
+            assert "not valid JSON" in w
+
+
+def test_processing_warnings_for_missing_pieces(tmp_path):
+    b = _bundle(tmp_path)
+    rd = json.loads((b / "room.json").read_text())
+    rd.pop("floors", None)
+    (b / "room.json").write_text(json.dumps(rd))
+    w = " ".join(build_twin(b, tmp_path / "t")["processing"]["warnings"])
+    assert "no floors" in w and "elevations/ is missing" in w and "without fronts" in w
+
+
+def test_zip_with_several_scans(tmp_path):
+    import pytest
+    import zipfile
+    for n in ("a-scan", "b-scan"):
+        _bundle(tmp_path / "Scans", n)
+        (tmp_path / "Scans" / n / "info.json").write_text(json.dumps({"name": n}))
+    z = tmp_path / "Scans.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        for p in (tmp_path / "Scans").rglob("*.json"):
+            zf.write(p, p.relative_to(tmp_path))
+    t = build_twin(z, tmp_path / "t1")
+    assert t["name"] == "a-scan" and any("a-scan, b-scan" in w for w in t["processing"]["warnings"])
+    t = build_twin(z, tmp_path / "t2", only="b-scan")
+    assert t["name"] == "b-scan" and not any("scans in the bundle" in w for w in t["processing"]["warnings"])
+    with pytest.raises(FileNotFoundError, match="found: a-scan, b-scan"):
+        build_twin(z, tmp_path / "t3", only="nope")

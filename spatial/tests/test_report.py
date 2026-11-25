@@ -6,7 +6,7 @@ from roomscan.report import fmt_delta, fmt_in
 
 
 def make_twin(d):
-    (d / "img" / "spots").mkdir(parents=True)
+    (d / "img" / "spots").mkdir(parents=True, exist_ok=True)
     (d / "img" / "spots" / "1.jpg").write_bytes(b"\xff\xd8fakejpeg")
     o = lambda k, label, photos: dict(
         key=k, label=label, name=None, size=[0.76, 2.0, 0.35], photos=photos,
@@ -44,3 +44,56 @@ def test_report(tmp_path):
     assert re.search(r"2' 6\"", h)
     assert "@media print" in h
     assert main(["report", str(p), str(tmp_path / "b.html")]) == 0
+
+
+def _report(tmp_path, twin_edit=None, tape=None, raw_tape=None):
+    p = make_twin(tmp_path)
+    if twin_edit:
+        t = json.loads(p.read_text())
+        twin_edit(t)
+        p.write_text(json.dumps(t))
+    tp = None
+    if tape is not None or raw_tape is not None:
+        tp = tmp_path / "tape.json"
+        tp.write_text(raw_tape if raw_tape is not None else json.dumps(tape))
+    from roomscan.report import build_report
+    r = build_report(tmp_path, tmp_path / "r.html", tp)
+    return r, (tmp_path / "r.html").read_text()
+
+
+def test_bad_products_and_numbers(tmp_path):
+    def edit(t):
+        t["seed"]["products"] = ["junk", 5, None,
+                                 dict(spot="1 Storage", product="Neg", qty=-2, price=-9),
+                                 dict(spot="1 Storage", product="Wide", qty="inf", price="nan"),
+                                 dict(spot="1 Storage", product="Ok", qty=2, price=10)]
+    _, h = _report(tmp_path, edit)
+    assert "$20.00" in h and "inf" not in h.lower().replace("info", "") and "nan" not in h.lower()
+    assert "-$" not in h and "$-" not in h
+
+
+def test_objects_without_key(tmp_path):
+    def edit(t):
+        t["objects"].append(dict(label="Storage", size=[1, 1, 1], products=[dict(name="X", qty=1, price=1)]))
+        t["objects"].append("junk")
+    r, h = _report(tmp_path, edit)
+    assert h.count('class="unit"') == 3
+
+
+def test_tape_validation(tmp_path):
+    import pytest
+    from roomscan.report import build_report
+    with pytest.raises(FileNotFoundError, match="tape file not found"):
+        build_report(make_twin(tmp_path).parent, tmp_path / "r.html", tmp_path / "nope.json")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        _report(tmp_path, raw_tape="{oops")
+    good = dict(width=30, depth=14, height=79)
+    r, h = _report(tmp_path, tape={"1 Storage": good, "2 Storage": dict(width=0, depth=1, height=1),
+                                   "3 Chair": "x", "9 Ghost": good, "x": dict(width=float("nan"), depth=1, height=1)})
+    assert h.count("Confirmed with tape") >= 3  # 1 Storage's badges only
+    assert any("9 Ghost" in w and "matches no unit" in w for w in r["warnings"])
+    assert sum("ignored" in w for w in r["warnings"]) == 3
+
+
+def test_fmt_in_guards():
+    assert fmt_in(float("inf")) == "–" and fmt_in(float("nan")) == "–"

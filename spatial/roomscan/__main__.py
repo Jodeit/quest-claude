@@ -7,7 +7,7 @@
   roomscan plan scan.json plan.png       floor plan picture (.png or .svg)
   roomscan sample out.json               write the sample RoomPlan export
   roomscan report twin_dir out.html [--tape tape.json]   client report, one printable HTML file
-  roomscan twin bundle out               a RoomScan scan bundle -> a shared 3D twin page to publish
+  roomscan twin bundle out [--scan name] a RoomScan scan bundle -> a shared 3D twin page to publish
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     tw = sub.add_parser("twin", help="scan bundle (folder or .zip) -> a 3D twin web page folder")
     tw.add_argument("bundle")
     tw.add_argument("out")
+    tw.add_argument("--scan", help="which scan to build when the bundle holds several (folder name)")
 
     rp = sub.add_parser("report", help="a built twin -> a printable client report (one HTML file)")
     rp.add_argument("twin", help="twin folder or twin.json")
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "twin":
         from .twin import build_twin, publish_files
 
-        t = build_twin(Path(a.bundle), Path(a.out))
+        t = build_twin(Path(a.bundle), Path(a.out), only=a.scan)
         print(json.dumps({"page": str(Path(a.out) / "index.html"), "files": publish_files(Path(a.out)),
                           "processing": t["processing"]}, indent=1))
         return 0
