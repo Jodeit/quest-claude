@@ -251,3 +251,60 @@ def test_twin_build_writes_nodes(tmp_path):
     assert all(p in files for p in n["faces"].values())
     saved = json.loads((out / "twin.json").read_text())
     assert saved["nodes"][0]["faces"] == n["faces"]
+
+
+def test_floor_and_ceiling_hits_lie_on_roomplans_planes():
+    from roomscan.nodes import DepthCube
+    room = Room(room_dict())
+    P, F = box_mesh()
+    rng = np.random.default_rng(1)
+    flat = (np.abs(P[:, 1] - LO[1]) < 1e-9) | (np.abs(P[:, 1] - HI[1]) < 1e-9)
+    P[flat, 1] += rng.uniform(-0.03, 0.03, flat.sum())  # a noisy scanned floor and ceiling
+    o = np.array([0.2, 1.3, 0.1])
+    cube = DepthCube(o, P, F, room, 32)
+    for s, c, y in (("ny", 1, room.floor_y), ("py", 2, room.ceiling_y)):
+        D, X, nrm, t, cls = cube.full(s, 64)
+        mid = (cls == c)
+        assert mid.mean() > 0.9
+        assert np.abs(X[mid, 1] - y).max() < 1e-4 and np.allclose(np.abs(nrm[mid, 1]), 1)
+
+
+def test_floor_holes_continue_the_texture_not_a_blur():
+    from roomscan.nodes import fill_holes, fill_texture
+    N = 128
+    j, i = np.mgrid[0:N, 0:N]
+    img = np.repeat((120 + 60 * np.sin(i / 1.5))[..., None], 3, 2).astype(np.float32)  # floor boards
+    seen = np.ones((N, N), bool)
+    seen[40:90, 30:100] = False
+    cls = np.ones((N, N), np.int8)
+    smooth = fill_holes({"ny": img * seen[..., None]}, {"ny": seen.astype(np.float32)})["ny"]
+    out = fill_texture(img * seen[..., None], seen, cls, smooth)
+    hole = ~seen
+    assert smooth[hole].std() < 20  # pull-push alone: a flat smear
+    assert out[hole].std() > 30  # copied boards keep their contrast
+    assert abs(out[hole].mean() - img[hole].mean()) < 15
+    # Away from the floor, holes keep the smooth fill.
+    other = fill_texture(img * seen[..., None], seen, np.zeros_like(cls), smooth)
+    assert np.allclose(other[hole], smooth[hole])
+
+
+def test_operator_feet_are_not_used_and_quality_is_reported(tmp_path):
+    from roomscan.nodes import _View
+    (tmp_path / "frames").mkdir()
+    k = make_frame(tmp_path / "frames", "D.png", np.array([0.0, 1.4, 0.0]), (0, -1, 0.5))
+    f = Frame(k, tmp_path / "frames")
+    zb = (np.full(1, np.inf), 1000, 1, 1)
+    v = _View(f, zb, 1.0)
+    # Two floor points in view: one under the person (behind the phone), one ahead.
+    X = np.array([[0.0, 0.0, -0.2], [0.0, 0.0, 0.8]], np.float32)
+    x, y = v.project(X)
+    assert ((x > 0) & (x < 160) & (y > 0) & (y < 160)).all()
+    nrm = np.array([[0, 1.0, 0]] * 2, np.float32)
+    D = (X - np.array([0.0, 1.4, 0.0], np.float32))
+    D /= np.linalg.norm(D, axis=1, keepdims=True)
+    sc = v.score(X, nrm, D, 0.0, np.zeros(2, np.float32))[0]
+    assert sc[0] == 0 and sc[1] > 0
+    ks = frames_at(tmp_path / "frames", (0.3, 1.4, -0.2))
+    _, nodes, summary = _build(tmp_path, ks, face_px=64, depth_px=32)
+    q = summary["quality"][0]
+    assert q["id"] == nodes[0]["id"] and set(q) >= {"seam_ratio", "ghost_risk", "blended", "depth_risk"}
