@@ -1,57 +1,61 @@
 <title>{{TITLE}}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Jost:wght@400;500;600&family=Nanum+Myeongjo:wght@400;700&display=swap">
 <style>
 /* Layout: a working tool. The 3D room fills the left; a panel of spots, plan and team notes sits right (below on phones). */
 :root {
-  --bg: #f3f4f6; --surface: #ffffff; --line: #d9dce3; --fg: #1c2230; --muted: #5d6577;
-  --accent: #8e2c6b; --accent-soft: #f4e6ef; --ok: #1d7a46; --stage: #20242c;
-  --display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
-  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --bg: #f6f2ec; --surface: #fffdfa; --line: #e3dccf; --fg: #2b2622; --muted: #6f655a;
+  --accent: #8a6d35; --accent-soft: #f1e8d6; --ok: #2f6b4a; --ok-soft: #e1efe6; --warn: #9a4a22; --stage: #24211e;
+  --display: "Nanum Myeongjo", Georgia, "Times New Roman", serif;
+  --body: "Jost", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #15181e; --surface: #1d2129; --line: #333946; --fg: #e8eaf0; --muted: #9aa2b3;
-  --accent: #e07ab8; --accent-soft: #3a2232; --ok: #5fcf8f; --stage: #0f1115; color-scheme: dark } }
+  --bg: #1a1816; --surface: #23201d; --line: #3a352f; --fg: #efe9df; --muted: #a79d8f;
+  --accent: #d2b574; --accent-soft: #3a3226; --ok: #7fcf9f; --ok-soft: #22372b; --warn: #e6a070; --stage: #12110f; color-scheme: dark } }
 :root[data-theme="dark"] {
-  --bg: #15181e; --surface: #1d2129; --line: #333946; --fg: #e8eaf0; --muted: #9aa2b3;
-  --accent: #e07ab8; --accent-soft: #3a2232; --ok: #5fcf8f; --stage: #0f1115; color-scheme: dark }
+  --bg: #1a1816; --surface: #23201d; --line: #3a352f; --fg: #efe9df; --muted: #a79d8f;
+  --accent: #d2b574; --accent-soft: #3a3226; --ok: #7fcf9f; --ok-soft: #22372b; --warn: #e6a070; --stage: #12110f; color-scheme: dark }
 html, body { height: 100%; }
-body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; margin: 0; }
 .app { display: grid; grid-template-columns: minmax(0, 1fr) 400px; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
 header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
   padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   border-bottom: 1px solid var(--line); background: var(--surface); }
-header h1 { font: 600 19px/1.1 var(--display); margin: 0; letter-spacing: -0.01em; }
+header h1 { font: 700 20px/1.15 var(--display); margin: 0; }
+header .eyebrow { font: 500 10px var(--body); letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
 header .meta { color: var(--muted); font-size: 12px; }
 .modes { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
-button { font: 500 13px var(--body); color: var(--fg); background: var(--surface); border: 1px solid var(--line);
+button { font: 500 14px var(--body); color: var(--fg); background: var(--surface); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 11px; cursor: pointer; }
 button:hover { border-color: var(--muted); }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+button[aria-pressed="true"], button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] button[aria-pressed="true"], :root[data-theme="dark"] button.primary { color: #1a1816; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button[aria-pressed="true"], :root:not([data-theme="light"]) button.primary { color: #1a1816; } }
 button.small { padding: 3px 8px; font-size: 12px; }
 .stage { position: relative; background: var(--stage); min-height: 0; overflow: hidden; }
 .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .tags { position: absolute; inset: 0; pointer-events: none; }
 .tag { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; cursor: pointer; white-space: nowrap;
-  font: 500 12px var(--body); background: rgba(255,255,255,0.92); color: #1c2230; border-radius: 999px; padding: 3px 9px;
+  font: 500 12px var(--body); background: rgba(255,253,250,0.94); color: #2b2622; border-radius: 999px; padding: 3px 9px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.3); border: 1px solid transparent; }
-.tag.sel { border-color: #8e2c6b; color: #8e2c6b; }
-.tag.photo { background: #8e2c6b; color: #fff; font-size: 11px; padding: 2px 7px; }
-.tag.dim { font: 500 12px var(--mono); background: rgba(224,51,122,0.92); color: #fff; }
+.tag.sel { border-color: #8a6d35; color: #8a6d35; }
+.tag.photo { background: #8a6d35; color: #fff; font-size: 11px; padding: 2px 7px; }
+.tag.dim { font: 500 12px var(--mono); background: rgba(138,109,53,0.95); color: #fff; }
+.tag.dim.ok { background: rgba(47,107,74,0.95); }
 .tag.dim.shelf { background: rgba(255,176,0,0.95); color: #1c1300; }
 .hint { position: absolute; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom, 0px)); text-align: center; pointer-events: none; }
 .hint span { display: inline-block; background: rgba(15,17,21,0.78); color: #f0f1f4; border-radius: 10px; padding: 7px 12px; font-size: 13px; }
 .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #c9ced8; font-size: 13px; }
 aside { background: var(--surface); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-.tabs { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--line); }
-.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 10px; color: var(--muted); }
+.tabs { display: flex; gap: 2px; padding: 10px 12px 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 9px; color: var(--muted); white-space: nowrap; }
 .tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
 .panel { overflow-y: auto; padding: 14px 16px 24px; min-height: 0; flex: 1; }
-h2 { font: 600 16px var(--display); margin: 0 0 4px; text-wrap: balance; }
-h3 { font: 600 12px var(--body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 18px 0 8px; }
+h2 { font: 700 19px/1.25 var(--display); margin: 0 0 4px; text-wrap: balance; }
+h3 { font: 600 11px var(--body); text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); margin: 18px 0 8px; }
 .list { display: flex; flex-direction: column; gap: 6px; }
 .spot { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; text-align: left; width: 100%; }
 .spot .k { font-weight: 600; }
@@ -62,10 +66,29 @@ h3 { font: 600 12px var(--body); text-transform: uppercase; letter-spacing: 0.06
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 td, th { padding: 5px 4px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 th { font: 500 11px var(--body); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-td.num { font-family: var(--mono); font-size: 13px; }
+td.num { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
 td.ok { color: var(--ok); font-weight: 600; }
-select { font: 13px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 220px; }
-input, textarea { font: 13px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; width: 100%; box-sizing: border-box; }
+.badge { display: inline-block; font: 600 11px var(--body); letter-spacing: 0.04em; border-radius: 999px; padding: 2px 9px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.delta { font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
+.delta.off { color: var(--warn); }
+.cmp td { padding: 7px 4px; }
+.cmp input.tape { width: 100%; min-width: 70px; font-size: 16px; padding: 7px 8px; }
+.cmp .use { white-space: nowrap; }
+.empty { border: 1px dashed var(--line); border-radius: 10px; padding: 14px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.empty b { color: var(--fg); font-weight: 600; }
+.steps { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 0; }
+.chk-room { margin: 0 0 14px; }
+.chk-unit { break-inside: avoid; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.chk-unit h4 { font: 700 15px var(--display); margin: 0 0 6px; }
+.chk-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.chk-row:last-child { border-bottom: none; }
+.chk-row .l { flex: 1; }
+.chk-row .s { font: 12px var(--mono); color: var(--muted); min-width: 64px; text-align: right; }
+.box { display: inline-block; min-width: 92px; height: 26px; border: 1.5px solid var(--muted); border-radius: 4px; box-sizing: border-box; font: 13px/23px var(--mono); padding: 0 6px; color: var(--ok); }
+.printonly { display: none; }
+select { font: 14px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 220px; }
+input, textarea { font: 14px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; width: 100%; box-sizing: border-box; }
 input.tape { width: 92px; font-family: var(--mono); }
 .row { display: flex; gap: 6px; align-items: center; }
 .row > * { min-width: 0; }
@@ -81,12 +104,22 @@ input.tape { width: 92px; font-family: var(--mono); }
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 52vh minmax(0, 1fr); }
   aside { border-left: none; border-top: 1px solid var(--line); }
 }
+@media print {
+  html, body, .app { height: auto !important; display: block; background: #fff; color: #000; }
+  header, .stage, .tabs, .noprint, .tags { display: none !important; }
+  .printonly { display: block; }
+  aside { border: none; display: block; } .panel { overflow: visible; padding: 0; }
+  .box .v { display: none; } .box { border-color: #000; min-width: 110px; height: 30px; }
+  .chk-unit { border-color: #999; } .chk-row .s { color: #333; }
+  h2, h4 { color: #000; }
+}
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 
 <div class="app">
   <header>
     <div>
+      <div class="eyebrow">Measurements &amp; photos</div>
       <h1 id="title">{{NAME}}</h1>
       <div class="meta" id="meta">Loading the scan…</div>
     </div>
@@ -106,13 +139,14 @@ input.tape { width: 92px; font-family: var(--mono); }
   <div class="stage" id="stage">
     <div class="loading" id="loading">Loading the 3D room…</div>
     <div class="tags" id="tags"></div>
-    <div class="hint"><span id="hint">Drag to turn, scroll or pinch to zoom. Tap a label to open that spot.</span></div>
+    <div class="hint"><span id="hint">Drag to turn, scroll or pinch to zoom. Tap a label to open that spot, or use Measure to take a size.</span></div>
   </div>
   <aside>
     <div class="tabs" role="tablist">
       <button role="tab" id="t-spots" aria-selected="true">Spots</button>
       <button role="tab" id="t-plan" aria-selected="false">Plan</button>
       <button role="tab" id="t-measures" aria-selected="false">Measurements</button>
+      <button role="tab" id="t-check" aria-selected="false">To confirm</button>
       <button role="tab" id="t-about" aria-selected="false">How it's made</button>
     </div>
     <div class="panel" id="panel"></div>
@@ -163,6 +197,12 @@ function parseLength(text) {
   }
   const total = feet * 12 + inches;
   return total > 0 ? total * 0.0254 : null;
+}
+// Tape minus scan, as +¼" / −1": what the tape says about the estimate.
+function delta(tape, est) {
+  const d = tape - est;
+  if (Math.abs(d) < 0.0065) return { text: "matches scan", off: false };
+  return { text: (d > 0 ? "+" : "−") + fine(Math.abs(d)), off: Math.abs(d) > 0.0381 };
 }
 const slug = (key) => key.replace(/[^A-Za-z0-9_.~:@+-]/g, "-");
 
@@ -333,7 +373,7 @@ if (twin.floor?.image) {
 for (const [i, o] of twin.objects.entries()) {
   const g = new THREE.BoxGeometry(...o.size);
   const box = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05, depthWrite: false }));
-  box.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0xe07ab8, transparent: true, opacity: 0.55 })));
+  box.add(new THREE.LineSegments(new THREE.EdgesGeometry(g), new THREE.LineBasicMaterial({ color: 0xd2b574, transparent: true, opacity: 0.7 })));
   box.position.set(...o.center); box.rotation.y = Math.atan2(-o.axis[1], o.axis[0]);
   box.userData.spot = i; boxes.add(box);
 }
@@ -408,7 +448,7 @@ let first = null, pending = null;
 $("m-measure").onclick = () => {
   measuring = !measuring; first = null;
   $("m-measure").setAttribute("aria-pressed", String(measuring));
-  hint(measuring ? "Measuring: tap the first point on a surface." : undefined);
+  hint(measuring ? "Measuring: tap the first point. It snaps to wall and shelf-unit edges and corners; sizes read to the half inch." : undefined);
 };
 function surfaces() { return [...(real.visible ? real.children : []), ...(doll.visible ? doll.children : [])].filter((o) => o.visible); }
 function pick(e) {
@@ -417,8 +457,9 @@ function pick(e) {
   if (measuring) {
     const hit = ray.intersectObjects(surfaces(), false)[0];
     if (!hit) return;
-    if (!first) { first = hit.point.clone(); drawMeasure(first, first, null, true); hint("Now tap the second point."); return; }
-    const a = first, b = hit.point.clone(); first = null;
+    const pt = snap(hit.point);
+    if (!first) { first = pt; clearTemp(); drawMeasure(first, first, null, true); hint("Now tap the second point."); return; }
+    const a = first, b = pt; first = null;
     pending = { a: a.toArray(), b: b.toArray(), length: a.distanceTo(b) };
     clearTemp(); drawMeasure(a, b, fine(pending.length), true);
     hint(`${fine(pending.length)}. Save it under Measurements, or tap again to start over.`);
@@ -426,6 +467,41 @@ function pick(e) {
   }
   const hit = ray.intersectObjects(boxes.children, false)[0];
   if (hit) openSpot(hit.object.userData.spot);
+}
+// Snap a tapped point to the nearest corner or edge of a spot's box or a wall (within ~7 cm), so a
+// width or a wall length reads true to the edge rather than a hand's width off it.
+let snapSegs = null;
+function snapSegments() {
+  if (snapSegs) return snapSegs;
+  snapSegs = [];
+  const add = (a, b) => snapSegs.push([a, b]);
+  for (const box of boxes.children) {
+    box.updateMatrixWorld(true);
+    const [w, h, d] = [box.geometry.parameters.width / 2, box.geometry.parameters.height / 2, box.geometry.parameters.depth / 2];
+    const c = (x, y, z) => new THREE.Vector3(x * w, y * h, z * d).applyMatrix4(box.matrixWorld);
+    for (const [x, y, z] of [[-1, -1, -1], [1, -1, -1], [-1, 1, -1], [1, 1, -1], [-1, -1, 1], [1, -1, 1], [-1, 1, 1], [1, 1, 1]]) {
+      if (x < 0) add(c(-1, y, z), c(1, y, z));
+      if (y < 0) add(c(x, -1, z), c(x, 1, z));
+      if (z < 0) add(c(x, y, -1), c(x, y, 1));
+    }
+  }
+  for (const w of twin.walls) {
+    const A = (y) => new THREE.Vector3(w.a[0], y, w.a[1]), B = (y) => new THREE.Vector3(w.b[0], y, w.b[1]);
+    add(A(w.y0), B(w.y0)); add(A(w.y0 + w.height), B(w.y0 + w.height)); add(A(w.y0), A(w.y0 + w.height)); add(B(w.y0), B(w.y0 + w.height));
+  }
+  return snapSegs;
+}
+function snap(p) {
+  let best = null, bd = 0.07, corner = null, cd = 0.08;
+  const q = new THREE.Vector3(), ab = new THREE.Vector3();
+  for (const [a, b] of snapSegments()) {
+    ab.subVectors(b, a); const t = Math.max(0, Math.min(1, q.subVectors(p, a).dot(ab) / ab.lengthSq()));
+    q.copy(a).addScaledVector(ab, t);
+    const dd = q.distanceTo(p);
+    if (dd < bd) { bd = dd; best = q.clone(); }
+    for (const e of [a, b]) { const de = e.distanceTo(p); if (de < cd) { cd = de; corner = e.clone(); } }
+  }
+  return corner || best || p.clone();
 }
 function clearTemp() { for (const c of [...measureGroup.children]) if (c.userData.temp) measureGroup.remove(c); }
 function drawMeasure(a, b, text, temp) {
@@ -506,8 +582,8 @@ async function who(id) {
 const stamp = () => ({ by: team.me || null, at: new Date().toISOString() });
 
 // ---------- the panel ----------
-for (const t of ["spots", "plan", "measures", "about"]) $("t-" + t).onclick = () => selectTab(t);
-function selectTab(t) { tab = t; for (const x of ["spots", "plan", "measures", "about"]) $("t-" + x).setAttribute("aria-selected", String(x === t)); render(); }
+for (const t of ["spots", "plan", "measures", "check", "about"]) $("t-" + t).onclick = () => selectTab(t);
+function selectTab(t) { tab = t; for (const x of ["spots", "plan", "measures", "check", "about"]) $("t-" + x).setAttribute("aria-selected", String(x === t)); render(); }
 function openSpot(i) { selected = i; selectTab("spots"); focusSpot(i); }
 
 // Fly to a spot's front and draw its sizes on it: width, height and depth along its edges, each
@@ -576,64 +652,96 @@ function render() {
   if (tab === "spots") selected == null ? spotList(p) : spotPage(p, selected);
   else if (tab === "plan") planView(p);
   else if (tab === "measures") measuresView(p);
+  else if (tab === "check") checkView(p);
   else aboutView(p);
+  if (pendingFocus) { const f = $(pendingFocus); pendingFocus = null; if (f) f.focus(); }
   if (team.error || team.offline) p.append(el("p", { class: "status", text: team.error || "Team notes need claude.ai: open this page there to see and add them." }));
 }
 
+// Each unit's measurable fields: width, depth, height, and each opening between shelves (top first).
+function spotFields(o) {
+  const rows = [["width", "Width", o.size[0]], ["depth", "Depth", o.size[2]], ["height", "Height", o.size[1]]];
+  const ops = o.front?.openings_top_first || [];
+  if (ops.length > 1) ops.forEach((h, k) => rows.push([`opening ${k + 1}`, `Opening ${k + 1}${k === 0 ? " (top)" : ""}`, h]));
+  return rows;
+}
+const confirmedOf = (o) => (team.spots[slug(o.key)] || {}).confirmed || {};
+function progress(o) { const c = confirmedOf(o), f = spotFields(o); return [f.filter(([k]) => c[k]).length, f.length]; }
+
 function spotList(p) {
-  p.append(el("h2", { text: "Spots" }), el("p", { class: "muted small", text: "Every storage unit and piece of furniture the scan found. Open one for its shelves, sizes, products and notes." }));
+  p.append(el("h2", { text: "Spots" }));
+  if (!twin.objects.length) {
+    p.append(el("div", { class: "empty" }, el("b", { text: "No storage units were found in this scan." }),
+      el("div", { text: " Rescan with the RoomScan app and sweep each closet, shelf and cabinet front on, from about 4 feet back." })));
+    return;
+  }
+  p.append(el("p", { class: "muted small", text: "Every storage unit and piece of furniture the scan found. Open one to check its sizes against a tape, add products and leave notes." }));
   const order = twin.objects.map((o, i) => i).sort((a, b) => (twin.objects[b].front ? 1 : 0) - (twin.objects[a].front ? 1 : 0));
   const list = el("div", { class: "list" });
   for (const i of order) {
     const o = twin.objects[i];
     const n = team.products.filter((x) => x.spot === o.key).length;
     const extra = o.front && o.front.shelves.length ? ` · ${o.front.shelves.length} shelf edges` : "";
+    const [done, total] = progress(o);
+    const state = done === total ? el("span", { class: "badge ok", text: "✓ confirmed" }) : done ? el("span", { class: "badge", text: `${done}/${total} taped` }) : null;
     list.append(el("button", { class: "spot", onclick: () => openSpot(i) },
       el("span", { class: "k", text: spotTitle(o) }),
-      el("span", { class: "v", text: `${fine(o.size[0])} w × ${fine(o.size[2])} d${extra}${n ? ` · ${n} products` : ""}` })));
+      el("span", { class: "v", text: `${fine(o.size[0])} w × ${fine(o.size[2])} d${extra}${n ? ` · ${n} products` : ""}` }), state));
   }
   p.append(list);
 }
 
+let pendingFocus = null;
 function spotPage(p, i) {
   const o = twin.objects[i], key = o.key, doc = team.spots[slug(key)] || {}, confirmed = doc.confirmed || {};
+  const [done, total] = progress(o);
   p.append(el("button", { class: "small", text: "← All spots", onclick: () => { selected = null; clearDims(); render(); } }));
-  p.append(el("h2", { text: spotTitle(o) }));
-  // Name it.
-  const nameIn = el("input", { id: "spot-name", placeholder: "Give it a name, e.g. Coffee station", value: spotName(o) || "" });
-  const saveName = el("button", { class: "small", text: "Save name", onclick: async () => {
-    await write(T + `spots/${slug(key)}`, { name: nameIn.value.trim() }); } });
-  if (team.canWrite && db) p.append(el("div", { class: "row" }, nameIn, saveName));
+  p.append(el("h2", { style: "margin-top:10px", text: spotTitle(o) }),
+    done === total ? el("span", { class: "badge ok", text: "✓ Confirmed with tape" }) : el("span", { class: "badge", text: `${done} of ${total} taped` }));
 
-  // Front with shelves.
-  if (o.front?.image) {
+  // The photo leads: what the unit looks like from the front, with shelf edges drawn on it.
+  const lead = o.photos?.[0];
+  if (lead?.path && !o.front?.image) {
+    p.append(el("div", { class: "front" }, el("img", { src: R(lead.path), alt: `${spotTitle(o)}, from the scan` })));
+  } else if (o.front?.image) {
     const box = el("div", { class: "front" });
-    const img = el("img", { src: R(o.front.image), alt: `Front of ${spotTitle(o)}, from the scan` });
-    box.append(img);
+    box.append(el("img", { src: R(lead?.path || o.front.image), alt: `Front of ${spotTitle(o)}, from the scan` }));
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${o.front.width} ${o.front.height}`); svg.setAttribute("preserveAspectRatio", "none");
     o.front.shelves.forEach((h, k) => {
       const l = document.createElementNS(svg.namespaceURI, "line");
       const y = o.front.height - h, sure = !o.front.confirmed || o.front.confirmed[k];
-      Object.entries({ x1: 0, x2: o.front.width, y1: y, y2: y, stroke: "#e0337a", "stroke-width": 0.012 }).forEach(([a, v]) => l.setAttribute(a, v));
+      Object.entries({ x1: 0, x2: o.front.width, y1: y, y2: y, stroke: "#ffb000", "stroke-width": 0.012 }).forEach(([a, v]) => l.setAttribute(a, v));
       if (!sure) l.setAttribute("stroke-dasharray", "0.04 0.03");
       svg.append(l);
     });
-    box.append(svg); p.append(box);
-  }
+    if (!lead?.path) box.append(svg);  // shelf lines are drawn on the scan's own front photo, not on a different crop
+    p.append(box);
+    const more = (o.photos || []).slice(1).filter((x) => x.path);
+    if (more.length) { const g = el("div", { class: "photos", style: "margin-top:6px" }); for (const x of more) g.append(el("a", { href: R(x.path), target: "_blank" }, el("img", { src: R(x.path), alt: `${spotTitle(o)}, another view` }))); p.append(g); }
+  } else p.append(el("div", { class: "empty", style: "margin-top:8px" }, el("b", { text: "No front photo for this one." }), el("span", { text: " The scan didn't face it squarely. Measure it with the Measure tool, or tape it below." })));
 
-  // Sizes: estimate beside the tape.
-  p.append(el("h3", { text: "Size and shelves" }));
-  const table = el("table");
-  table.append(el("tr", {}, el("th", { text: "" }), el("th", { text: "Scan" }), el("th", { text: "Tape" })));
-  const rows = [["width", "Width", o.size[0]], ["depth", "Depth", o.size[2]], ["height", "Height", o.size[1]]];
-  const ops = o.front?.openings_top_first || [];
-  if (ops.length > 1) ops.forEach((h, k) => rows.push([`opening ${k + 1}`, `Opening ${k + 1}${k === 0 ? " (top)" : ""}`, h]));
-  for (const [field, label, est] of rows) {
+  const ms = o.measurement;
+  if (ms?.confirm_with_tape) p.append(el("p", { class: "note", style: "margin:10px 0 0" }, el("span", { class: "badge", text: "Confirm with tape" }), el("span", { class: "small", text: ms.reason ? " " + ms.reason : "" })));
+  // Scan against tape. Type the tape reading and press Enter (it jumps to the next row); the difference shows at once.
+  p.append(el("h3", { text: "Scan vs tape" }));
+  const canEdit = team.canWrite && db;
+  const table = el("table", { class: "cmp" });
+  table.append(el("tr", {}, el("th", { text: "" }), el("th", { text: "Scan" }), el("th", { text: canEdit ? "Tape" : "Tape" }), el("th", { text: "Difference" })));
+  const rows = spotFields(o);
+  const tolIn = (f) => ms?.tolerance_in_by_dim?.[f] ?? (/^(width|depth|height)$/.test(f) ? ms?.tolerance_in : null);
+  const tol = (f) => { const t = tolIn(f); return t ? `±${t}"` : ""; };
+  const idOf = (f) => `tape-${slug(key)}-${slug(f)}`;
+  rows.forEach(([field, label, est], r) => {
     const have = confirmed[field];
+    const dcell = el("td");
+    const showDelta = (v) => { dcell.replaceChildren(); if (v) { const d = delta(v, est); dcell.append(el("span", { class: "delta" + (d.off ? " off" : ""), text: d.text })); } };
     const cell = el("td", { class: have ? "num ok" : "num" });
-    if (team.canWrite && db) {
-      const inp = el("input", { class: "tape", id: `tape-${slug(key)}-${slug(field)}`, placeholder: "15¼", value: have ? fine(have) : "", "aria-label": `${label} tape measurement` });
+    if (canEdit) {
+      const inp = el("input", { class: "tape", id: idOf(field), inputmode: "text", enterkeyhint: "next", placeholder: "e.g. 15¼", value: have ? fine(have) : "", "aria-label": `${label} tape measurement` });
+      inp.addEventListener("input", () => showDelta(parseLength(inp.value)));
+      inp.addEventListener("keydown", (e) => { if (e.key !== "Enter") return; e.preventDefault();
+        const nx = rows[r + 1]; pendingFocus = nx ? idOf(nx[0]) : null; const el2 = nx && $(idOf(nx[0])); inp.blur(); if (el2) el2.focus(); });
       inp.addEventListener("change", async () => {
         const v = inp.value.trim() ? parseLength(inp.value) : null;
         if (inp.value.trim() && v == null) { inp.setCustomValidity("Type inches, like 15¼ or 1' 3¼\""); inp.reportValidity(); return; }
@@ -641,25 +749,36 @@ function spotPage(p, i) {
         await write(T + `spots/${slug(key)}`, { confirmed: { ...confirmed, [field]: v } });
       });
       cell.append(inp);
+      if (!have) dcell.append(el("button", { class: "small use", text: "= scan", title: "The tape agrees with the scan", "aria-label": `${label}: tape agrees with the scan`,
+        onclick: () => write(T + `spots/${slug(key)}`, { confirmed: { ...confirmed, [field]: est } }) }));
     } else cell.textContent = have ? "✓ " + fine(have) : "–";
-    table.append(el("tr", {}, el("td", { text: label }), el("td", { class: "num", text: fine(est) }), cell));
-  }
+    if (have) showDelta(have);
+    table.append(el("tr", {}, el("td", { text: label }), el("td", { class: "num" }, fine(est), tol(field) ? el("div", { class: "muted", style: "font-size:11px", text: tol(field) }) : null), cell, dcell));
+  });
   const unsure = o.front?.confirmed ? o.front.confirmed.filter((x) => !x).length : 0;
   p.append(table, el("p", { class: "muted small", text: "Scan sizes are estimates (about ±1\"). Openings are measured between shelf edges from the front; take off the shelf thickness."
     + (unsure ? ` Dashed lines (${unsure}) weren't confirmed by the depth scan: they may be a box or bin edge rather than a shelf.` : "") }));
+
+  // Name it.
+  if (canEdit) {
+    p.append(el("h3", { text: "Name" }));
+    const nameIn = el("input", { id: "spot-name", placeholder: "Give it a name, e.g. Coffee station", value: spotName(o) || "" });
+    p.append(el("div", { class: "row" }, nameIn, el("button", { class: "small", text: "Save name", onclick: async () => {
+      await write(T + `spots/${slug(key)}`, { name: nameIn.value.trim() }); } })));
+  }
 
   // Products.
   p.append(el("h3", { text: "Products here" }));
   const mine = team.products.filter((x) => x.spot === key);
   const plist = el("div", { class: "list" });
-  if (!mine.length) plist.append(el("p", { class: "muted small", text: "None yet." }));
+  if (!mine.length) plist.append(el("p", { class: "muted small", text: "Nothing logged yet. Add what lives here, with how many, to build the product list for this unit." }));
   for (const x of mine) {
     const row = el("div", { class: "row" }, el("span", { class: "num", text: `${Number(x.qty) || 1} ×` }), el("span", { text: String(x.product || "") }));
-    if (team.canWrite && db) row.append(el("button", { class: "small", text: "Remove", "aria-label": `Remove ${x.product}`, onclick: () => db.doc(T + `products/${x.id}`).delete().catch(fail) }));
+    if (canEdit) row.append(el("button", { class: "small", text: "Remove", "aria-label": `Remove ${x.product}`, onclick: () => db.doc(T + `products/${x.id}`).delete().catch(fail) }));
     plist.append(row);
   }
   p.append(plist);
-  if (team.canWrite && db) {
+  if (canEdit) {
     const q = el("input", { id: "prod-qty", type: "number", min: "1", value: "1", style: "width:64px" });
     const n = el("input", { id: "prod-name", placeholder: "Product, as on the master list" });
     p.append(el("form", { class: "row", style: "margin-top:8px", onsubmit: async (e) => {
@@ -672,14 +791,14 @@ function spotPage(p, i) {
   p.append(el("h3", { text: "Team notes" }));
   const notes = team.notes.filter((x) => x.spot === key);
   const nl = el("div", { class: "list" });
-  if (!notes.length) nl.append(el("p", { class: "muted small", text: "No notes yet." }));
+  if (!notes.length) nl.append(el("p", { class: "muted small", text: "No notes yet. Capture what the client wants here: risers, labels, what to keep, what to donate." }));
   for (const x of notes) {
     const by = el("div", { class: "by", text: (x.at ? new Date(x.at).toLocaleString() : "") });
     who(x.by).then((name) => { by.textContent = `${name} · ${x.at ? new Date(x.at).toLocaleString() : ""}`; });
     nl.append(el("div", { class: "note" }, el("div", { text: String(x.text || "") }), by));
   }
   p.append(nl);
-  if (team.canWrite && db) {
+  if (canEdit) {
     const t = el("textarea", { id: "note-text", rows: "2", placeholder: "e.g. Top shelf needs risers; client wants labels in script" });
     p.append(el("form", { style: "margin-top:8px", onsubmit: async (e) => {
       e.preventDefault(); if (!t.value.trim()) return; await add(T + "notes", { spot: key, text: t.value.trim(), ...stamp() }); t.value = "";
@@ -693,6 +812,40 @@ function spotPage(p, i) {
     for (const x of pics) g.append(el("a", { href: R(x.image), target: "_blank" }, el("img", { src: R(x.image), alt: `${x.id} of ${spotTitle(o)}` })));
     p.append(g);
   }
+}
+
+// A sheet to take on site: every unit's sizes with a blank box for the tape, doors and windows too.
+function checkView(p) {
+  const head = el("div", { class: "row noprint", style: "justify-content:space-between;align-items:flex-start" },
+    el("div", {}, el("h2", { text: "Measurements to confirm" }),
+      el("p", { class: "muted small", text: "Take this with the tape. Print it or save it as a PDF, fill in the boxes on site, then type them into each spot." })),
+    el("button", { class: "primary small", text: "Print / save PDF", onclick: () => window.print() }));
+  p.append(head, el("h2", { class: "printonly", text: `${twin.name}: measurements to confirm` }),
+    el("p", { class: "printonly", text: [when, `ceiling ${fine(twin.ceiling_y - twin.floor_y)} (scan)`].filter(Boolean).join(" · ") }));
+  if (!twin.objects.length && !twin.openings.length) {
+    p.append(el("div", { class: "empty" }, el("b", { text: "Nothing to measure yet." }), el("span", { text: " Once a scan finds storage units, doors or windows they are listed here." }))); return;
+  }
+  const room = el("div", { class: "chk-room" });
+  const line = (label, scan, done) => el("div", { class: "chk-row" }, el("span", { class: "l", text: label }), el("span", { class: "s", text: "scan " + fine(scan) }),
+    el("span", { class: "box" }, el("span", { class: "v", text: done ? "✓ " + fine(done) : "" })));
+  for (const o of twin.objects) {
+    const c = confirmedOf(o), u = el("div", { class: "chk-unit" }, el("h4", { text: spotTitle(o) }));
+    for (const [f, l, est] of spotFields(o)) u.append(line(l, est, c[f]));
+    room.append(u);
+  }
+  if (twin.openings.length) {
+    const u = el("div", { class: "chk-unit" }, el("h4", { text: "Doors and windows" }));
+    twin.openings.forEach((x, k) => {
+      const n = `${x.kind ? x.kind[0].toUpperCase() + x.kind.slice(1) : "Opening"} ${k + 1}`;
+      u.append(line(`${n} width`, x.width), line(`${n} height`, x.height));
+    });
+    room.append(u);
+  }
+  const rm = el("div", { class: "chk-unit" }, el("h4", { text: "Room" }));
+  rm.append(line("Ceiling height", twin.ceiling_y - twin.floor_y));
+  twin.walls.forEach((w, k) => rm.append(line(`Wall ${k + 1} length`, w.length)));
+  room.append(rm);
+  p.append(room);
 }
 
 function planView(p) {
@@ -728,7 +881,7 @@ function planView(p) {
 }
 
 function measuresView(p) {
-  p.append(el("h2", { text: "Measurements" }), el("p", { class: "muted small", text: "Distances measured in the 3D room (Measure, then two taps), shared with the team. Add the tape reading to confirm one." }));
+  p.append(el("h2", { text: "Measurements" }), el("p", { class: "muted small", text: "Distances taken in the 3D room, shared with the team." }));
   if (pending) {
     const label = el("input", { id: "measure-label", placeholder: "What it is, e.g. Pantry shelf width" });
     p.append(el("div", { class: "note" }, el("div", { text: `New: ${fine(pending.length)} in the model` }),
@@ -740,7 +893,7 @@ function measuresView(p) {
       } }, label, el("button", { type: "submit", class: "small", text: "Save" }))));
   }
   const list = el("div", { class: "list", style: "margin-top:10px" });
-  if (!team.measures.length) list.append(el("p", { class: "muted small", text: "None saved yet." }));
+  if (!team.measures.length) list.append(el("div", { class: "empty" }, el("b", { text: "No measurements yet." }), el("span", { text: " Tap Measure above the room, then tap two points. It snaps to wall and shelf-unit edges and reads to the half inch. Save it here, then add the tape reading to confirm it." })));
   for (const m of team.measures) {
     const tape = el("input", { class: "tape", id: `m-${m.id}`, placeholder: "Tape", value: m.confirmed ? fine(m.confirmed) : "", "aria-label": `${m.label} tape measurement` });
     tape.addEventListener("change", async () => {
