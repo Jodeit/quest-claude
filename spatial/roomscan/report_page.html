@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>$title</title>
+<style>
+:root{--bg:#faf7f2;--card:#fff;--ink:#2b2926;--mute:#7a736a;--line:#e5ded3;--accent:#8c7a55;--ok:#3f6b4e;--warn:#9a5b1f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Jost,"Helvetica Neue",Arial,sans-serif}
+h1,h2,h3{font-family:"Nanum Myeongjo",Georgia,serif;font-weight:400;margin:0}
+main{max-width:920px;margin:0 auto;padding:0 16px 48px}
+.cover{min-height:70vh;display:flex;flex-direction:column;justify-content:center;border-bottom:1px solid var(--line);padding:48px 0}
+.brand{letter-spacing:.28em;text-transform:uppercase;font-size:13px;color:var(--accent)}
+.cover h1{font-size:clamp(36px,7vw,64px);margin:16px 0 8px}
+.sub{color:var(--mute)}
+section{padding:32px 0;border-bottom:1px solid var(--line)}
+h2{font-size:28px;margin-bottom:12px}
+h3{font-size:19px;margin:24px 0 8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:16px 0}
+.stat{background:var(--card);border:1px solid var(--line);padding:14px}
+.stat b{display:block;font:400 26px "Nanum Myeongjo",Georgia,serif}
+.stat span{font-size:13px;color:var(--mute)}
+.hero{width:100%;max-height:520px;object-fit:cover;display:block;border:1px solid var(--line)}
+.thumbs{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}.thumbs img{height:90px;border:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;background:var(--card);margin:8px 0}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:15px}
+th{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);font-weight:500}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tfoot td{font-weight:600}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;border:1px solid currentColor;white-space:nowrap}
+.badge.ok{color:var(--ok)}.badge.warn{color:var(--warn)}.badge.mute{color:var(--mute)}
+.note{color:var(--mute);font-size:14px}
+.unit{break-inside:avoid-page}
+@media (max-width:560px){th,td{padding:7px 5px;font-size:13px}}
+@media print{
+ :root{--bg:#fff}
+ @page{size:Letter;margin:.6in}
+ body{font-size:11pt}main{max-width:none;padding:0}
+ .cover{min-height:0;height:8in;break-after:page}
+ section{break-before:page;border:0;padding:0}
+ section.sum{break-before:auto}
+ .hero{max-height:4in}tr,.stat{break-inside:avoid}
+}
+</style></head><body><main>
+$body
+</main></body></html>

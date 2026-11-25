@@ -6,6 +6,7 @@
   roomscan summary scan.json             the plan data an LLM would see
   roomscan plan scan.json plan.png       floor plan picture (.png or .svg)
   roomscan sample out.json               write the sample RoomPlan export
+  roomscan report twin_dir out.html [--tape tape.json]   client report, one printable HTML file
   roomscan twin bundle out               a RoomScan scan bundle -> a shared 3D twin page to publish
 """
 
@@ -50,6 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     tw.add_argument("bundle")
     tw.add_argument("out")
 
+    rp = sub.add_parser("report", help="a built twin -> a printable client report (one HTML file)")
+    rp.add_argument("twin", help="twin folder or twin.json")
+    rp.add_argument("out")
+    rp.add_argument("--tape", help="tape.json: spot key -> {width, depth, height} in inches")
+
     x = sub.add_parser("sample", help="write the sample RoomPlan export")
     x.add_argument("out", nargs="?", default="-")
 
@@ -61,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
         t = build_twin(Path(a.bundle), Path(a.out))
         print(json.dumps({"page": str(Path(a.out) / "index.html"), "files": publish_files(Path(a.out)),
                           "processing": t["processing"]}, indent=1))
+        return 0
+
+    if a.cmd == "report":
+        from .report import build_report
+
+        print(json.dumps(build_report(Path(a.twin), Path(a.out), Path(a.tape) if a.tape else None)))
         return 0
 
     if a.cmd == "serve":
