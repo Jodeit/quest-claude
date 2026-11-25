@@ -481,6 +481,199 @@ def confirm_shelves(P: np.ndarray, F: np.ndarray, rd: dict, objects: list, tol: 
     return confirmed
 
 
+def _zbuffer(f: "Frame", P: np.ndarray, ds: int = 4):
+    """Nearest mesh-vertex depth per (downsampled) pixel of a frame, splatted over 2x2 cells."""
+    W, H = f.k["width"] // ds, f.k["height"] // ds
+    x, y, d = f.project(P)
+    x, y = x / ds, y / ds
+    ok = (d > 0.1) & (x >= 0) & (y >= 0) & (x < W - 1) & (y < H - 1)
+    zb = np.full(W * H, np.inf)
+    for ox in (0, 1):
+        for oy in (0, 1):
+            np.minimum.at(zb, (y[ok].astype(int) + oy) * W + x[ok].astype(int) + ox, d[ok])
+    return zb, W, H
+
+
+def crop_sharpness(a: np.ndarray) -> float:
+    """Variance of the Laplacian of an RGB crop (float array), on a size-normalised copy."""
+    g = a.mean(2)
+    if g.shape[0] < 3 or g.shape[1] < 3:
+        return 0.0
+    lap = g[1:-1, :-2] + g[1:-1, 2:] + g[:-2, 1:-1] + g[2:, 1:-1] - 4 * g[1:-1, 1:-1]
+    return float(lap.var())
+
+
+def unit_frame(rd_obj: dict, room: Room):
+    """Centre, axes (x width, z depth), size, and the front normal: the +/-z side facing the room."""
+    t = _m(rd_obj["transform"])
+    c, x, z = t[:3, 3], t[:3, 0], t[:3, 2]
+    W, H, D = (float(v) for v in rd_obj["dimensions"])
+    sign = 1.0 if (room.centre - c) @ z >= 0 else -1.0
+    return c, x, z * sign, (W, H, D)
+
+
+def measure_unit(c, x, n, size, cen, area, edge_len, fr=None) -> dict:
+    """Measurement quality for one unit from the mesh: which front-face edges have mesh surface on
+    them (within 4 cm, along at least half their length), whether the front and back planes were
+    seen, a +/- tolerance in inches from mesh spacing and unconfirmed edges, and a confidence flag.
+    `n` is the front normal (the unit's depth axis, pointing into the room)."""
+    W, H, D = size
+    d = cen - c
+    u, v, w = d @ x, d[:, 1], d @ n
+    near = (np.abs(u) < W / 2 + 0.08) & (np.abs(v) < H / 2 + 0.08) & (np.abs(w) < D / 2 + 0.08)
+    m = dict(edges={}, tolerance_in=None, confidence="low", confirm_with_tape=True)
+    if near.sum() < 8:
+        m.update(reason="no depth mesh near this unit", tolerance_in=3.0, tolerance_in_by_dim=dict(width=3.0, height=3.0, depth=3.0),
+                 mesh_spacing_in=None, front_coverage=0.0, back_coverage=0.0)
+        return m
+    band, seg = 0.04, 10
+
+    def edge(axis_val, along, lo, hi, plane_ok):
+        hit = np.zeros(seg, bool)
+        sel = plane_ok & (np.abs(axis_val) < band + 0.01)
+        bins = np.clip(((along[sel] - lo) / (hi - lo) * seg).astype(int), 0, seg - 1)
+        hit[bins] = True
+        return float(hit.mean())
+
+    front = near & (np.abs(w - D / 2) < band)
+    back = near & (np.abs(w + D / 2) < band)
+    fcov = float(min(1.0, area[front & (np.abs(u) < W / 2) & (np.abs(v) < H / 2)].sum() / (W * H + 1e-9)))
+    bcov = float(min(1.0, area[back & (np.abs(u) < W / 2) & (np.abs(v) < H / 2)].sum() / (W * H + 1e-9)))
+    # Edge lines run along the front face; surface on either the front plane or the adjacent side counts.
+    in_v, in_u = np.abs(v) < H / 2 + 0.02, np.abs(u) < W / 2 + 0.02
+    zone = np.abs(w) < D / 2 + 0.05
+    edges = dict(
+        left=edge(u + W / 2, v, -H / 2, H / 2, near & in_v & zone),
+        right=edge(u - W / 2, v, -H / 2, H / 2, near & in_v & zone),
+        top=edge(v - H / 2, u, -W / 2, W / 2, near & in_u & zone),
+        bottom=edge(v + H / 2, u, -W / 2, W / 2, near & in_u & zone),
+    )
+    m["edges"] = {k: dict(coverage=round(f, 2), confirmed=bool(f >= 0.5)) for k, f in edges.items()}
+    depth_ok = max(fcov, bcov) >= 0.1  # one plane seen on the mesh; the other is a wall or the box itself
+    m["edges"]["depth"] = dict(coverage=round(max(fcov, bcov), 2), confirmed=bool(depth_ok))
+    m["front_coverage"], m["back_coverage"] = round(fcov, 2), round(bcov, 2)
+    spacing = float(np.median(edge_len[near])) if near.any() else None
+    m["mesh_spacing_in"] = round(spacing / 0.0254, 2) if spacing else None
+    base = max(0.5, 0.75 * (spacing / 0.0254 if spacing else 2.0))
+    miss = lambda *k: sum(not m["edges"][e]["confirmed"] for e in k)
+    by = dict(width=base + 0.75 * miss("left", "right"), height=base + 0.75 * miss("top", "bottom"),
+              depth=base + (0.0 if depth_ok else 0.75))
+    m["tolerance_in_by_dim"] = {k: round(v_, 1) for k, v_ in by.items()}
+    m["tolerance_in"] = round(max(by.values()), 1)
+    confirmed = sum(m["edges"][e]["confirmed"] for e in ("left", "right", "top", "bottom", "depth"))
+    if fr and fr.get("confirmed"):
+        m["shelves_confirmed"] = [bool(b) for b in fr["confirmed"]]
+    if m["tolerance_in"] >= 2.0 or confirmed < 2:
+        m["confidence"], m["reason"] = "low", f"only {confirmed} of 5 edges confirmed by depth" if confirmed < 2 else "coarse mesh near this unit"
+    elif m["tolerance_in"] <= 1.0 and confirmed >= 4:
+        m["confidence"] = "high"
+    else:
+        m["confidence"] = "medium"
+    m["confirm_with_tape"] = m["confidence"] == "low"
+    m.setdefault("reason", None)
+    return m
+
+
+def spot_closeups(out: Path, P, F, frames: list, rd: dict, room: Room, objects: list, keep: int = 2, max_side: int = 1200):
+    """Per unit: the frames that see its front best, cropped, written to img/spots/<n>.jpg (n = unit
+    number; extras <n>-2.jpg). Candidates are scored by how much of the front face is visible (a
+    depth buffer per frame, so a chair in front costs) x facing angle / distance, then the top few
+    are cropped and ranked by crop sharpness. Fills objects[i]["photos"] and ["measurement"].
+    Returns the number of units with at least one closeup."""
+    A, B, C = P[F[:, 0]], P[F[:, 1]], P[F[:, 2]]
+    nrm = np.cross(B - A, C - A)
+    area = np.linalg.norm(nrm, axis=1) / 2
+    cen = (A + B + C) / 3
+    edge_len = np.sqrt(4 * area / math.sqrt(3))
+    units = []
+    for i, o in enumerate(rd.get("objects", [])):
+        c, x, n, size = unit_frame(o, room)
+        W, H, _ = size
+        g = np.array([[a, b] for a in np.linspace(-W / 2 + 0.03, W / 2 - 0.03, 9) for b in np.linspace(-H / 2 + 0.03, H / 2 - 0.03, 9)])
+        pts = c + np.outer(g[:, 0], x) + np.outer(g[:, 1], [0, 1, 0]) + n * size[2] / 2
+        units.append(dict(c=c, x=x, n=n, size=size, pts=pts, cands=[]))
+        objects[i]["measurement"] = measure_unit(c, x, n, size, cen, area, edge_len, objects[i].get("front"))
+    sharp = np.array([f.sharpness() for f in frames]) if frames else np.zeros(0)
+    rel = np.clip(sharp / (np.median(sharp) + 1e-6), 0.3, 1.5) if len(sharp) else sharp
+    for fi, f in enumerate(frames):
+        zb, Wd, Hd = _zbuffer(f, P)
+        k = f.k
+        for ui, u in enumerate(units):
+            x_, y_, d_ = f.project(u["pts"])
+            ok = (d_ > 0.2) & (d_ < 6) & (x_ > 4) & (y_ > 4) & (x_ < k["width"] - 4) & (y_ < k["height"] - 4)
+            if ok.mean() < 0.5:
+                continue
+            zi = np.clip(y_ / 4, 0, Hd - 1).astype(int) * Wd + np.clip(x_ / 4, 0, Wd - 1).astype(int)
+            seen = ok & (d_ <= zb[zi] + 0.08 + 0.02 * d_)
+            vis = float(seen.mean())
+            toc = f.pos - u["c"]
+            dist = float(np.linalg.norm(toc))
+            facing = float((toc / dist) @ u["n"])
+            if vis < 0.5 or facing < 0.35 or dist < 0.3:
+                continue
+            u["cands"].append(dict(fi=fi, geo=vis * facing ** 2 / dist * rel[fi], vis=vis, facing=facing, dist=dist,
+                                   box=(x_[seen].min(), y_[seen].min(), x_[seen].max(), y_[seen].max())))
+    (out / "img" / "spots").mkdir(parents=True, exist_ok=True)
+    done = 0
+    for i, u in enumerate(units):
+        cands = sorted(u["cands"], key=lambda q: -q["geo"])[:6]
+        scored = []
+        for q in cands:
+            f = frames[q["fi"]]
+            x0, y0, x1, y1 = q["box"]
+            mx, my = 0.08 * (x1 - x0) + 6, 0.08 * (y1 - y0) + 6
+            x0, y0 = max(0, int(x0 - mx)), max(0, int(y0 - my))
+            x1, y1 = min(f.k["width"], int(x1 + mx)), min(f.k["height"], int(y1 + my))
+            if x1 - x0 < 120 or y1 - y0 < 120:
+                continue
+            crop = np.clip(f.img[y0:y1, x0:x1] * f.gain, 0, 255)
+            q.update(crop=(x0, y0, x1, y1), arr=crop, sharp=crop_sharpness(crop))
+            scored.append(q)
+        if scored:
+            top = max(q["sharp"] for q in scored) + 1e-9
+            gtop = max(q["geo"] for q in scored)
+            for q in scored:
+                q["rank"] = 0.5 * q["geo"] / gtop + 0.5 * q["sharp"] / top
+        picked = []
+        for q in sorted(scored, key=lambda q: -q["rank"]):
+            if all(np.linalg.norm(frames[q["fi"]].pos - frames[p["fi"]].pos) > 0.3 for p in picked):
+                picked.append(q)
+            if len(picked) >= keep:
+                break
+        photos = []
+        for j, q in enumerate(picked):
+            f = frames[q["fi"]]
+            im = Image.fromarray(q["arr"].astype(np.uint8))
+            # Frames are stored in sensor orientation: turn the crop so world-up is up.
+            ux, uy, _ = f.project(np.array([u["c"], u["c"] + [0, 0.5, 0]]))
+            dx, dy = ux[1] - ux[0], uy[1] - uy[0]
+            rot = 0 if abs(dy) >= abs(dx) and dy < 0 else 180 if abs(dy) >= abs(dx) else 90 if dx > 0 else 270
+            if rot:
+                im = im.rotate(rot, expand=True)
+            if max(im.size) > max_side:
+                im.thumbnail((max_side, max_side), Image.LANCZOS)
+            rel_path = f"img/spots/{i + 1}{'' if j == 0 else f'-{j + 1}'}.jpg"
+            im.save(out / rel_path, quality=86)
+            fwd = _flat(-f.pose[:3, 2])
+            photos.append(dict(path=rel_path, kind="closeup", camera=[round(float(v), 3) for v in f.pos],
+                               direction=[round(float(fwd[0]), 3), round(float(fwd[2]), 3)],
+                               view_angle_deg=round(math.degrees(math.acos(min(1.0, q["facing"]))), 1),
+                               distance_m=round(q["dist"], 2), visible=round(q["vis"], 2),
+                               sharpness=round(q["sharp"], 1), rotated_deg=rot, frame=f.k["file"], crop=list(q["crop"])))
+        objects[i]["photos"] = photos
+        done += bool(photos)
+    return done
+
+
+def room_photo_fallback(objects: list, photo_out: list):
+    """Units with no closeup get the room photos whose subject is that unit (if any)."""
+    for o in objects:
+        if o.get("photos"):
+            continue
+        o["photos"] = [dict(path=p["image"], kind="room_photo", camera=p["position"], direction=p["direction"],
+                            view_angle_deg=None) for p in photo_out if p["subject"] == o["key"] and p["image"]]
+
+
 def write_textured_mesh(out: Path, P, F, choice, frames: list, room: "Room", width: int = 960) -> dict:
     """RTW2: triangle count, the box positions are measured in (min xyz, size xyz, f32), then per
     corner positions as u16 across that box (a fraction of a millimetre) and texture coordinates as
@@ -694,6 +887,14 @@ def build_twin(bundle: Path, out: Path, cell: float = 0.025, textured: bool = Tr
             write_web_mesh(out / "mesh.b64.txt", P2, F2, C2, ceiling)
             mesh_out = dict(file="mesh.b64.txt", vertices=len(P2), triangles=int(len(F2)), ceiling_triangles=int(ceiling.sum()))
         report["mesh_out"] = mesh_out
+        report["closeups"] = spot_closeups(out, P, F, frames, rd, room, objects)
+
+    if mesh_out is None:
+        for i, o in enumerate(rd.get("objects", [])):
+            c, x, n, size = unit_frame(o, room)
+            objects[i]["measurement"] = measure_unit(c, x, n, size, np.zeros((0, 3)), np.zeros(0), np.zeros(0), objects[i].get("front"))
+            objects[i]["photos"] = []
+    room_photo_fallback(objects, photo_out)
 
     twin = dict(
         name=info.get("name", bundle.name), date=info.get("date"), units="imperial",
