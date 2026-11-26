@@ -144,6 +144,7 @@ struct ScanRow: View {
     @State private var showNames = false
     @State private var bundleURL: URL?
     @State private var makingTwin = false
+    @State private var makingSplat = false
     @State private var showDollhouse = false
     @State private var showMeasurements = false
     @State private var rebuilding = false
@@ -212,6 +213,22 @@ struct ScanRow: View {
                     } label: { Label(makingTwin ? "Making the team twin…" : "Share for team twin (.zip)", systemImage: "person.3") }
                     .disabled(makingTwin)
                     if library.hasFrames(scan) {
+                        Button {
+                            makingSplat = true
+                            let scan = scan, lib = library
+                            Task {
+                                let result: Result<URL, Error> = await Task.detached(priority: .userInitiated) {
+                                    Result { try SplatExport.make(scan, library: lib) }
+                                }.value
+                                makingSplat = false
+                                switch result {
+                                case let .success(url): bundleURL = url
+                                case let .failure(error): planError = "Couldn't make the splat set: \(error.localizedDescription)"
+                                }
+                            }
+                        } label: { Label(makingSplat ? "Making the splat set…" : "Share for splat training (.zip)",
+                                         systemImage: "sparkles") }
+                        .disabled(makingSplat)
                         Button {
                             Task {
                                 rebuilding = true

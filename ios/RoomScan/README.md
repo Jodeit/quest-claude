@@ -132,6 +132,12 @@ Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
   twin.json with walls, doorways, spots and their shelves, floor and photos; the images; and what was
   done in the app (spot names, tape measurements, products, 3D measurements). On the page, **Add a
   scan** uploads it for the team and brings those along.
+- **Gaussian splat:** **More → Share for splat training (.zip)** packages every kept frame with
+  ARKit's pose and lens for it, in nerfstudio's `transforms.json` layout, and `points.ply` to start
+  from (the LiDAR mesh's vertices, else points on RoomPlan's walls, floor and boxes, each coloured
+  from the nearest frame that sees it). ARKit's poses mean no structure-from-motion step. Train it on
+  a free GPU with [`spatial/splat/RoomScan_splat.ipynb`](../../spatial/splat/) (Kaggle or Colab,
+  minutes on a T4); other trainers that read `transforms.json` (nerfstudio, Brush) take it too.
 - **Sending a scan:** **More → Share scan bundle** zips the scan's folder (scan, photos, frames,
   elevations, PDF, products, names) to send on, e.g. into a Claude chat to look at what went wrong.
 - **Spot names:** **More → Name spots…** lists every object and wall as labelled on the plan
