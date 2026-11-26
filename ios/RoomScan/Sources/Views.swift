@@ -6,8 +6,6 @@ struct HomeView: View {
     @EnvironmentObject private var settings: ServerSettings
     @EnvironmentObject private var library: ScanLibrary
     @State private var showSettings = false
-    @State private var askName = false
-    @State private var newName = ""
     @State private var session: ScanSession?
     @State private var homePlan: URL?
     @State private var homeDollhouse: [SavedScan]?
@@ -23,13 +21,14 @@ struct HomeView: View {
                     }
                 }
                 Section {
-                    Button {
-                        newName = ""
-                        askName = true
-                    } label: {
-                        Label("New scan", systemImage: "viewfinder")
-                    }
-                    .disabled(!RoomCaptureSession.isSupported)
+                    // One tap into the camera; the room is named on the scan screen, if at all.
+                    Button(action: start) { ScanHero(first: library.scans.isEmpty) }
+                        .buttonStyle(PressScale())
+                        .disabled(!RoomCaptureSession.isSupported)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
+                Section {
                     Button {
                         showSettings = true
                     } label: {
@@ -77,11 +76,6 @@ struct HomeView: View {
                 if let rooms = homeDollhouse { DollhouseView(scans: rooms) }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .alert("Name this room", isPresented: $askName) {
-                TextField("Living room", text: $newName)
-                Button("Scan") { start() }
-                Button("Cancel", role: .cancel) {}
-            }
             .fullScreenCover(item: $session) { s in
                 ScanScreen(session: s) { session = nil }
             }
@@ -94,8 +88,48 @@ struct HomeView: View {
     }
 
     private func start() {
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        session = ScanSession(name: name.isEmpty ? "Room" : name, settings: settings, library: library)
+        // "Room 3": a placeholder the scan screen offers to replace (tap the name).
+        let taken = Set(library.scans.map(\.name))
+        var n = library.scans.count + 1
+        while taken.contains("Room \(n)") { n += 1 }
+        session = ScanSession(name: "Room \(n)", settings: settings, library: library)
+    }
+}
+
+/// The home screen's way in: big, bright, and saying what happens next.
+struct ScanHero: View {
+    let first: Bool
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle().fill(.white.opacity(0.22)).frame(width: 60, height: 60)
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 28, weight: .semibold))
+                    .symbolEffect(.pulse, isActive: enabled)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(first ? "Scan your first room" : "Scan a room").font(.title3.weight(.bold))
+                Text("Walk round the edge with the phone up. A couple of minutes; it tells you where to point.")
+                    .font(.subheadline)
+                    .opacity(0.9)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.headline).opacity(0.8)
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(colors: enabled ? [Color(red: 0.16, green: 0.45, blue: 1), Color(red: 0.42, green: 0.25, blue: 0.95)]
+                                           : [.gray, .gray.opacity(0.7)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -237,8 +271,13 @@ struct ScanScreen: View {
     @State private var flash = false
     @State private var confirmDone = false
     @State private var askNext = false
+    @State private var askRename = false
     @State private var gray = true
     @State private var nextName = ""
+    @State private var renameText = ""
+
+    /// The camera is live: the RoomPlan scan, or the photo-real pass after it.
+    private var live: Bool { session.phase == .scanning || session.meshPassRunning }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -246,103 +285,180 @@ struct ScanScreen: View {
                 .ignoresSafeArea()
             Color.white.opacity(flash ? 0.6 : 0).ignoresSafeArea().allowsHitTesting(false)
                 .onChange(of: session.photoCount) { flashOnce() }
-            if session.phase == .scanning || session.meshPassRunning, let coverage = session.coverage {
+            if live, let coverage = session.coverage {
                 CoverageMap(snapshot: coverage)
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .allowsHitTesting(false)
+                    .transition(.opacity)
             }
             if session.meshPassRunning, let stop = session.stop {
                 StopRing(progress: stop)
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
+                    .transition(.opacity)
             }
             VStack(spacing: 10) {
-                Text(title).font(.headline)
-                Text("\(session.counts.walls) walls · \(session.counts.doors) doors · "
-                     + "\(session.counts.windows) windows · \(session.counts.objects) objects")
-                    .font(.subheadline)
-                if session.phase == .scanning || session.meshPassRunning,
-                   let hint = session.hint ?? session.coverage?.hint
-                    ?? (session.meshPassRunning ? "Sweep slowly at chest height; go close to shelves and anything you'll want to measure." : nil) {
-                    Text(hint).font(.callout.weight(.medium)).multilineTextAlignment(.center)
-                        .animation(.default, value: hint)
+                if live, let tip {
+                    HintCard(tip: tip)
+                        .id(tip.text)
+                        .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                 }
-                Text(session.serverStatus).font(.caption).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                if session.phase.isDone, !session.meshPassRunning, !session.checklist.isEmpty {
-                    BeforeYouLeave(session: session)
-                }
-                if session.phase.isDone, !session.meshPassRunning, !session.previews.isEmpty {
-                    SpotPreviews(session: session)
-                }
-                HStack(spacing: 12) {
-                    switch session.phase {
-                    case .scanning:
-                        Button("Cancel", role: .cancel) {
-                            session.cancel()
-                            close()
-                        }
-                        .buttonStyle(.bordered)
-                        Button {
-                            gray.toggle()
-                            session.controller.showsGray = gray
-                        } label: {
-                            Image(systemName: gray ? "circle.lefthalf.filled" : "circle")
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityLabel(gray ? "Hide gray for unphotographed walls" : "Show gray for unphotographed walls")
-                        Button {
-                            Task { await shoot() }
-                        } label: {
-                            Label(session.photoCount == 0 ? "Photo" : "Photo (\(session.photoCount))",
-                                  systemImage: "camera.fill")
-                        }
-                        .buttonStyle(.bordered)
-                        Button("Done") {
-                            if (session.coverage?.weakWalls ?? 0) > 0 { confirmDone = true } else { session.finish() }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .confirmationDialog(doneQuestion, isPresented: $confirmDone, titleVisibility: .visible) {
-                            Button("Keep scanning", role: .cancel) {}
-                            Button("Finish anyway") { session.finish() }
-                        }
-                    case .processing:
-                        ProgressView()
-                    case .done where session.meshPassRunning:
-                        Button("Finish photo-real pass") { session.finishMeshPass() }
-                            .buttonStyle(.borderedProminent)
-                    case .done:
-                        Button("Close", action: close).buttonStyle(.bordered)
-                        Button("Photo-real pass") { session.startMeshPass() }
-                            .buttonStyle(.bordered)
-                        Button("Next room") {
-                            nextName = ""
-                            askNext = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                    default:
-                        Button("Close", action: close).buttonStyle(.borderedProminent)
-                    }
-                }
+                panel
             }
-            .padding()
-            .frame(maxWidth: 420)
-            .alert("Name the next room", isPresented: $askNext) {
-                TextField("Kitchen", text: $nextName)
-                Button("Scan") {
-                    let n = nextName.trimmingCharacters(in: .whitespaces)
-                    session.nextRoom(named: n.isEmpty ? "Room \(session.roomsSaved + 1)" : n)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Walk straight there with the phone up: keeping the camera going is what lets the rooms "
-                     + "line up on the home plan.")
-            }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+            .animation(.snappy, value: tip?.text)
+            .frame(maxWidth: 440)
             .padding()
         }
+        .animation(.easeInOut(duration: 0.25), value: session.coverage == nil)
+        // A tick each time RoomPlan finds something new: the scan answering back.
+        .sensoryFeedback(.increase, trigger: session.counts) { old, new in new.total > old.total }
+        .alert("Name the next room", isPresented: $askNext) {
+            TextField("Kitchen", text: $nextName)
+            Button("Scan") {
+                let n = nextName.trimmingCharacters(in: .whitespaces)
+                session.nextRoom(named: n.isEmpty ? "Room \(session.roomsSaved + 1)" : n)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Walk straight there with the phone up: keeping the camera going is what lets the rooms "
+                 + "line up on the home plan.")
+        }
+        .alert("Name this room", isPresented: $askRename) {
+            TextField("Living room", text: $renameText)
+            Button("Save") { session.rename(to: renameText) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private var panel: some View {
+        VStack(spacing: 12) {
+            header
+            CountChips(counts: session.counts)
+            if !session.serverStatus.isEmpty {
+                Text(session.serverStatus).font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if session.phase.isDone, !session.meshPassRunning, !session.checklist.isEmpty {
+                BeforeYouLeave(session: session)
+            }
+            if session.phase.isDone, !session.meshPassRunning, !session.previews.isEmpty {
+                SpotPreviews(session: session)
+            }
+            controls
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            StatusDot(phase: session.phase, meshPass: session.meshPassRunning)
+            if session.phase == .scanning || session.phase == .processing {
+                // Scans start with a made-up name; tap it to name the room.
+                Button {
+                    renameText = session.name.hasPrefix("Room ") ? "" : session.name
+                    askRename = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(title).font(.headline).lineLimit(1)
+                        Image(systemName: "pencil").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Names the room")
+            } else {
+                Text(title).font(.headline).lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            if session.phase == .scanning {
+                Text(session.startedAt, style: .timer)
+                    .font(.subheadline.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.secondary)
+            } else if session.phase == .processing {
+                ProgressView()
+            }
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
+        switch session.phase {
+        case .scanning:
+            HStack(spacing: 12) {
+                RoundIconButton(symbol: "xmark", label: "Cancel scan") {
+                    session.cancel()
+                    close()
+                }
+                RoundIconButton(symbol: gray ? "circle.lefthalf.filled" : "circle",
+                                label: gray ? "Hide gray for unphotographed walls" : "Show gray for unphotographed walls") {
+                    gray.toggle()
+                    session.controller.showsGray = gray
+                }
+                Spacer(minLength: 0)
+                ShutterButton(count: session.photoCount) { Task { await shoot() } }
+                Spacer(minLength: 0)
+                Button {
+                    if (session.coverage?.weakWalls ?? 0) > 0 { confirmDone = true } else { session.finish() }
+                } label: {
+                    Label("Done", systemImage: "checkmark")
+                        .font(.headline)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .tint(.green)
+                .confirmationDialog(doneQuestion, isPresented: $confirmDone, titleVisibility: .visible) {
+                    Button("Keep scanning", role: .cancel) {}
+                    Button("Finish anyway") { session.finish() }
+                }
+            }
+        case .processing:
+            Text("Hold on while RoomPlan tidies up the walls.").font(.caption).foregroundStyle(.secondary)
+        case .done where session.meshPassRunning:
+            Button {
+                session.finishMeshPass()
+            } label: {
+                Label("Finish photo-real pass", systemImage: "checkmark").font(.headline).frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(.green)
+        case .done:
+            HStack(spacing: 10) {
+                Button("Close", action: close).buttonStyle(.bordered)
+                Button {
+                    session.startMeshPass()
+                } label: { Label("Photo-real", systemImage: "cube.transparent") }
+                    .buttonStyle(.bordered)
+                Button {
+                    nextName = ""
+                    askNext = true
+                } label: { Label("Next room", systemImage: "arrow.right") }
+                    .buttonStyle(.borderedProminent)
+            }
+            .buttonBorderShape(.capsule)
+            .font(.subheadline.weight(.semibold))
+        default:
+            Button("Close", action: close).buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+        }
+    }
+
+    /// What to tell the person right now: the capture hint, else the coverage one, else a first step.
+    private var tip: ScanTip? {
+        guard live else { return nil }
+        if let text = session.hint ?? session.coverage?.hint { return ScanTip(text) }
+        if session.meshPassRunning {
+            return ScanTip("Sweep slowly at chest height; go close to shelves and anything you'll want to measure.",
+                           symbol: "cube.transparent", tint: .cyan)
+        }
+        if session.counts.walls == 0 {
+            return ScanTip("Point at a wall and walk slowly round the edge of the room. Walls light up as they're found.",
+                           symbol: "figure.walk", tint: .blue)
+        }
+        return nil
     }
 
     private func shoot() async { _ = await session.takePhoto() }
@@ -361,12 +477,175 @@ struct ScanScreen: View {
 
     private var title: String {
         switch session.phase {
-        case .scanning: return "Scanning \(session.name)"
-        case .processing: return "Processing…"
-        case .done: return "Saved \(session.name)"
+        case .scanning: return session.meshPassRunning ? "Photo-real pass" : session.name
+        case .processing: return "Processing \(session.name)…"
+        case .done: return session.meshPassRunning ? "Photo-real pass" : "Saved \(session.name)"
         case let .failed(message): return message
         case .cancelled: return "Cancelled"
         }
+    }
+}
+
+/// One line of guidance with an icon that says what kind it is: warnings in orange and pulsing,
+/// progress in green, a direction in blue.
+struct ScanTip: Equatable {
+    var text: String
+    var symbol: String
+    var tint: Color
+    var urgent = false
+
+    init(_ text: String, symbol: String, tint: Color, urgent: Bool = false) {
+        self.text = text
+        self.symbol = symbol
+        self.tint = tint
+        self.urgent = urgent
+    }
+
+    /// From the wording of CaptureHints' and Coverage's messages.
+    init(_ text: String) {
+        func has(_ s: String) -> Bool { text.localizedCaseInsensitiveContains(s) }
+        let look: (String, Color, Bool)
+        if has("slow down") { look = ("tortoise.fill", .orange, true) }
+        else if has("finger") { look = ("hand.raised.fill", .orange, true) }
+        else if has("dark") { look = ("lightbulb.fill", .yellow, true) }
+        else if has("tracking") || has("losing its place") || has("finding its place") || has("more detail") {
+            look = ("exclamationmark.triangle.fill", .orange, true)
+        }
+        else if has("good.") || has("well covered") { look = ("checkmark.seal.fill", .green, false) }
+        else if has("all the way round") || has("tilt") { look = ("arrow.up.and.down.circle.fill", .cyan, false) }
+        else if has("turn slowly") { look = ("arrow.triangle.2.circlepath", .cyan, false) }
+        else if has("storage") { look = ("archivebox.fill", .purple, false) }
+        else if has("floor") { look = ("arrow.down.to.line", .blue, false) }
+        else if has("wall") { look = ("viewfinder", .blue, false) }
+        else { look = ("sparkles", .blue, false) }
+        self.init(text, symbol: look.0, tint: look.1, urgent: look.2)
+    }
+}
+
+struct HintCard: View {
+    let tip: ScanTip
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: tip.symbol)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(tip.tint)
+                .symbolEffect(.pulse, isActive: tip.urgent)
+                .frame(width: 30)
+            Text(tip.text)
+                .font(.callout.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(tip.tint.opacity(tip.urgent ? 0.8 : 0.35), lineWidth: tip.urgent ? 2 : 1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// What RoomPlan has found, as chips that count up (and light up once there's one).
+struct CountChips: View {
+    let counts: ScanSession.Counts
+
+    var body: some View {
+        HStack(spacing: 8) {
+            chip(counts.walls, "square.split.2x1", "wall")
+            chip(counts.doors, "door.left.hand.closed", "door")
+            chip(counts.windows, "window.vertical.closed", "window")
+            chip(counts.objects, "sofa", "object")
+        }
+        .animation(.snappy, value: counts)
+    }
+
+    private func chip(_ n: Int, _ symbol: String, _ noun: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.caption.weight(.semibold))
+            Text("\(n)").font(.subheadline.weight(.bold).monospacedDigit())
+                .contentTransition(.numericText(value: Double(n)))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .foregroundStyle(n > 0 ? Color.primary : Color.secondary)
+        .background(n > 0 ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.07), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(n) \(noun)\(n == 1 ? "" : "s")")
+    }
+}
+
+/// Red and breathing while the camera records, green once saved.
+struct StatusDot: View {
+    let phase: ScanSession.Phase
+    let meshPass: Bool
+
+    var body: some View {
+        let recording = phase == .scanning || meshPass
+        Image(systemName: "circle.fill")
+            .font(.system(size: 10))
+            .foregroundStyle(recording ? Color.red : phase.isDone ? Color.green : Color.secondary)
+            .symbolEffect(.pulse, isActive: recording)
+            .accessibilityHidden(true)
+    }
+}
+
+struct RoundIconButton: View {
+    let symbol: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .background(Color.primary.opacity(0.1), in: Circle())
+        }
+        .buttonStyle(PressScale())
+        .accessibilityLabel(label)
+    }
+}
+
+/// A camera-app shutter: the photo button is the one you reach for while scanning.
+struct ShutterButton: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle().strokeBorder(.white, lineWidth: 4).frame(width: 70, height: 70)
+                Circle().fill(.white).frame(width: 56, height: 56)
+                Image(systemName: "camera.fill").font(.title3).foregroundStyle(.black)
+            }
+            .overlay(alignment: .topTrailing) {
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .contentTransition(.numericText(value: Double(count)))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor, in: Capsule())
+                        .offset(x: 4, y: -2)
+                }
+            }
+            .animation(.snappy, value: count)
+        }
+        .buttonStyle(PressScale())
+        .accessibilityLabel(count == 0 ? "Take photo" : "Take photo, \(count) taken")
+    }
+}
+
+struct PressScale: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
     }
 }
 

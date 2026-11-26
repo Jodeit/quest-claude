@@ -49,7 +49,7 @@ except `GET /health` needs `Authorization: Bearer <token>`.
 | `POST /mcp` | MCP over streamable HTTP |
 | `GET /scans` | The scans stored here |
 | `POST /scans?name=Lounge` | Upload a RoomPlan export (JSON body); add `&stage=live` while still scanning |
-| `PUT /scans/<id>` | A newer capture of the same scan (`?stage=live` while scanning, none for the final one) |
+| `PUT /scans/<id>` | A newer capture of the same scan (`?stage=live` while scanning, none for the final one; `?name=` renames it) |
 | `GET /scans/<id>/model.ifc` | Download the last built model |
 | `GET /health` | Liveness, no token |
 

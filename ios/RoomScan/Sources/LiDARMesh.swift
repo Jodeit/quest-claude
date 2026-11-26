@@ -15,28 +15,42 @@ struct LiDARMesh {
 
     /// Every mesh anchor the session has, joined into one mesh in world coordinates.
     static func harvest(_ session: ARSession) -> LiDARMesh? {
-        guard let anchors = session.currentFrame?.anchors.compactMap({ $0 as? ARMeshAnchor }), !anchors.isEmpty else {
-            return nil
-        }
+        harvest(anchors: meshAnchors(session))
+    }
+
+    /// The session's mesh pieces right now. Taking them is cheap (each is an immutable snapshot), so
+    /// they can be copied out with `harvest(anchors:)` away from the main thread.
+    static func meshAnchors(_ session: ARSession) -> [ARMeshAnchor] {
+        session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
+    }
+
+    /// The pieces joined into one mesh in world coordinates. Hundreds of thousands of vertices in a
+    /// room, so the arrays are sized once and filled straight from the geometry buffers.
+    static func harvest(anchors: [ARMeshAnchor]) -> LiDARMesh? {
+        guard !anchors.isEmpty else { return nil }
         var mesh = LiDARMesh()
+        mesh.positions.reserveCapacity(anchors.reduce(0) { $0 + $1.geometry.vertices.count })
+        mesh.faces.reserveCapacity(anchors.reduce(0) { $0 + $1.geometry.faces.count * $1.geometry.faces.indexCountPerPrimitive })
         for anchor in anchors {
             let g = anchor.geometry
             let base = UInt32(mesh.positions.count)
             let v = g.vertices
-            let vp = v.buffer.contents()
+            let vp = v.buffer.contents().advanced(by: v.offset)
+            let t = anchor.transform
             for i in 0..<v.count {
-                let p = vp.advanced(by: v.offset + v.stride * i).assumingMemoryBound(to: (Float, Float, Float).self).pointee
-                let w = anchor.transform * SIMD4(p.0, p.1, p.2, 1)
+                let p = vp.advanced(by: v.stride * i).assumingMemoryBound(to: Float.self)
+                let w = t * SIMD4(p[0], p[1], p[2], 1)
                 mesh.positions.append(SIMD3(w.x, w.y, w.z))
             }
             let f = g.faces
             let fp = f.buffer.contents()
             let n = f.count * f.indexCountPerPrimitive
-            for i in 0..<n {
-                let idx: UInt32 = f.bytesPerIndex == 4
-                    ? fp.advanced(by: i * 4).assumingMemoryBound(to: UInt32.self).pointee
-                    : UInt32(fp.advanced(by: i * 2).assumingMemoryBound(to: UInt16.self).pointee)
-                mesh.faces.append(base + idx)
+            if f.bytesPerIndex == 4 {
+                let idx = fp.assumingMemoryBound(to: UInt32.self)
+                for i in 0..<n { mesh.faces.append(base + idx[i]) }
+            } else {
+                let idx = fp.assumingMemoryBound(to: UInt16.self)
+                for i in 0..<n { mesh.faces.append(base + UInt32(idx[i])) }
             }
         }
         return mesh.triangleCount > 0 ? mesh : nil
@@ -718,11 +732,17 @@ final class MeshPassView: UIView, ARSCNViewDelegate {
         let fe = SCNGeometryElement(data: data, primitiveType: .triangles, primitiveCount: f.count,
                                     bytesPerIndex: f.bytesPerIndex)
         let geometry = SCNGeometry(sources: [vs], elements: [fe])
+        geometry.materials = [wireframe]
+        return geometry
+    }
+
+    /// One material for every piece (ARKit updates pieces many times a second; a new material each
+    /// time was garbage for SceneKit to collect and a new shader state to bind).
+    private static let wireframe: SCNMaterial = {
         let m = SCNMaterial()
         m.fillMode = .lines
         m.diffuse.contents = UIColor(red: 0.3, green: 0.9, blue: 1, alpha: 0.7)
         m.lightingModel = .constant
-        geometry.materials = [m]
-        return geometry
-    }
+        return m
+    }()
 }

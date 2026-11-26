@@ -3,7 +3,21 @@
 Scans a room with Apple's RoomPlan (LiDAR) and sends it to a **roomscan** server
 ([`spatial/`](../../spatial/README.md)), where an LLM turns it into an IFC model.
 
-- **Scan:** Apple's own RoomPlan scanning UI, with its coaching and the processed 3D result.
+- **Scan:** Apple's own RoomPlan scanning UI, with its coaching and the processed 3D result. **Scan a
+  room** on the home screen goes straight into the camera as *Room 3* (or whatever number is next);
+  tap the name on the scan screen to name it, which the saved scan and the server copy both take.
+  Below the camera: one guidance card (an icon that says what kind: orange and pulsing for
+  something wrong, like moving too fast or a finger on the lens; blue for where to point; green
+  when it's good), a timer, chips that count walls, doors, windows and objects as RoomPlan finds
+  them (with a tick on the haptics each time one appears), and camera-app controls: cancel, gray on
+  or off, a shutter in the middle, **Done**.
+- **Keeping it smooth:** RoomPlan needs most of the phone, so the app's own work while scanning is
+  kept off the main thread and cheap: the gray overlay projects only the unphotographed cells, with
+  one matrix per frame and nothing allocated per cell, drops those off screen, renders its gray copy
+  as one 8-bit channel with no colour management, and shows mask and gray from the same frame;
+  coverage tests each cell only against frames on that wall's room side and within reach; the
+  photo-real pass copies the LiDAR mesh out for its coverage off the main thread and reuses one
+  wireframe material; the live JSON is encoded off the main thread.
 - **Live:** while you scan, the room as RoomPlan currently understands it goes to the server every
   2 seconds (newest only, never queued up). An LLM watching the server sees walls, doors and
   furniture appear and can tell you what's missing. Turn it off in Settings to send only the end result.
@@ -155,7 +169,7 @@ Needs iOS 17 and a LiDAR device: iPhone 12 Pro or newer Pro, or an iPad Pro.
    It prints its address and a bearer token.
 2. In RoomScan, tap **Set up the server**, enter `http://<that machine's IP>:8765` and the token,
    and tap **Test connection**. iOS asks once for local network access; allow it.
-3. **New scan**, name the room, walk it slowly with the phone pointed at the walls, tap **Done**.
+3. **Scan a room**, walk it slowly with the phone pointed at the walls (tap its name to name it), tap **Done**.
 
 On the server side, the scan shows up in `list_scans` with `stage: "live"` while scanning, then
 `"final"`.

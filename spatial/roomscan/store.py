@@ -66,9 +66,10 @@ class Store:
             {"name": name or scan_id, "received": time.time(), "source": source, "stage": stage, "updates": 1}))
         return scan_id
 
-    def replace(self, scan_id: str, data: dict, stage: str = "final") -> dict:
+    def replace(self, scan_id: str, data: dict, stage: str = "final", name: str | None = None) -> dict:
         """Swap in a newer capture of the same room (a phone streaming while it scans). Edits stay;
-        they refer to element ids, which can shift while a scan is still live."""
+        they refer to element ids, which can shift while a scan is still live. A name renames it (the
+        phone starts scanning before the room is named)."""
         d = self.dir(scan_id)
         read_capture(data)
         tmp = d / "capture.tmp"
@@ -76,6 +77,8 @@ class Store:
         tmp.replace(d / "capture.json")
         meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
         meta.update({"received": time.time(), "stage": stage, "updates": int(meta.get("updates", 1)) + 1})
+        if name:
+            meta["name"] = name
         (d / "meta.json").write_text(json.dumps(meta))
         self._cache.pop(scan_id, None)
         return meta

@@ -347,7 +347,7 @@ def make_server(store: Store, public_url: str | None = None) -> MCPServer:
         except ScanNotFound:
             return JSONResponse({"error": "no such scan"}, status_code=404)
         try:
-            meta = store.replace(scan_id, await request.json(), stage_of(request))
+            meta = store.replace(scan_id, await request.json(), stage_of(request), request.query_params.get("name"))
         except Exception as ex:
             return JSONResponse({"error": f"not a RoomPlan export: {ex}"}, status_code=400)
         try:

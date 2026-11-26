@@ -22,6 +22,7 @@ final class ScanSession: ObservableObject, Identifiable {
 
     struct Counts: Equatable {
         var walls = 0, doors = 0, windows = 0, objects = 0
+        var total: Int { walls + doors + windows + objects }
 
         init() {}
         init(_ room: CapturedRoom) {
@@ -42,7 +43,9 @@ final class ScanSession: ObservableObject, Identifiable {
     }
 
     nonisolated let id = UUID()
-    private(set) var name: String
+    @Published private(set) var name: String
+    /// When this room's scan started, for the clock on the scan screen.
+    @Published private(set) var startedAt = Date()
     /// Every room scanned in this session belongs to one home.
     let homeID = UUID().uuidString
     @Published private(set) var roomsSaved = 0
@@ -73,6 +76,8 @@ final class ScanSession: ObservableObject, Identifiable {
     private var latest: CapturedRoom?
     private var sending = false
     private var lastSent = Date.distantPast
+    /// The name changed since the server copy was made: the next send carries it.
+    private var renamed = false
     private static let liveInterval: TimeInterval = 2
 
     init(name: String, settings: ServerSettings, library: ScanLibrary) {
@@ -102,6 +107,15 @@ final class ScanSession: ObservableObject, Identifiable {
         }
     }
 
+    /// Scans start with a made-up name, one tap from the home screen; this names the room while
+    /// scanning (the saved scan and the server copy both take it).
+    func rename(to new: String) {
+        let n = new.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty, n != name, phase == .scanning || phase == .processing else { return }
+        name = n
+        renamed = true
+    }
+
     func finish() {
         guard phase == .scanning else { return }
         phase = .processing
@@ -118,6 +132,8 @@ final class ScanSession: ObservableObject, Identifiable {
     func nextRoom(named next: String) {
         guard case .done = phase else { return }
         name = next
+        renamed = false
+        startedAt = Date()
         photos = []
         photoCount = 0
         checklist = []
@@ -274,7 +290,10 @@ final class ScanSession: ObservableObject, Identifiable {
         lastSent = Date()
         Task {
             do {
-                try await send(try JSONEncoder().encode(room), live: true)
+                // A room's JSON runs to hundreds of kilobytes: encode it away from the main thread,
+                // which is drawing the camera.
+                let body = try await Task.detached(priority: .utility) { try JSONEncoder().encode(room) }.value
+                try await send(body, live: true)
                 serverStatus = "Live: sent \(Date().formatted(date: .omitted, time: .standard))"
             } catch {
                 serverStatus = "Live update failed: \(error.localizedDescription)"
@@ -287,8 +306,11 @@ final class ScanSession: ObservableObject, Identifiable {
     private func send(_ body: Data, live: Bool) async throws {
         guard let client else { return }
         if let id = serverScanID {
-            try await client.update(id, body, live: live)
+            let rename = renamed ? name : nil
+            try await client.update(id, body, live: live, name: rename)
+            if let rename, rename == name { renamed = false }  // unless renamed again meanwhile
         } else {
+            renamed = false
             serverScanID = try await client.create(body, name: name, live: live)
         }
     }
@@ -310,7 +332,7 @@ final class ScanSession: ObservableObject, Identifiable {
         let body: Data
         var saved: SavedScan
         do {
-            body = try JSONEncoder().encode(room)
+            body = try await Task.detached(priority: .userInitiated) { try JSONEncoder().encode(room) }.value
             saved = try library.save(room: room, json: body, name: name, homeID: homeID, photos: photos,
                                      frames: controller.keyframes)
         } catch {

@@ -130,8 +130,10 @@ def test_live_updates_then_final(tmp_path, sample):
             r = await h.put(f"/scans/{sid}?stage=live", json=partial, headers=auth)
             assert r.json() == {"scan_id": sid, "stage": "live", "updates": 2}
             assert len(store.capture(sid).walls) == 2
-            r = await h.put(f"/scans/{sid}", json=sample, headers=auth)
+            assert store.list()[0]["name"] == "Lounge"
+            r = await h.put(f"/scans/{sid}?name=Den", json=sample, headers=auth)  # renamed while scanning
             assert r.json()["stage"] == "final" and r.json()["updates"] == 3
+            assert store.list()[0]["name"] == "Den"
             assert (await h.put("/scans/nope-1", json=sample, headers=auth)).status_code == 404
             assert (await h.put(f"/scans/{sid}", json=sample)).status_code == 401
             return sid

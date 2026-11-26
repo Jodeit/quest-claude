@@ -70,9 +70,11 @@ struct ServerClient {
         return id
     }
 
-    /// Replace a scan's capture with a newer one of the same room.
-    func update(_ scanID: String, _ capture: Data, live: Bool) async throws {
-        let q = live ? [URLQueryItem(name: "stage", value: "live")] : []
+    /// Replace a scan's capture with a newer one of the same room; a name renames it (servers from
+    /// before renaming ignore it).
+    func update(_ scanID: String, _ capture: Data, live: Bool, name: String? = nil) async throws {
+        var q = live ? [URLQueryItem(name: "stage", value: "live")] : []
+        if let name { q.append(URLQueryItem(name: "name", value: name)) }
         _ = try await send(request("scans/\(scanID)", method: "PUT", query: q, body: capture))
     }
 }

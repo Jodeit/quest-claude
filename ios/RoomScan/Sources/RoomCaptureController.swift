@@ -24,7 +24,12 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private var blurrySkipTimes: [Date] = []
 
     /// The frames kept so far: what's described, and the JPEG.
-    private(set) var keyframes: [(Keyframe, Data)] = []
+    private(set) var keyframes: [(Keyframe, Data)] = [] {
+        didSet { frameInfo = keyframes.map { $0.0 } }
+    }
+    /// Just the descriptions, kept up as frames come and go: the hint and coverage ticks read them
+    /// several times a second, and frames change far less often.
+    private var frameInfo: [Keyframe] = []
     private static let maxKeyframes = 150
     private static let keyframeWidth: CGFloat = 960
     /// The photo-real pass keeps bigger frames: they paint the mesh, close up.
@@ -44,6 +49,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     private var latestRoom: CapturedRoom?
     private var lastCoverage = Date.distantPast
     private var computingCoverage = false
+    private var lastTriangleCount: TimeInterval = 0
 
     private var captureView: RoomCaptureView!
     private var overlay: CoverageOverlay!
@@ -120,7 +126,11 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                 self?.pollKeyframe()
                 self?.updateCoverage()
                 self?.updateHint()
-                if let self { self.meshTrianglesSeen = Swift.max(self.meshTrianglesSeen, LiDARMesh.triangles(in: self.arSession)) }
+                if let self, ProcessInfo.processInfo.systemUptime - self.lastTriangleCount > 1 {
+                    // Once a second is plenty for a high-water mark.
+                    self.lastTriangleCount = ProcessInfo.processInfo.systemUptime
+                    self.meshTrianglesSeen = Swift.max(self.meshTrianglesSeen, LiDARMesh.triangles(in: self.arSession))
+                }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
@@ -343,7 +353,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
         }
         onStop?(meshPass ? stops.progress : nil)
         let text = hints.hint(frame: frame, look: look, blurrySkipsRecently: blurrySkipTimes.count,
-                              room: meshPass ? nil : latestRoom, keyframes: keyframes.map { $0.0 }, meshPass: meshPass,
+                              room: meshPass ? nil : latestRoom, keyframes: frameInfo, meshPass: meshPass,
                               inStop: meshPass && stops.inStop, stopHint: stopHint)
         onHint?(text)
     }
@@ -355,7 +365,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
               let room = latestRoom, let pose = lastPoll else { return }
         computingCoverage = true
         lastCoverage = Date()
-        let frames = keyframes.map { $0.0 }
+        let frames = frameInfo
         Task {
             let snapshot = await Task.detached(priority: .utility) {
                 Coverage.compute(room: room, frames: frames, camera: pose)
@@ -372,15 +382,19 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
     /// map, the gray overlay and the hint.
     private func updateMeshCoverage() {
         guard !computingCoverage, Date().timeIntervalSince(lastCoverage) > 2,
-              let room = latestRoom, let pose = lastPoll, let jump = meshJump, let mesh = LiDARMesh.harvest(arSession) else { return }
+              let room = latestRoom, let pose = lastPoll, let jump = meshJump else { return }
+        // Only the anchors are taken here; copying the mesh out of them (hundreds of thousands of
+        // vertices) happens off the main thread, which also draws the camera.
+        let anchors = LiDARMesh.meshAnchors(arSession)
+        guard !anchors.isEmpty else { return }
         computingCoverage = true
         lastCoverage = Date()
-        let frames = keyframes.map { $0.0 }
+        let frames = frameInfo
         Task {
-            let snapshot = await Task.detached(priority: .utility) { () -> CoverageSnapshot in
+            let snapshot = await Task.detached(priority: .utility) { () -> CoverageSnapshot? in
                 // Undo the switch's jump, then level the floor onto RoomPlan's: the jump can leave
                 // the mesh tens of centimetres high, which would misplace it against the walls.
-                var m = mesh
+                guard var m = LiDARMesh.harvest(anchors: anchors) else { return nil }
                 m.apply(jump)
                 let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
                 let ceilingY = room.walls.map { $0.transform.columns.3.y + $0.dimensions.y / 2 }.max() ?? floorY + 2.4
@@ -390,7 +404,7 @@ final class RoomCaptureController: UIViewController, RoomCaptureViewDelegate, Ro
                 return Coverage.fromMesh(room: room, points: points, frames: frames, camera: pose)
             }.value
             computingCoverage = false
-            if meshPass {
+            if meshPass, let snapshot {
                 overlay.snapshot = snapshot
                 onCoverage?(snapshot)
             }

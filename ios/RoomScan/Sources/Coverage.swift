@@ -13,14 +13,15 @@ struct CoverageSnapshot {
         let fraction: Float
     }
 
-    /// A 30 cm patch of wall (its corners in the world) and whether a kept frame has seen it.
-    struct Cell {
-        let corners: [SIMD3<Float>]
-        let covered: Bool
+    /// A patch of wall or floor no kept frame has seen yet: its corners in the world, a hair off the
+    /// surface toward the room. Only the gaps are kept (the overlay draws nothing else), with no
+    /// heap array per cell, since the overlay walks them 15 times a second.
+    struct Gap {
+        let a, b, c, d: SIMD3<Float>
     }
 
     var walls: [Wall]
-    var cells: [Cell] = []
+    var gaps: [Gap] = []
     var camera: SIMD2<Float>
     var heading: SIMD2<Float>  // where the phone points, top view, unit length
     var overall: Float         // length-weighted
@@ -43,7 +44,7 @@ enum Coverage {
         heading = simd_length(heading) > 1e-4 ? simd_normalize(heading) : SIMD2(0, -1)
 
         var walls: [CoverageSnapshot.Wall] = []
-        var cells: [CoverageSnapshot.Cell] = []
+        var gaps: [CoverageSnapshot.Gap] = []
         for (i, w) in room.walls.enumerated() where w.dimensions.x > 0.3 && w.dimensions.y > 0.3 {
             // The room side is where the cameras mostly were (as for the elevations).
             let c = simd_make_float3(w.transform.columns.3)
@@ -55,17 +56,20 @@ enum Coverage {
             let nu = Swift.max(1, Int(f.width / cell)), nv = Swift.max(1, Int(f.height / cell))
             var covered = 0
             let du = f.width / Float(nu), dv = f.height / Float(nv)
+            // Only frames that could see some of this wall: on its room side (every point of a flat
+            // wall is then too) and within reach of its farthest corner. Usually a small share of
+            // them, and the per-cell test is the costly part.
+            let reach = Cam.maxDistance + simd_length(SIMD2(f.width, f.height)) / 2
+            let near = cams.filter { simd_dot($0.position - f.center, f.normal) > Cam.minDistance * Cam.minFacing
+                && simd_distance($0.position, f.center) < reach }
+            let lift = f.normal * 0.01  // a hair off the wall, toward the room, so it's drawn in front of it
             for a in 0..<nu {
                 for b in 0..<nv {
                     let p = f.world(u: (Float(a) + 0.5) * du, v: (Float(b) + 0.5) * dv)
-                    let seen = cams.contains(where: { $0.sees(p, normal: f.normal) })
-                    if seen { covered += 1 }
-                    // A hair off the wall, toward the room, so it's drawn in front of it.
-                    let lift = f.normal * 0.01
+                    if near.contains(where: { $0.sees(p, normal: f.normal) }) { covered += 1; continue }
                     let u0 = Float(a) * du, u1 = u0 + du, v0 = Float(b) * dv, v1 = v0 + dv
-                    cells.append(.init(corners: [f.world(u: u0, v: v0) + lift, f.world(u: u1, v: v0) + lift,
-                                                 f.world(u: u1, v: v1) + lift, f.world(u: u0, v: v1) + lift],
-                                       covered: seen))
+                    gaps.append(.init(a: f.world(u: u0, v: v0) + lift, b: f.world(u: u1, v: v0) + lift,
+                                      c: f.world(u: u1, v: v1) + lift, d: f.world(u: u0, v: v1) + lift))
                 }
             }
             let left = f.world(u: 0, v: 0), right = f.world(u: f.width, v: 0)
@@ -74,7 +78,7 @@ enum Coverage {
         }
 
         let floor = floorCells(room: room, cams: cams, around: camPos)
-        cells += floor.cells
+        gaps += floor.gaps
 
         let total = walls.reduce(Float(0)) { $0 + $1.length }
         let overall = total > 0 ? walls.reduce(Float(0)) { $0 + $1.fraction * $1.length } / total : 0
@@ -89,7 +93,7 @@ enum Coverage {
         } else if !walls.isEmpty {
             hint = "Every wall is well covered."
         }
-        return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
+        return CoverageSnapshot(walls: walls, gaps: gaps, camera: flatCam, heading: heading, overall: overall, hint: hint,
                                 weakWalls: weak.count, floorNear: floor.fraction)
     }
 
@@ -107,35 +111,43 @@ enum Coverage {
         let centroid = centres.isEmpty ? SIMD3<Float>(0, 0, 0) : centres.reduce(.zero, +) / Float(centres.count)
         let holes = room.doors + room.windows + room.openings
         let step: Float = 0.1
-        var walls: [CoverageSnapshot.Wall] = [], cells: [CoverageSnapshot.Cell] = []
+        var walls: [CoverageSnapshot.Wall] = [], gaps: [CoverageSnapshot.Gap] = []
         for (i, w) in room.walls.enumerated() where w.dimensions.x > 0.3 && w.dimensions.y > 0.3 {
             let c = simd_make_float3(w.transform.columns.3), z = simd_make_float3(w.transform.columns.2)
             let f = WallFrame(w, flipped: simd_dot(centroid - c, z) < 0)
             let nu = Swift.max(1, Int(f.width / step)), nv = Swift.max(1, Int(f.height / step))
             var hit = [Bool](repeating: false, count: nu * nv)
-            for p in points {
-                let l = f.local(p)
-                guard abs(l.depth) < 0.06, l.u >= 0, l.u < f.width, l.v >= 0, l.v < f.height else { continue }
-                hit[Swift.min(nv - 1, Int(l.v / step)) * nu + Swift.min(nu - 1, Int(l.u / step))] = true
+            // Distance from the wall's plane first: one dot product rejects nearly every point.
+            let n = f.normal, offset = simd_dot(f.center, n)
+            points.withUnsafeBufferPointer { buf in
+                for p in buf {
+                    guard abs(simd_dot(p, n) - offset) < 0.06 else { continue }
+                    let l = f.local(p)
+                    guard l.u >= 0, l.u < f.width, l.v >= 0, l.v < f.height else { continue }
+                    hit[Swift.min(nv - 1, Int(l.v / step)) * nu + Swift.min(nu - 1, Int(l.u / step))] = true
+                }
+            }
+            // The doors, windows and openings in this wall, once per wall rather than per cell.
+            let wallHoles: [(centre: SIMD3<Float>, along: SIMD3<Float>, half: SIMD2<Float>)] = holes.compactMap { h in
+                let hc = simd_make_float3(h.transform.columns.3)
+                guard abs(simd_dot(hc - c, f.normal)) < 0.3 else { return nil }
+                return (hc, simd_normalize(simd_make_float3(h.transform.columns.0)), SIMD2(h.dimensions.x, h.dimensions.y) / 2)
             }
             var covered = 0, counted = 0
+            let lift = f.normal * 0.01
             for a in 0..<nu {
                 for b in 0..<nv {
                     let u0 = Float(a) * f.width / Float(nu), u1 = u0 + f.width / Float(nu)
                     let v0 = Float(b) * f.height / Float(nv), v1 = v0 + f.height / Float(nv)
                     let mid = f.world(u: (u0 + u1) / 2, v: (v0 + v1) / 2)
-                    let inHole = holes.contains { h in
-                        let hc = simd_make_float3(h.transform.columns.3), hx = simd_normalize(simd_make_float3(h.transform.columns.0))
-                        return abs(simd_dot(hc - c, f.normal)) < 0.3 && abs(simd_dot(mid - hc, hx)) < h.dimensions.x / 2
-                            && abs(mid.y - hc.y) < h.dimensions.y / 2
+                    let inHole = wallHoles.contains { h in
+                        abs(simd_dot(mid - h.centre, h.along)) < h.half.x && abs(mid.y - h.centre.y) < h.half.y
                     }
                     if inHole { continue }
                     counted += 1
-                    let seen = hit[b * nu + a]
-                    if seen { covered += 1 }
-                    let lift = f.normal * 0.01
-                    cells.append(.init(corners: [f.world(u: u0, v: v0) + lift, f.world(u: u1, v: v0) + lift,
-                                                 f.world(u: u1, v: v1) + lift, f.world(u: u0, v: v1) + lift], covered: seen))
+                    if hit[b * nu + a] { covered += 1; continue }
+                    gaps.append(.init(a: f.world(u: u0, v: v0) + lift, b: f.world(u: u1, v: v0) + lift,
+                                      c: f.world(u: u1, v: v1) + lift, d: f.world(u: u0, v: v1) + lift))
                 }
             }
             let left = f.world(u: 0, v: 0), right = f.world(u: f.width, v: 0)
@@ -143,7 +155,7 @@ enum Coverage {
                                fraction: counted > 0 ? Float(covered) / Float(counted) : 1))
         }
         let floor = floorCells(room: room, cams: frames.map(Cam.init), around: camPos)
-        cells += floor.cells
+        gaps += floor.gaps
         let total = walls.reduce(Float(0)) { $0 + $1.length }
         let overall = total > 0 ? walls.reduce(Float(0)) { $0 + $1.fraction * $1.length } / total : 0
         var hint: String?
@@ -155,7 +167,7 @@ enum Coverage {
         } else if !walls.isEmpty {
             hint = "The walls are well covered. Sweep any shelves and furniture you'll want to measure, then Finish."
         }
-        return CoverageSnapshot(walls: walls, cells: cells, camera: flatCam, heading: heading, overall: overall, hint: hint,
+        return CoverageSnapshot(walls: walls, gaps: gaps, camera: flatCam, heading: heading, overall: overall, hint: hint,
                                 weakWalls: walls.filter { $0.length > 0.6 && $0.fraction < 0.7 }.count, label: "3D scan",
                                 floorNear: floor.fraction)
     }
@@ -168,7 +180,7 @@ enum Coverage {
     /// walls' box when there is none), each covered once a kept frame saw it from above; and the
     /// covered share, nil when there are no cells.
     private static func floorCells(room: CapturedRoom, cams: [Cam], around camPos: SIMD3<Float>)
-        -> (cells: [CoverageSnapshot.Cell], fraction: Float?) {
+        -> (gaps: [CoverageSnapshot.Gap], fraction: Float?) {
         guard !room.walls.isEmpty else { return ([], nil) }
         let floorY = room.walls.map { $0.transform.columns.3.y - $0.dimensions.y / 2 }.min() ?? 0
         var outlines: [[SIMD2<Float>]] = []
@@ -204,22 +216,27 @@ enum Coverage {
         let up = SIMD3<Float>(0, 1, 0)
         let n = Int(ceil(floorReach / cell))
         let gx = (camPos.x / cell).rounded(.down), gz = (camPos.z / cell).rounded(.down)
-        var cells: [CoverageSnapshot.Cell] = []
-        var covered = 0
+        // Only frames above the floor and, across it, within reach of the cells round the phone.
+        let reach = Cam.maxDistance + floorReach
+        let flat = SIMD2(camPos.x, camPos.z)
+        let near = cams.filter { $0.position.y - floorY > Cam.minDistance * Cam.minFacing
+            && simd_distance(SIMD2($0.position.x, $0.position.z), flat) < reach }
+        var gaps: [CoverageSnapshot.Gap] = []
+        var covered = 0, total = 0
         for i in -n...n {
             for j in -n...n {
                 let x0 = (gx + Float(i)) * cell, z0 = (gz + Float(j)) * cell
                 let mid = SIMD2(x0 + cell / 2, z0 + cell / 2)
                 guard simd_distance(mid, SIMD2(camPos.x, camPos.z)) < floorReach, inside(mid) else { continue }
                 let p = SIMD3(mid.x, floorY, mid.y)
-                let seen = cams.contains { $0.sees(p, normal: up) }
-                if seen { covered += 1 }
+                total += 1
+                if near.contains(where: { $0.sees(p, normal: up) }) { covered += 1; continue }
                 let y = floorY + 0.01  // a hair above the floor, so it's drawn over it
-                cells.append(.init(corners: [SIMD3(x0, y, z0), SIMD3(x0 + cell, y, z0),
-                                             SIMD3(x0 + cell, y, z0 + cell), SIMD3(x0, y, z0 + cell)], covered: seen))
+                gaps.append(.init(a: SIMD3(x0, y, z0), b: SIMD3(x0 + cell, y, z0),
+                                  c: SIMD3(x0 + cell, y, z0 + cell), d: SIMD3(x0, y, z0 + cell)))
             }
         }
-        return (cells, cells.isEmpty ? nil : Float(covered) / Float(cells.count))
+        return (gaps, total == 0 ? nil : Float(covered) / Float(total))
     }
 
     /// "ahead", "to your left", "to your right" or "behind you", as the phone points now.
@@ -236,6 +253,8 @@ enum Coverage {
     }
 
     private struct Cam {
+        /// What counts as seeing a point: between these distances, and facing it at least this much.
+        static let minDistance: Float = 0.3, maxDistance: Float = 5, minFacing: Float = 0.25
         let inverse: simd_float4x4
         let position: SIMD3<Float>
         let fx, fy, cx, cy, w, h: Float
@@ -251,7 +270,7 @@ enum Coverage {
         func sees(_ p: SIMD3<Float>, normal: SIMD3<Float>) -> Bool {
             let toCam = position - p
             let dist = simd_length(toCam)
-            guard dist > 0.3, dist < 5, simd_dot(toCam / dist, normal) > 0.25 else { return false }
+            guard dist > Cam.minDistance, dist < Cam.maxDistance, simd_dot(toCam, normal) > Cam.minFacing * dist else { return false }
             let c = inverse * SIMD4(p, 1)
             let depth = -c.z
             guard depth > 0.3 else { return false }
